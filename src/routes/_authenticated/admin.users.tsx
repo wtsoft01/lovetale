@@ -2,9 +2,14 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@/lib/_mock/runtime";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { Loader2, Plus, Trash2, KeyRound, Shield, ShieldCheck, ShieldAlert } from "lucide-react";
+import { Loader2, Plus, Trash2, KeyRound, Shield, ShieldCheck, ShieldAlert, Coins, MinusCircle } from "lucide-react";
 import { toast } from "sonner";
 
+import {
+  adjustUserCredits,
+  listAdminCreditUsers,
+  type AdminCreditUserRow,
+} from "@/lib/admin.functions";
 import {
   listStaffUsers,
   createStaffUser,
@@ -42,10 +47,15 @@ function UsersPage() {
   const updateRoles = useServerFn(updateStaffRoles);
   const resetPw = useServerFn(resetStaffPassword);
   const remove = useServerFn(removeStaffUser);
+  const listCreditUsers = useServerFn(listAdminCreditUsers);
+  const adjustCredits = useServerFn(adjustUserCredits);
 
   const staffQ = useQuery({ queryKey: ["staff_users"], queryFn: () => list() });
+  const creditUsersQ = useQuery({ queryKey: ["admin_credit_users"], queryFn: () => listCreditUsers() });
 
   const [openCreate, setOpenCreate] = useState(false);
+  const [creditTarget, setCreditTarget] = useState<AdminCreditUserRow | null>(null);
+  const [creditForm, setCreditForm] = useState({ mode: "grant" as "grant" | "deduct", amount: 0, note: "" });
   const [form, setForm] = useState({
     email: "",
     password: "",
@@ -89,6 +99,35 @@ function UsersPage() {
     onSuccess: () => toast.success("비밀번호가 재설정되었습니다."),
     onError: (e: any) => toast.error(e?.message ?? "재설정 실패"),
   });
+
+  const creditM = useMutation({
+    mutationFn: (input: { userId: string; delta: number; note?: string }) =>
+      adjustCredits({ data: input }),
+    onSuccess: (res) => {
+      toast.success(`크레딧이 반영되었습니다. 현재 잔액 ${res.balanceAfter.toLocaleString()} cr`);
+      setCreditTarget(null);
+      setCreditForm({ mode: "grant", amount: 0, note: "" });
+      qc.invalidateQueries({ queryKey: ["admin_credit_users"] });
+      qc.invalidateQueries({ queryKey: ["my_profile_balance"] });
+    },
+    onError: (e: any) => toast.error(e?.message ?? "크레딧 처리 실패"),
+  });
+
+  function openCreditDialog(user: AdminCreditUserRow, mode: "grant" | "deduct") {
+    setCreditTarget(user);
+    setCreditForm({ mode, amount: 0, note: "" });
+  }
+
+  function submitCreditAdjust() {
+    if (!creditTarget) return;
+    const amount = Math.max(0, Math.floor(Number(creditForm.amount) || 0));
+    if (amount <= 0) {
+      toast.error("크레딧 수량을 입력하세요.");
+      return;
+    }
+    const delta = creditForm.mode === "deduct" ? -amount : amount;
+    creditM.mutate({ userId: creditTarget.userId, delta, note: creditForm.note });
+  }
 
   return (
     <div className="space-y-6">
@@ -246,6 +285,110 @@ function UsersPage() {
           </ul>
         </CardContent>
       </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Coins className="size-5 text-primary" />
+            회원 크레딧 운영
+          </CardTitle>
+          <CardDescription>
+            회원별 보유 크레딧을 확인하고 운영자가 직접 지급하거나 차감합니다.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {creditUsersQ.isLoading && (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="size-4 animate-spin" /> 회원 크레딧을 불러오는 중…
+            </div>
+          )}
+          {creditUsersQ.error && (
+            <p className="text-sm text-destructive">{(creditUsersQ.error as Error).message}</p>
+          )}
+          <ul className="divide-y">
+            {creditUsersQ.data?.map((user) => (
+              <li key={user.userId} className="flex flex-wrap items-center gap-3 py-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-medium">{user.email ?? user.userId}</span>
+                    {user.displayName && <span className="text-xs text-muted-foreground">— {user.displayName}</span>}
+                  </div>
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    최근 갱신 {user.updatedAt ? new Date(user.updatedAt).toLocaleString() : "-"}
+                  </div>
+                </div>
+                <div className="rounded-full border border-primary/25 bg-primary/10 px-3 py-1 text-sm font-semibold text-primary">
+                  {user.credits.toLocaleString()} cr
+                </div>
+                <Button size="sm" onClick={() => openCreditDialog(user, "grant")}>
+                  <Coins className="mr-1 size-4" />
+                  지급
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => openCreditDialog(user, "deduct")}>
+                  <MinusCircle className="mr-1 size-4" />
+                  차감
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </CardContent>
+      </Card>
+
+      <Dialog open={Boolean(creditTarget)} onOpenChange={(open) => !open && setCreditTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              크레딧 {creditForm.mode === "deduct" ? "차감" : "지급"}
+            </DialogTitle>
+            <DialogDescription>
+              {creditTarget?.email ?? creditTarget?.userId} · 현재 {creditTarget?.credits.toLocaleString() ?? 0} cr
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-2">
+              <Button
+                type="button"
+                variant={creditForm.mode === "grant" ? "default" : "outline"}
+                onClick={() => setCreditForm((prev) => ({ ...prev, mode: "grant" }))}
+              >
+                지급
+              </Button>
+              <Button
+                type="button"
+                variant={creditForm.mode === "deduct" ? "default" : "outline"}
+                onClick={() => setCreditForm((prev) => ({ ...prev, mode: "deduct" }))}
+              >
+                차감
+              </Button>
+            </div>
+            <div className="space-y-2">
+              <Label>크레딧 수량</Label>
+              <Input
+                type="number"
+                min={1}
+                value={creditForm.amount || ""}
+                onChange={(event) => setCreditForm((prev) => ({ ...prev, amount: Math.max(0, Number(event.target.value) || 0) }))}
+                placeholder="예: 1000"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>운영 메모</Label>
+              <Input
+                value={creditForm.note}
+                onChange={(event) => setCreditForm((prev) => ({ ...prev, note: event.target.value }))}
+                placeholder="예: 이벤트 보상, 환불 조정"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setCreditTarget(null)}>취소</Button>
+            <Button disabled={creditM.isPending} onClick={submitCreditAdjust}>
+              {creditM.isPending && <Loader2 className="mr-2 size-4 animate-spin" />}
+              {creditForm.mode === "deduct" ? "차감 적용" : "지급 적용"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

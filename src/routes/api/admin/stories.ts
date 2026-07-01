@@ -265,15 +265,29 @@ async function getPlacement(request: Request) {
   const id = String(url.searchParams.get("id") ?? "").trim();
   if (!id) return jsonError("missing_id");
 
-  const { data, error } = await supabaseAdmin
+  const [{ data, error }, { data: story, error: storyError }] = await Promise.all([
+    supabaseAdmin
     .from("home_placements")
     .select("slot,sort_order,is_active")
     .eq("story_id", id)
     .eq("is_active", true)
     .order("updated_at", { ascending: false })
-    .order("sort_order", { ascending: true });
+      .order("sort_order", { ascending: true }),
+    supabaseAdmin
+      .from("user_stories")
+      .select("is_public,is_listed")
+      .eq("id", id)
+      .maybeSingle(),
+  ]);
   if (error) return jsonServerError(error, 500);
-  return Response.json({ ok: true, placements: data ?? [] });
+  if (storyError) return jsonServerError(storyError, 500);
+
+  const placements = [...(data ?? [])];
+  if (story?.is_public && story?.is_listed) {
+    placements.push({ slot: "all" as HomeSlot, sort_order: 0, is_active: true });
+  }
+
+  return Response.json({ ok: true, placements });
 }
 
 async function createOrAppendStory(request: Request, payload?: Partial<CreateStoryPayload>) {
@@ -527,6 +541,7 @@ async function setPlacement(request: Request, body: SetPlacementPayload) {
     ? body.slots.filter((slot): slot is HomeSlot => Boolean(slot))
     : [];
   const normalizedSlots = [...new Set(slots)];
+  const placementSlots = normalizedSlots.filter((slot) => slot !== "all");
 
   const { data: existing, error: existingError } = await supabaseAdmin
     .from("home_placements")
@@ -535,7 +550,7 @@ async function setPlacement(request: Request, body: SetPlacementPayload) {
   if (existingError) return jsonServerError(existingError, 500);
 
   const existingRows = existing ?? [];
-  const keep = new Set(normalizedSlots);
+  const keep = new Set(placementSlots);
   const toDelete = existingRows.filter((row) => !keep.has(row.slot)).map((row) => row.id);
   if (toDelete.length) {
     const { error: deleteError } = await supabaseAdmin.from("home_placements").delete().in("id", toDelete);
@@ -563,7 +578,7 @@ async function setPlacement(request: Request, body: SetPlacementPayload) {
     if (duplicateDeleteError) return jsonServerError(duplicateDeleteError, 500);
   }
 
-  for (const slot of normalizedSlots) {
+  for (const slot of placementSlots) {
     const existingId = existingBySlot.get(slot);
     if (existingId) {
       const { error: updateError } = await supabaseAdmin

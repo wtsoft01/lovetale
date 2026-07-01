@@ -63,7 +63,7 @@ function providerSupportsPurpose(row: ProviderRow, purpose: LlmUsagePurpose) {
   return purposes.includes(purpose) || purposes.includes("general_chat");
 }
 
-async function listCandidates(purpose?: string | null): Promise<ProviderRow[]> {
+async function listCandidates(purpose?: string | null, options?: { includeAllPurposes?: boolean }): Promise<ProviderRow[]> {
   const { data, error } = await supabaseAdmin
     .from("llm_api_providers")
     .select("*")
@@ -88,13 +88,23 @@ async function listCandidates(purpose?: string | null): Promise<ProviderRow[]> {
     .map((row) => ({ ...row, api_key: secretByProvider.get(row.id) ?? "" }))
     .filter((row) => row.api_key);
 
+  if (options?.includeAllPurposes) return withSecrets;
+
   const normalizedPurpose = normalizeLlmPurpose(purpose);
   const purposeMatched = withSecrets.filter((row) => providerSupportsPurpose(row, normalizedPurpose));
   if (purposeMatched.length) return purposeMatched;
   return withSecrets.filter((row) => providerSupportsPurpose(row, "general_chat"));
 }
 
-async function recordUsage(
+export async function listActiveLlmProvidersForPurpose(purpose?: string | null): Promise<ProviderRow[]> {
+  return listCandidates(purpose);
+}
+
+export async function listAllActiveLlmProviders(): Promise<ProviderRow[]> {
+  return listCandidates(null, { includeAllPurposes: true });
+}
+
+export async function recordLlmUsage(
   providerId: string,
   tokens: number,
   succeeded: boolean,
@@ -263,11 +273,11 @@ export async function chatWithRotation(opts: ChatOptions): Promise<ChatResult> {
   for (const p of candidates) {
     const out = await callProvider(p, opts);
     if (!out.ok) {
-      await recordUsage(p.id, 0, false, opts.purpose ?? null, out.error);
+      await recordLlmUsage(p.id, 0, false, opts.purpose ?? null, out.error);
       lastError = `[${p.label}] ${out.error}`;
       continue;
     }
-    await recordUsage(p.id, out.tokens, true, opts.purpose ?? null);
+    await recordLlmUsage(p.id, out.tokens, true, opts.purpose ?? null);
     return {
       text: out.text,
       providerId: p.id,

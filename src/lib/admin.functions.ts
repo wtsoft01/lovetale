@@ -7,6 +7,14 @@ const STAFF_ROLES = ["admin", "editor", "moderator"] as const;
 
 type StaffRole = (typeof STAFF_ROLES)[number];
 
+export type AdminCreditUserRow = {
+  userId: string;
+  email: string | null;
+  displayName: string | null;
+  credits: number;
+  updatedAt: string | null;
+};
+
 async function getCurrentRoles(userId: string): Promise<StaffRole[]> {
   const { data, error } = await supabaseAdmin
     .from("user_roles")
@@ -177,4 +185,92 @@ export const markOrderFailed = createServerFn({ method: "POST" })
       .eq("id", data.orderId);
     if (error) throw new Error(error.message);
     return { ok: true };
+  });
+
+async function listAuthUsersForAdmin() {
+  const users: any[] = [];
+  for (let page = 1; page <= 10; page += 1) {
+    const { data, error } = await supabaseAdmin.auth.admin.listUsers({ page, perPage: 1000 });
+    if (error) throw new Error(error.message);
+    users.push(...(data.users ?? []));
+    if ((data.users ?? []).length < 1000) break;
+  }
+  return users;
+}
+
+export const listAdminCreditUsers = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }): Promise<AdminCreditUserRow[]> => {
+    const roles = await getCurrentRoles((context as any).userId as string);
+    if (!roles.includes("admin")) throw new Error("Forbidden");
+
+    const [{ data: profiles, error: profilesError }, authUsers] = await Promise.all([
+      supabaseAdmin
+        .from("profiles")
+        .select("id, display_name, credits, updated_at")
+        .order("updated_at", { ascending: false })
+        .limit(200),
+      listAuthUsersForAdmin(),
+    ]);
+    if (profilesError) throw new Error(profilesError.message);
+
+    const emailById = new Map<string, string | null>();
+    for (const user of authUsers) {
+      emailById.set(String(user.id), user.email ?? null);
+    }
+
+    return (profiles ?? []).map((profile) => ({
+      userId: profile.id,
+      email: emailById.get(profile.id) ?? null,
+      displayName: profile.display_name ?? null,
+      credits: Math.max(0, Number(profile.credits ?? 0)),
+      updatedAt: profile.updated_at ?? null,
+    }));
+  });
+
+export const adjustUserCredits = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((i: unknown) => i as { userId: string; delta: number; note?: string })
+  .handler(async ({ data, context }) => {
+    const adminUserId = (context as any).userId as string;
+    const roles = await getCurrentRoles(adminUserId);
+    if (!roles.includes("admin")) throw new Error("Forbidden");
+
+    const userId = data.userId?.trim();
+    const delta = Math.trunc(Number(data.delta || 0));
+    const note = data.note?.trim();
+    if (!userId) throw new Error("Missing user id");
+    if (!Number.isFinite(delta) || delta === 0) throw new Error("크레딧 변동값을 입력하세요.");
+
+    const { data: profile, error: profileError } = await supabaseAdmin
+      .from("profiles")
+      .select("credits")
+      .eq("id", userId)
+      .single();
+    if (profileError) throw new Error(profileError.message);
+    if (!profile) throw new Error("User profile not found");
+
+    const currentCredits = Math.max(0, Number(profile.credits ?? 0));
+    const balanceAfter = Math.max(0, currentCredits + delta);
+    const appliedDelta = balanceAfter - currentCredits;
+    if (appliedDelta === 0) throw new Error("차감 가능한 크레딧이 없습니다.");
+
+    const now = new Date().toISOString();
+    const { error: updateError } = await supabaseAdmin
+      .from("profiles")
+      .update({ credits: balanceAfter, updated_at: now })
+      .eq("id", userId);
+    if (updateError) throw new Error(updateError.message);
+
+    const { error: ledgerError } = await supabaseAdmin.from("credit_ledger").insert({
+      user_id: userId,
+      delta: appliedDelta,
+      reason: appliedDelta > 0 ? "admin_grant" : "admin_deduct",
+      ref_type: note ? `admin_manual:${note.slice(0, 80)}` : "admin_manual",
+      ref_id: adminUserId,
+      balance_after: balanceAfter,
+    });
+    if (ledgerError) throw new Error(ledgerError.message);
+
+    return { ok: true, balanceAfter, delta: appliedDelta };
   });

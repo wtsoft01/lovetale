@@ -57,6 +57,7 @@ import {
   suggestStoryAssetSlots,
   translateStoryChapterToVietnamese,
 } from "@/lib/admin-story-ai.functions";
+import { listMediaAssets, registerMediaAsset, type MediaAssetRow } from "@/lib/admin-media.functions";
 import { ensureStoryMediaBucket } from "@/lib/storage.functions";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -1318,6 +1319,18 @@ type TextSegment = {
   end: number;
 };
 
+type AssetLibraryEntry = {
+  id: string;
+  media_url: string | null;
+  media_asset_id: string | null;
+  media_type: "image" | "video" | null;
+  scene_description: string;
+  caption: string;
+  source: string;
+  chapterTitle: string;
+  heat_tier?: AssetTier;
+};
+
 type AssetBodyTextStyle = {
   fontSize: number;
   color: string;
@@ -1331,6 +1344,26 @@ const DEFAULT_ASSET_BODY_TEXT_STYLE: AssetBodyTextStyle = {
   bold: false,
   italic: false,
 };
+
+const ASSET_UPLOAD_LIMITS = {
+  image: 20 * 1024 * 1024,
+  video: 500 * 1024 * 1024,
+} as const;
+
+function formatFileSize(bytes: number) {
+  if (!bytes) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  return `${(bytes / 1024 ** index).toFixed(index ? 1 : 0)} ${units[index]}`;
+}
+
+function validateStoryAssetFile(file: File) {
+  const kind = file.type.startsWith("video/") ? "video" : file.type.startsWith("image/") ? "image" : null;
+  if (!kind) return "이미지 또는 영상 파일만 업로드할 수 있습니다.";
+  const limit = ASSET_UPLOAD_LIMITS[kind];
+  if (file.size > limit) return `${kind === "video" ? "영상" : "이미지"} 파일은 최대 ${formatFileSize(limit)}까지 업로드할 수 있습니다.`;
+  return null;
+}
 
 function makeAssetSlotId() {
   return 'asset_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
@@ -1357,66 +1390,132 @@ function normalizeAssetSlots(slots: AssetSlot[], bodyLength: number) {
     .sort((a, b) => a.offset - b.offset);
 }
 
+const MIN_NATURAL_SEGMENT_CHARS = 260;
+const TARGET_LONG_SEGMENT_CHARS = 2200;
+const MAX_LONG_SEGMENT_CHARS = 3600;
+
 function splitBodySegments(body: string): TextSegment[] {
   const text = body || "";
   if (!text.trim()) return [{ key: "empty", index: 0, text: "", start: 0, end: 0 }];
-  const segments: TextSegment[] = [];
-  const paragraphPattern = /[^\n]+(?:\n(?!\n)[^\n]+)*/g;
-  for (const match of text.matchAll(paragraphPattern)) {
-    const rawParagraph = match[0] ?? "";
-    const paragraphStart = match.index ?? 0;
-    const paragraphParts = splitLongParagraph(rawParagraph);
-    for (const part of paragraphParts) {
-      const raw = part.text;
-      const start = paragraphStart + part.start;
-      const trimmed = raw.trim();
-      if (!trimmed) continue;
-      segments.push({
-        key: `${segments.length}-${start}`,
-        index: segments.length,
-        text: trimmed,
-        start,
-        end: start + raw.length,
-      });
-    }
-  }
+  const naturalBlocks = mergeShortNaturalBlocks(splitNaturalBlocks(text), text);
+  const pieces = naturalBlocks.flatMap((block) => splitOversizedBlock(block, text.length));
+  const segments = pieces
+    .map((piece, index) => ({
+      key: `${index}-${piece.start}`,
+      index,
+      text: piece.text,
+      start: piece.start,
+      end: piece.end,
+    }))
+    .filter((segment) => segment.text.trim());
+
   return segments.length ? segments : [{ key: "empty", index: 0, text: "", start: 0, end: 0 }];
 }
 
-function splitLongParagraph(text: string) {
-  const trimmed = text.trim();
-  if (trimmed.length <= 900) return [{ text, start: 0 }];
-  const parts: Array<{ text: string; start: number }> = [];
-  const sentencePattern = /[^.!?。！？\n]+[.!?。！？”’"')\]]*|[^\n]+$/g;
-  let partStart: number | null = null;
-  let partEnd = 0;
-  let count = 0;
+function splitNaturalBlocks(text: string) {
+  const blocks: Array<{ text: string; start: number; end: number; hardBreak: boolean }> = [];
+  const blockPattern = /[^\n](?:[\s\S]*?)(?=\n{2,}|\n\s*(?:[-*_]){3,}\s*\n|$)/g;
 
-  for (const match of text.matchAll(sentencePattern)) {
-    const sentence = match[0] ?? "";
-    const sentenceStart = match.index ?? 0;
-    if (!sentence.trim()) continue;
-    if (partStart == null) partStart = sentenceStart;
-    partEnd = sentenceStart + sentence.length;
-    count += 1;
-    if (partEnd - partStart >= 700 || count >= 6) {
-      parts.push({ text: text.slice(partStart, partEnd), start: partStart });
-      partStart = null;
-      partEnd = 0;
-      count = 0;
+  for (const match of text.matchAll(blockPattern)) {
+    const raw = match[0] ?? "";
+    const rawStart = match.index ?? 0;
+    const normalized = trimBlockForDisplay(raw, rawStart);
+    if (!normalized) continue;
+    blocks.push({
+      ...normalized,
+      hardBreak: isSceneDividerNear(text, normalized.end),
+    });
+  }
+
+  return blocks;
+}
+
+function trimBlockForDisplay(raw: string, rawStart: number) {
+  const leading = raw.match(/^\s*/)?.[0].length ?? 0;
+  const trailing = raw.match(/\s*$/)?.[0].length ?? 0;
+  const start = rawStart + leading;
+  const end = rawStart + raw.length - trailing;
+  if (end <= start) return null;
+  return { text: raw.slice(leading, raw.length - trailing), start, end };
+}
+
+function isSceneDividerNear(text: string, offset: number) {
+  const nextBreak = text.slice(offset, Math.min(text.length, offset + 40));
+  return /\n\s*(?:[-*_]){3,}\s*\n/.test(nextBreak);
+}
+
+function mergeShortNaturalBlocks(blocks: Array<{ text: string; start: number; end: number; hardBreak: boolean }>, source: string) {
+  const merged: Array<{ text: string; start: number; end: number; hardBreak: boolean }> = [];
+
+  for (const block of blocks) {
+    const previous = merged[merged.length - 1];
+    const canMergeWithPrevious =
+      previous &&
+      !previous.hardBreak &&
+      !looksLikeSceneStart(block.text) &&
+      (previous.text.length < MIN_NATURAL_SEGMENT_CHARS || block.text.length < MIN_NATURAL_SEGMENT_CHARS);
+
+    if (canMergeWithPrevious) {
+      previous.end = block.end;
+      previous.text = source.slice(previous.start, previous.end);
+      previous.hardBreak = block.hardBreak;
+    } else {
+      merged.push({ ...block });
     }
   }
 
-  if (partStart != null) parts.push({ text: text.slice(partStart, partEnd), start: partStart });
-  if (parts.length) return parts;
+  return merged;
+}
 
-  const chunkSize = 850;
-  for (let start = 0; start < text.length; start += chunkSize) {
-    const raw = text.slice(start, start + chunkSize);
-    if (!raw.trim()) continue;
-    parts.push({ text: raw, start });
+function looksLikeSceneStart(text: string) {
+  const firstLine = text.trimStart().split(/\n/, 1)[0]?.trim() ?? "";
+  return /^(제?\s*\d+\s*(화|장|막)|chapter\s+\d+|scene\s+\d+|#)/i.test(firstLine);
+}
+
+function splitOversizedBlock(block: { text: string; start: number; end: number }, bodyLength: number) {
+  if (block.text.length <= MAX_LONG_SEGMENT_CHARS) return [block];
+
+  const pieces: Array<{ text: string; start: number; end: number }> = [];
+  let cursor = block.start;
+  const blockEnd = Math.min(block.end, bodyLength);
+
+  while (cursor < blockEnd) {
+    const remaining = blockEnd - cursor;
+    if (remaining <= MAX_LONG_SEGMENT_CHARS) {
+      const finalPiece = trimBlockForDisplayIndexRange(block.text, block.start, cursor, blockEnd);
+      if (finalPiece) pieces.push(finalPiece);
+      break;
+    }
+
+    const searchStart = Math.min(blockEnd, cursor + TARGET_LONG_SEGMENT_CHARS);
+    const searchEnd = Math.min(blockEnd, cursor + MAX_LONG_SEGMENT_CHARS);
+    const splitAt = findNaturalSplitPoint(block.text, block.start, searchStart, searchEnd) ?? searchEnd;
+    const piece = trimBlockForDisplayIndexRange(block.text, block.start, cursor, splitAt);
+    if (piece) pieces.push(piece);
+    cursor = splitAt;
   }
-  return parts;
+
+  return pieces.length ? pieces : [block];
+}
+
+function trimBlockForDisplayIndexRange(source: string, sourceStart: number, absoluteStart: number, absoluteEnd: number) {
+  const localStart = Math.max(0, absoluteStart - sourceStart);
+  const localEnd = Math.max(localStart, absoluteEnd - sourceStart);
+  return trimBlockForDisplay(source.slice(localStart, localEnd), absoluteStart);
+}
+
+function findNaturalSplitPoint(source: string, sourceStart: number, searchStart: number, searchEnd: number) {
+  const localStart = Math.max(0, searchStart - sourceStart);
+  const localEnd = Math.max(localStart, searchEnd - sourceStart);
+  const window = source.slice(localStart, localEnd);
+  const boundaryPattern = /[.!?。！？…]["'”’)\]]?(?:\s+|$)|\n(?=["'“‘'「『(<\[]?\s*[가-힣A-Za-z0-9])/g;
+  let best: number | null = null;
+
+  for (const match of window.matchAll(boundaryPattern)) {
+    best = localStart + (match.index ?? 0) + match[0].length;
+  }
+
+  return best == null ? null : sourceStart + best;
 }
 
 function segmentIndexForOffset(segments: TextSegment[], offset: number) {
@@ -1427,6 +1526,55 @@ function slotsForSegment(slots: AssetSlot[], segment: TextSegment, isLast: boole
   return slots.filter((slot) =>
     isLast ? slot.offset >= segment.start && slot.offset <= segment.end : slot.offset >= segment.start && slot.offset < segment.end,
   );
+}
+
+function slotsAtOffset(slots: AssetSlot[], offset: number) {
+  return slots.filter((slot) => slot.offset === offset);
+}
+
+function markerOffsetsForSegment(segment: TextSegment, slots: AssetSlot[], openInsertOffset: number | null, activeOffset: number | null, isLast: boolean) {
+  const offsets = new Set<number>();
+  const inSegment = (offset: number) => (isLast ? offset >= segment.start && offset <= segment.end : offset >= segment.start && offset < segment.end);
+
+  for (const slot of slots) {
+    if (inSegment(slot.offset)) offsets.add(slot.offset);
+  }
+  if (openInsertOffset != null && inSegment(openInsertOffset)) offsets.add(openInsertOffset);
+  if (activeOffset != null && inSegment(activeOffset)) offsets.add(activeOffset);
+
+  return [...offsets].sort((a, b) => a - b);
+}
+
+function splitSegmentByOffsets(segment: TextSegment, offsets: number[]) {
+  const pieces: Array<{ type: "text"; key: string; text: string } | { type: "marker"; key: string; offset: number }> = [];
+  let cursor = segment.start;
+  const validOffsets = offsets.filter((offset) => offset >= segment.start && offset <= segment.end);
+
+  for (const offset of validOffsets) {
+    if (offset > cursor) {
+      pieces.push({
+        type: "text",
+        key: `text-${cursor}-${offset}`,
+        text: segment.text.slice(cursor - segment.start, offset - segment.start),
+      });
+    }
+    pieces.push({ type: "marker", key: `marker-${offset}`, offset });
+    cursor = offset;
+  }
+
+  if (cursor < segment.end) {
+    pieces.push({
+      type: "text",
+      key: `text-${cursor}-${segment.end}`,
+      text: segment.text.slice(cursor - segment.start),
+    });
+  }
+
+  if (!pieces.length) {
+    pieces.push({ type: "text", key: `text-${segment.start}-${segment.end}`, text: segment.text });
+  }
+
+  return pieces;
 }
 
 function getTextClickOffset(event: { clientX: number; clientY: number }, element: HTMLElement) {
@@ -1498,6 +1646,8 @@ function buildAssetPrompt(chapterTitle: string, excerpt: string, assetKind: "ima
 }
 
 async function uploadStoryAsset(storyId: string, file: File) {
+  const validationError = validateStoryAssetFile(file);
+  if (validationError) throw new Error(validationError);
   await ensureStoryMediaBucket();
   const ext = file.name.split(".").pop() || "bin";
   const key = `assets/${storyId}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
@@ -1506,6 +1656,37 @@ async function uploadStoryAsset(storyId: string, file: File) {
     .upload(key, file, { upsert: true, contentType: file.type || undefined });
   if (error) throw error;
   return key;
+}
+
+async function hashAssetFile(file: File) {
+  const buffer = await file.arrayBuffer();
+  const digest = await crypto.subtle.digest("SHA-256", buffer);
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function mediaAssetToLibraryEntry(row: MediaAssetRow): AssetLibraryEntry {
+  return {
+    id: row.id,
+    media_url: row.storage_path,
+    media_asset_id: row.id,
+    media_type: row.asset_type === "video" ? "video" : "image",
+    scene_description: String(row.metadata?.scene_description ?? row.file_name ?? "에셋"),
+    caption: row.file_name,
+    source: String(row.metadata?.source ?? "library"),
+    chapterTitle: row.chapter_id ? "회차 에셋" : "라이브러리",
+  };
+}
+
+function dedupeLibraryEntries(entries: AssetLibraryEntry[]) {
+  const seen = new Set<string>();
+  const result: AssetLibraryEntry[] = [];
+  for (const entry of entries) {
+    const key = entry.media_url || entry.media_asset_id || entry.id;
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    result.push(entry);
+  }
+  return result;
 }
 
 function InlineAssetEditor({
@@ -1541,6 +1722,9 @@ function InlineAssetEditor({
     heatTier?: string;
   }) => Promise<{ slot: AssetSlot; generated: boolean; providerLabel: string; model: string; warning?: string }>;
 }) {
+  const qc = useQueryClient();
+  const listMedia = useServerFn(listMediaAssets);
+  const registerMedia = useServerFn(registerMediaAsset);
   const [selectedSlotId, setSelectedSlotId] = useState<string | null>(null);
   const [activeOffset, setActiveOffset] = useState<number | null>(null);
   const [bulkUploading, setBulkUploading] = useState(false);
@@ -1558,7 +1742,14 @@ function InlineAssetEditor({
   const [openInsertOffset, setOpenInsertOffset] = useState<number | null>(null);
   const [movingSlotId, setMovingSlotId] = useState<string | null>(null);
   const [movingSlotIds, setMovingSlotIds] = useState<string[]>([]);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewAffection, setPreviewAffection] = useState(55);
   const activeExcerpt = chapter && activeOffset != null ? getOffsetExcerpt(chapter.body, activeOffset) : "";
+
+  const mediaLibraryQ = useQuery({
+    queryKey: ["asset_media_library", storyId],
+    queryFn: () => listMedia({ data: { storyId, status: "ready" } }),
+  });
 
   useEffect(() => {
     if (!chapter) {
@@ -1720,6 +1911,11 @@ function InlineAssetEditor({
       toast.error("이미지 또는 영상 파일만 업로드할 수 있습니다.");
       return;
     }
+    const invalidFile = files.find((file) => validateStoryAssetFile(file));
+    if (invalidFile) {
+      toast.error(validateStoryAssetFile(invalidFile));
+      return;
+    }
     const targetOffset = clampAssetOffset(offset, chapter.body.length);
     const segmentIndex = segmentIndexForOffset(splitBodySegments(chapter.body), targetOffset);
     const targetTiers = (tierRange?.length ? tierRange : ASSET_TIERS.map((tier) => tier.key)).slice(0, ASSET_TIERS.length);
@@ -1772,8 +1968,9 @@ function InlineAssetEditor({
     try {
       for (const [tier, file] of entries) {
         if (!file) continue;
-        if (!file.type.startsWith("image/") && !file.type.startsWith("video/")) {
-          toast.error("이미지 또는 영상 파일만 업로드할 수 있습니다.");
+        const validationError = validateStoryAssetFile(file);
+        if (validationError) {
+          toast.error(validationError);
           return;
         }
         const key = await uploadStoryAsset(storyId, file);
@@ -1851,9 +2048,54 @@ function InlineAssetEditor({
     toast.info("에셋영역을 드래그해서 원하는 본문 위치에 놓으세요.");
   }
 
-  const librarySlots = chapters.flatMap((item) =>
-    item.assetSlots.filter((slot) => slot.media_url).map((slot) => ({ ...slot, chapterTitle: item.title })),
+  const savedSlotLibrary = chapters.flatMap((item) =>
+    item.assetSlots.filter((slot) => slot.media_url).map((slot) => ({
+      id: slot.id,
+      media_url: slot.media_url,
+      media_asset_id: slot.media_asset_id,
+      media_type: slot.media_type,
+      scene_description: slot.scene_description,
+      caption: slot.caption,
+      source: slot.source ?? "manual",
+      chapterTitle: item.title,
+      heat_tier: slot.heat_tier,
+    })),
   );
+  const mediaAssetLibrary = (mediaLibraryQ.data ?? []).map(mediaAssetToLibraryEntry);
+  const librarySlots = dedupeLibraryEntries([...mediaAssetLibrary, ...savedSlotLibrary]);
+
+  async function uploadFilesToAssetLibrary(fileList: FileList | File[]) {
+    const files = Array.from(fileList);
+    if (!files.length) return;
+    setBulkUploading(true);
+    try {
+      for (const file of files) {
+        const key = await uploadStoryAsset(storyId, file);
+        const contentHash = await hashAssetFile(file);
+        await registerMedia({
+          data: {
+            storyId,
+            chapterId: null,
+            assetType: file.type.startsWith("video/") ? "video" : "image",
+            storagePath: key,
+            fileName: file.name,
+            fileSize: file.size,
+            mimeType: file.type || "application/octet-stream",
+            contentHash,
+            tags: ["asset-library"],
+            status: "ready",
+            metadata: { source: "asset_editor_library" },
+          },
+        });
+      }
+      await qc.invalidateQueries({ queryKey: ["asset_media_library", storyId] });
+      toast.success(`${files.length}개 파일을 에셋 라이브러리에 등록했습니다.`);
+    } catch (e: any) {
+      toast.error(e?.message ?? "에셋 라이브러리 등록에 실패했습니다.");
+    } finally {
+      setBulkUploading(false);
+    }
+  }
 
   async function runVietnameseTranslation() {
     if (!chapter) return;
@@ -1934,6 +2176,7 @@ function InlineAssetEditor({
       const sameTierAtOffset = (slot: AssetSlot) =>
         slot.offset === nextSlot.offset && slot.heat_tier === nextSlot.heat_tier;
       patchSlots([...chapter.assetSlots.filter((slot) => !sameTierAtOffset(slot)), nextSlot]);
+      void qc.invalidateQueries({ queryKey: ["asset_media_library", storyId] });
       setSelectedSlotId(null);
       setActiveOffset(nextSlot.offset);
       if (result.generated) {
@@ -2158,19 +2401,10 @@ function InlineAssetEditor({
             )}
           </section>
 
-          <aside className="space-y-4 xl:sticky xl:top-4">
-            <section className="rounded-lg border border-border bg-card p-4">
-              <div className="flex items-start gap-3">
-                <div className="grid size-9 shrink-0 place-items-center rounded-md bg-primary/10 text-primary">
-                  <Plus className="size-4" />
-                </div>
-                <div className="min-w-0">
-                  <div className="text-sm font-semibold">에셋삽입</div>
-                  <div className="text-xs text-muted-foreground">버튼을 누른 뒤 본문에서 이미지를 넣을 글자 위치를 클릭하세요.</div>
-                </div>
-              </div>
+          <aside className="space-y-3 xl:sticky xl:top-4">
+            <section className="rounded-lg border border-border bg-card p-3">
+              <div className="grid grid-cols-2 gap-2">
               <Button
-                className="mt-3 w-full"
                 variant={assetInsertMode ? "default" : "outline"}
                 onClick={() => {
                   setAssetInsertMode((value) => !value);
@@ -2181,72 +2415,28 @@ function InlineAssetEditor({
                 disabled={!chapter?.body.trim()}
               >
                 <Plus className="size-4" />
-                {assetInsertMode && !movingSlotId && !movingSlotIds.length ? "본문 위치 선택 중" : "에셋삽입 시작"}
+                {assetInsertMode && !movingSlotId && !movingSlotIds.length ? "위치 선택 중" : "에셋삽입"}
               </Button>
+              <Button variant="outline" onClick={() => setPreviewOpen(true)} disabled={!chapter?.body.trim()}>
+                <Eye className="size-4" />
+                프리뷰
+              </Button>
+              </div>
               {(movingSlotId || movingSlotIds.length > 0) && (
-                <div className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-200">
-                  이동할 에셋영역을 드래그해서 원하는 본문 위치에 놓거나, 새 본문 위치를 클릭하세요.
+                <div className="mt-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-xs text-amber-700 dark:text-amber-200">
+                  이동할 위치를 본문에서 선택하세요.
                 </div>
               )}
               {activeOffset != null && (
-                <div className="mt-3 rounded-md border border-primary/20 bg-primary/5 p-3 text-xs text-primary">
-                  선택 위치가 지정되었습니다. 본문 사이에 열린 삽입 패널에서 파일을 등록하거나 빈 슬롯을 만드세요.
+                <div className="mt-2 rounded-md border border-primary/20 bg-primary/5 px-2 py-1.5 text-xs text-primary">
+                  선택 위치 지정됨
                 </div>
               )}
-            </section>
-            <section className="rounded-lg border border-border bg-card p-4">
-              <div className="flex items-start gap-3">
-                <div className="grid size-9 shrink-0 place-items-center rounded-md bg-primary/10 text-primary">
-                  <Sparkles className="size-4" />
-                </div>
-                <div className="min-w-0">
-                  <div className="text-sm font-semibold">AI 에셋 생성</div>
-                  <div className="text-xs text-muted-foreground">본문에서 선택한 등록 위치를 기준으로 이미지 또는 영상 프롬프트를 준비합니다.</div>
-                </div>
-              </div>
-              <div className="mt-3 grid grid-cols-2 gap-2">
-                <Button variant={assetKind === "image" ? "default" : "outline"} onClick={() => setAssetKind("image")}>
-                  <ImageIcon className="size-4" />
-                  이미지
-                </Button>
-                <Button variant={assetKind === "video" ? "default" : "outline"} onClick={() => setAssetKind("video")}>
-                  <Camera className="size-4" />
-                  영상
-                </Button>
-              </div>
-              <div className="mt-3">
-                <label className="text-xs text-muted-foreground">적용 호감도</label>
-                <select
-                  value={assetHeatTier}
-                  onChange={(event) => setAssetHeatTier(event.target.value as AssetTier)}
-                  className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
-                >
-                  {ASSET_TIERS.map((tier) => (
-                    <option key={tier.key} value={tier.key}>
-                      {tier.label} - {tier.hint}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <Textarea
-                value={assetPrompt || (activeExcerpt ? buildAssetPrompt(chapter.title, activeExcerpt, assetKind) : "")}
-                onChange={(event) => setAssetPrompt(event.target.value)}
-                className="mt-3 min-h-28 text-xs"
-                placeholder="본문 위치를 선택하면 AI 프롬프트가 자동으로 준비됩니다."
-              />
-              <Button className="mt-3 w-full" onClick={prepareAiAssetSlot} disabled={!activeExcerpt}>
-                <Plus className="size-4" />
-                선택 위치에 AI 슬롯 추가
-              </Button>
-              <Button className="mt-2 w-full" variant="secondary" onClick={generateAssetAtSelectedOffset} disabled={!activeExcerpt || assetGenerating}>
-                {assetGenerating ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
-                AI로 에셋 생성
-              </Button>
             </section>
 
             <section
               className={cn(
-                "rounded-lg border border-dashed bg-card p-4 transition",
+                "rounded-lg border border-dashed bg-card p-3 transition",
                 activeOffset == null ? "border-border" : "border-primary bg-primary/5",
               )}
               onDragOver={(event) => {
@@ -2254,25 +2444,20 @@ function InlineAssetEditor({
               }}
               onDrop={(event) => {
                 event.preventDefault();
-                if (activeOffset == null) {
-                  toast.error("본문에서 에셋을 넣을 위치를 먼저 선택하세요.");
-                  return;
-                }
-                void addFilesAtOffset(activeOffset, event.dataTransfer.files);
+                void uploadFilesToAssetLibrary(event.dataTransfer.files);
               }}
             >
-              <div className="flex items-start gap-3">
-                <div className="grid size-9 shrink-0 place-items-center rounded-md bg-primary/10 text-primary">
+              <div className="flex items-center gap-2">
+                <div className="grid size-8 shrink-0 place-items-center rounded-md bg-primary/10 text-primary">
                   <ImageIcon className="size-4" />
                 </div>
                 <div className="min-w-0">
                   <div className="text-sm font-semibold">에셋 라이브러리</div>
-                  <div className="text-xs text-muted-foreground">기존 에셋을 드래그하거나 선택 위치에 파일을 업로드합니다.</div>
                 </div>
               </div>
-              <label className="mt-3 flex min-h-20 cursor-pointer flex-col items-center justify-center rounded-md border border-dashed border-border bg-background p-3 text-center text-sm text-muted-foreground hover:border-primary/50">
-                {bulkUploading ? <Loader2 className="mb-1 size-4 animate-spin" /> : <Upload className="mb-1 size-4" />}
-                이미지/영상 파일 업로드
+              <label className="mt-2 flex h-12 cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed border-border bg-background px-3 text-sm text-muted-foreground hover:border-primary/50">
+                {bulkUploading ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
+                파일 업로드
                 <input
                   type="file"
                   multiple
@@ -2281,30 +2466,129 @@ function InlineAssetEditor({
                   disabled={bulkUploading}
                   onChange={(event) => {
                     if (!event.target.files) return;
-                    if (activeOffset == null) {
-                      toast.error("본문에서 에셋을 넣을 위치를 먼저 선택하세요.");
-                      event.target.value = "";
-                      return;
-                    }
-                    void addFilesAtOffset(activeOffset, event.target.files);
+                    void uploadFilesToAssetLibrary(event.target.files);
                     event.target.value = "";
                   }}
                 />
               </label>
-              {librarySlots.length ? (
-                <div className="mt-3 grid max-h-[22rem] gap-2 overflow-y-auto pr-1">
-                  {librarySlots.map((slot) => (
+              {mediaLibraryQ.isLoading ? (
+                <div className="mt-2 rounded-md border border-dashed border-border p-3 text-xs text-muted-foreground">
+                  라이브러리 불러오는 중
+                </div>
+              ) : librarySlots.length ? (
+                <div className="mt-2 grid max-h-48 gap-2 overflow-hidden">
+                  {librarySlots.slice(0, 5).map((slot) => (
                     <AssetLibraryItem key={`${slot.chapterTitle}-${slot.id}`} slot={slot} />
                   ))}
+                  {librarySlots.length > 5 && (
+                    <div className="rounded-md border border-border bg-background px-3 py-2 text-center text-xs text-muted-foreground">
+                      외 {librarySlots.length - 5}개
+                    </div>
+                  )}
                 </div>
               ) : (
-                <div className="mt-3 rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">
-                  등록된 에셋이 없습니다. 파일을 업로드하거나 URL을 입력하세요.
+                <div className="mt-2 rounded-md border border-dashed border-border p-3 text-xs text-muted-foreground">
+                  등록된 에셋 없음
                 </div>
               )}
             </section>
+
+            <section className="rounded-lg border border-border bg-card p-3">
+              <div className="flex items-center gap-2">
+                <div className="grid size-8 shrink-0 place-items-center rounded-md bg-primary/10 text-primary">
+                  <Sparkles className="size-4" />
+                </div>
+                <div className="text-sm font-semibold">AI 에셋 생성</div>
+              </div>
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                <Button size="sm" variant={assetKind === "image" ? "default" : "outline"} onClick={() => setAssetKind("image")}>
+                  <ImageIcon className="size-4" />
+                  이미지
+                </Button>
+                <Button size="sm" variant={assetKind === "video" ? "default" : "outline"} onClick={() => setAssetKind("video")}>
+                  <Camera className="size-4" />
+                  영상
+                </Button>
+              </div>
+              <select
+                value={assetHeatTier}
+                onChange={(event) => setAssetHeatTier(event.target.value as AssetTier)}
+                className="mt-2 h-9 w-full rounded-md border border-border bg-background px-2 text-xs"
+              >
+                {ASSET_TIERS.map((tier) => (
+                  <option key={tier.key} value={tier.key}>
+                    {tier.label} - {tier.hint}
+                  </option>
+                ))}
+              </select>
+              <Textarea
+                value={assetPrompt || (activeExcerpt ? buildAssetPrompt(chapter.title, activeExcerpt, assetKind) : "")}
+                onChange={(event) => setAssetPrompt(event.target.value)}
+                className="mt-2 min-h-20 text-xs"
+                placeholder="선택 위치 기준 프롬프트"
+              />
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                <Button size="sm" variant="outline" onClick={prepareAiAssetSlot} disabled={!activeExcerpt}>
+                  <Plus className="size-4" />
+                  슬롯
+                </Button>
+                <Button size="sm" variant="secondary" onClick={generateAssetAtSelectedOffset} disabled={!activeExcerpt || assetGenerating}>
+                  {assetGenerating ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+                  생성
+                </Button>
+              </div>
+            </section>
           </aside>
         </div>
+      )}
+      {chapter && (
+        <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
+          <DialogContent className="flex max-h-[92vh] max-w-[96vw] flex-col overflow-hidden p-0">
+            <DialogHeader className="border-b border-border px-4 py-3">
+              <DialogTitle>회원 화면 프리뷰</DialogTitle>
+            </DialogHeader>
+            <div className="border-b border-border bg-card px-4 py-3">
+              <div className="flex flex-wrap items-center gap-3">
+                <label className="text-xs text-muted-foreground">호감도</label>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={previewAffection}
+                  onChange={(event) => setPreviewAffection(Number(event.target.value))}
+                  className="min-w-48 flex-1"
+                />
+                <span className="w-12 rounded-full bg-primary/10 px-2 py-1 text-center text-xs font-semibold text-primary">
+                  {previewAffection}
+                </span>
+                {[0, 30, 55, 75, 100].map((value) => (
+                  <Button
+                    key={value}
+                    type="button"
+                    size="sm"
+                    variant={previewAffection === value ? "default" : "outline"}
+                    onClick={() => setPreviewAffection(value)}
+                  >
+                    {value}
+                  </Button>
+                ))}
+              </div>
+            </div>
+            <div className="min-h-0 flex-1 overflow-auto bg-background">
+              <UnifiedStoryReader
+                storyId={storyId}
+                title={chapter.title}
+                cover={undefined}
+                bodyText={chapter.body}
+                assetSlots={chapter.assetSlots}
+                characterName="캐릭터"
+                previewMode
+                previewAffection={previewAffection}
+              />
+            </div>
+          </DialogContent>
+        </Dialog>
       )}
     </div>
   );
@@ -2468,11 +2752,9 @@ function StoryAssetCanvas({
       )}
       {segments.map((segment, index) => {
         const isLast = index === segments.length - 1;
-        const segmentSlots = slotsForSegment(chapter.assetSlots, segment, isLast);
         const selectedHere = activeOffset != null && activeOffset >= segment.start && activeOffset <= segment.end;
-        const insertOpenHere = openInsertOffset != null && openInsertOffset >= segment.start && openInsertOffset <= segment.end;
-        const selectedOffset = selectedHere ? activeOffset : segment.end;
-        const insertOffset = insertOpenHere ? openInsertOffset : selectedOffset;
+        const markerOffsets = markerOffsetsForSegment(segment, chapter.assetSlots, openInsertOffset, activeOffset, isLast);
+        const segmentPieces = splitSegmentByOffsets(segment, markerOffsets);
         return (
           <div
             key={segment.key}
@@ -2526,68 +2808,90 @@ function StoryAssetCanvas({
               }
             }}
           >
-            <div
-              className={cn("whitespace-pre-wrap", insertMode ? "select-text" : "")}
-              style={{
-                color: textStyle.color,
-                fontSize: `${textStyle.fontSize}px`,
-                fontWeight: textStyle.bold ? 700 : 400,
-                fontStyle: textStyle.italic ? "italic" : "normal",
-                lineHeight: 1.85,
-              }}
-            >
-              {segment.text || "본문이 비어 있습니다. 원하는 위치를 선택해 에셋을 삽입하세요."}
-            </div>
-            {insertOpenHere && !segmentSlots.length && (
-              <div data-asset-marker="true" className="mt-3 flex items-center gap-2 rounded-md border border-dashed border-primary bg-primary/10 px-3 py-2 text-xs text-primary">
-                <div className="h-px flex-1 bg-primary/30" />
-                선택 위치
-                <div className="h-px flex-1 bg-primary/30" />
-              </div>
-            )}
-            {(selectedHere || segmentSlots.length > 0) && (
-              <InlineAssetPreview
-                slots={segmentSlots}
-                selected={selectedHere}
-                selectedSlotId={selectedSlotId}
-                saving={saving}
-                onSelectSlot={onSelectSlot}
-                onOpenRegistration={(event) => {
-                  event.stopPropagation();
-                  openRegistration(selectedOffset, true);
-                }}
-                onAddSlots={() => onAddSlots(selectedOffset, menuTiers)}
-                onPatchSlot={onPatchSlot}
-                onRemoveSlot={onRemoveSlot}
-                onMoveSlot={onMoveSlot}
-                onRemoveSlots={onRemoveSlots}
-                onMoveSlots={onMoveSlots}
-                storyId={storyId}
-              />
-            )}
-            {insertOpenHere && (
-              <div data-asset-marker="true" className="mt-3 rounded-lg border border-primary/30 bg-card p-3 shadow-sm">
-                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <div className="text-sm font-semibold text-primary">에셋 삽입</div>
-                    <div className="text-xs text-muted-foreground">단계 범위와 파일만 선택하면 저장됩니다.</div>
-                  </div>
+            {segmentPieces.map((piece) => {
+              if (piece.type === "text") {
+                return (
+                  <span
+                    key={piece.key}
+                    className={cn("whitespace-pre-wrap", insertMode ? "select-text" : "")}
+                    style={{
+                      color: textStyle.color,
+                      fontSize: `${textStyle.fontSize}px`,
+                      fontWeight: textStyle.bold ? 700 : 400,
+                      fontStyle: textStyle.italic ? "italic" : "normal",
+                      lineHeight: 1.85,
+                    }}
+                  >
+                    {piece.text || "본문이 비어 있습니다. 원하는 위치를 선택해 에셋을 삽입하세요."}
+                  </span>
+                );
+              }
+
+              const offsetSlots = slotsAtOffset(chapter.assetSlots, piece.offset);
+              const selectedAtOffset = activeOffset === piece.offset;
+              const insertOpenAtOffset = openInsertOffset === piece.offset;
+
+              return (
+                <div
+                  key={piece.key}
+                  data-asset-marker="true"
+                  className="my-3"
+                  onClick={(event) => event.stopPropagation()}
+                  onContextMenu={(event) => event.stopPropagation()}
+                >
+                  {insertOpenAtOffset && !offsetSlots.length && (
+                    <div className="mb-3 flex items-center gap-2 rounded-md border border-dashed border-primary bg-primary/10 px-3 py-2 text-xs text-primary">
+                      <div className="h-px flex-1 bg-primary/30" />
+                      이 위치에 에셋이 삽입됩니다
+                      <div className="h-px flex-1 bg-primary/30" />
+                    </div>
+                  )}
+                  {(selectedAtOffset || offsetSlots.length > 0) && (
+                    <InlineAssetPreview
+                      slots={offsetSlots}
+                      selected={selectedAtOffset}
+                      selectedSlotId={selectedSlotId}
+                      saving={saving}
+                      onSelectSlot={onSelectSlot}
+                      onOpenRegistration={(event) => {
+                        event.stopPropagation();
+                        openRegistration(piece.offset, true);
+                      }}
+                      onAddSlots={() => onAddSlots(piece.offset, menuTiers)}
+                      onPatchSlot={onPatchSlot}
+                      onRemoveSlot={onRemoveSlot}
+                      onMoveSlot={onMoveSlot}
+                      onRemoveSlots={onRemoveSlots}
+                      onMoveSlots={onMoveSlots}
+                      storyId={storyId}
+                    />
+                  )}
+                  {insertOpenAtOffset && (
+                    <div className="rounded-lg border border-primary/30 bg-card p-3 shadow-sm">
+                      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <div className="text-sm font-semibold text-primary">에셋 삽입</div>
+                          <div className="text-xs text-muted-foreground">선택한 본문 위치 바로 아래 행에 저장됩니다.</div>
+                        </div>
+                      </div>
+                      <InlineAssetInsertMenu
+                        offset={piece.offset}
+                        embedded
+                        rangeStart={rangeStart}
+                        rangeEnd={rangeEnd}
+                        tiers={menuTiers}
+                        onRangeStart={setRangeStart}
+                        onRangeEnd={setRangeEnd}
+                        onClose={() => undefined}
+                        slots={offsetSlots}
+                        saving={saving}
+                        onCommit={(filesByTier) => onCommitSlots(piece.offset, filesByTier)}
+                      />
+                    </div>
+                  )}
                 </div>
-                <InlineAssetInsertMenu
-                  offset={insertOffset}
-                  embedded
-                  rangeStart={rangeStart}
-                  rangeEnd={rangeEnd}
-                  tiers={menuTiers}
-                  onRangeStart={setRangeStart}
-                  onRangeEnd={setRangeEnd}
-                  onClose={() => undefined}
-                  slots={segmentSlots}
-                  saving={saving}
-                  onCommit={(filesByTier) => onCommitSlots(insertOffset, filesByTier)}
-                />
-              </div>
-            )}
+              );
+            })}
           </div>
         );
       })}
@@ -2626,7 +2930,22 @@ function InlineAssetInsertMenu({
 
   useEffect(() => {
     setPickedFiles({});
-  }, [offset, rangeStart, rangeEnd]);
+  }, [offset]);
+
+  function pickFile(tier: AssetTier, file: File) {
+    const validationError = validateStoryAssetFile(file);
+    if (validationError) {
+      toast.error(validationError);
+      return;
+    }
+    setPickedFiles((prev) => ({ ...prev, [tier]: file }));
+  }
+
+  function cancelInsert() {
+    setPickedFiles({});
+    onClose();
+  }
+
   return (
     <div
       className={cn(
@@ -2692,13 +3011,19 @@ function InlineAssetInsertMenu({
               hint={meta?.hint ?? ""}
               slot={slot}
               pickedFile={pickedFile}
-              onFile={(file) => setPickedFiles((prev) => ({ ...prev, [tier]: file }))}
+              onFile={(file) => pickFile(tier, file)}
             />
           );
         })}
       </div>
 
-      <div className="mt-3 flex justify-end">
+      <div className="mt-3 flex flex-wrap justify-end gap-2">
+        <Button type="button" variant="ghost" onClick={() => setPickedFiles({})} disabled={!hasPickedFiles || saving}>
+          선택 초기화
+        </Button>
+        <Button type="button" variant="outline" onClick={cancelInsert} disabled={saving}>
+          취소
+        </Button>
         <Button
           onClick={() => onCommit(pickedFiles)}
           disabled={saving || !hasPickedFiles}
@@ -3231,6 +3556,11 @@ function SelectedAssetEditor({
   const [uploading, setUploading] = useState(false);
   async function uploadFile(file: File | null) {
     if (!file) return;
+    const validationError = validateStoryAssetFile(file);
+    if (validationError) {
+      toast.error(validationError);
+      return;
+    }
     setUploading(true);
     try {
       const key = await uploadStoryAsset(storyId, file);
@@ -3298,7 +3628,10 @@ function SelectedAssetEditor({
             type="file"
             accept="image/*,video/*"
             className="sr-only"
-            onChange={(event) => uploadFile(event.target.files?.[0] ?? null)}
+            onChange={(event) => {
+              void uploadFile(event.target.files?.[0] ?? null);
+              event.target.value = "";
+            }}
           />
         </label>
       </div>
@@ -3324,13 +3657,24 @@ function SelectedAssetEditor({
   );
 }
 
-function AssetLibraryItem({ slot }: { slot: AssetSlot & { chapterTitle: string } }) {
+function AssetLibraryItem({ slot }: { slot: AssetLibraryEntry }) {
   const mediaUrl = useSignedCover(slot.media_url);
   return (
     <div
       draggable
       onDragStart={(event) => {
-        event.dataTransfer.setData("application/x-lovetale-asset", JSON.stringify(slot));
+        event.dataTransfer.setData(
+          "application/x-lovetale-asset",
+          JSON.stringify({
+            media_asset_id: slot.media_asset_id,
+            media_url: slot.media_url,
+            media_type: slot.media_type,
+            scene_description: slot.scene_description,
+            caption: slot.caption,
+            heat_tier: slot.heat_tier,
+            source: "library",
+          }),
+        );
       }}
       className="flex cursor-grab items-center gap-3 rounded-md border border-border bg-background p-2 active:cursor-grabbing"
     >

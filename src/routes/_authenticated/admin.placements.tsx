@@ -26,7 +26,7 @@ export const Route = createFileRoute("/_authenticated/admin/placements")({
 });
 
 const SLOTS: { value: HomeSlot; label: string; desc: string }[] = [
-  { value: "hero", label: "히어로섹션", desc: "메인 상단 배너" },
+  { value: "hero", label: "히어로섹션", desc: "메인 상단 대표 배너" },
   { value: "trending", label: "지금 뜨거운 스토리", desc: "현재 반응이 뜨거운 작품" },
   { value: "new", label: "신작", desc: "새로 공개된 작품" },
   { value: "all", label: "모든 스토리", desc: "홈 하단 전체 목록" },
@@ -46,16 +46,16 @@ function PlacementsPage() {
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as HomeSlot)}>
         <TabsList className="flex h-auto flex-wrap gap-1">
-          {SLOTS.map((s) => (
-            <TabsTrigger key={s.value} value={s.value}>
-              {s.label}
+          {SLOTS.map((slot) => (
+            <TabsTrigger key={slot.value} value={slot.value}>
+              {slot.label}
             </TabsTrigger>
           ))}
         </TabsList>
-        {SLOTS.map((s) => (
-          <TabsContent key={s.value} value={s.value} className="space-y-5">
-            <p className="text-sm text-muted-foreground">{s.desc}</p>
-            <SlotPanel slot={s.value} />
+        {SLOTS.map((slot) => (
+          <TabsContent key={slot.value} value={slot.value} className="space-y-5">
+            <p className="text-sm text-muted-foreground">{slot.desc}</p>
+            <SlotPanel slot={slot.value} />
           </TabsContent>
         ))}
       </Tabs>
@@ -74,7 +74,10 @@ function SlotPanel({ slot }: { slot: HomeSlot }) {
     queryFn: () => listFn({ data: { slot } }),
   });
 
-  const invalidate = () => qc.invalidateQueries({ queryKey: ["admin_placements", slot] });
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ["admin_placements", slot] });
+    qc.invalidateQueries({ queryKey: ["home_placement"] });
+  };
 
   const mUpdate = useMutation({
     mutationFn: (vars: { id: string; sort_order?: number; is_active?: boolean }) =>
@@ -93,13 +96,7 @@ function SlotPanel({ slot }: { slot: HomeSlot }) {
 
   if (isLoading) return <Loader2 className="size-5 animate-spin text-muted-foreground" />;
 
-  const rows = (data ?? []) as Array<{
-    id: string;
-    sort_order: number;
-    is_active: boolean;
-    story_id: string;
-    user_stories: { id: string; title: string; cover_url: string | null; is_public: boolean; is_listed: boolean };
-  }>;
+  const rows = data ?? [];
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1.2fr_1fr]">
@@ -115,16 +112,16 @@ function SlotPanel({ slot }: { slot: HomeSlot }) {
           ) : (
             rows.map((row, idx) => {
               const story = row.user_stories;
-              const warn = !story.is_public || !story.is_listed;
+              const warn = !story?.is_public || !story?.is_listed;
               return (
                 <div key={row.id} className="flex items-center gap-3 rounded-lg border border-border bg-card/60 p-2">
                   <div className="size-12 shrink-0 overflow-hidden rounded bg-muted">
-                    {story.cover_url ? (
+                    {story?.cover_url ? (
                       <CoverImage src={story.cover_url} alt={story.title} className="size-full object-cover" />
                     ) : null}
                   </div>
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-medium">{story.title}</div>
+                    <div className="truncate text-sm font-medium">{story?.title ?? "삭제된 스토리"}</div>
                     <div className="flex items-center gap-1.5">
                       <span className="text-[11px] text-muted-foreground">순서 #{row.sort_order}</span>
                       {warn && <Badge variant="destructive" className="text-[9px]">비공개</Badge>}
@@ -165,7 +162,7 @@ function SlotPanel({ slot }: { slot: HomeSlot }) {
         </CardContent>
       </Card>
 
-      <AddCard slot={slot} existing={rows.map((r) => r.story_id)} onAdded={invalidate} />
+      <AddCard slot={slot} existing={rows.map((row) => row.story_id)} onAdded={invalidate} />
     </div>
   );
 }
@@ -189,7 +186,7 @@ function AddCard({ slot, existing, onAdded }: { slot: HomeSlot; existing: string
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const stories = (data ?? []).filter((s: { id: string }) => !existing.includes(s.id));
+  const stories = (data ?? []).filter((story) => !existing.includes(story.id));
 
   return (
     <Card>
@@ -206,19 +203,24 @@ function AddCard({ slot, existing, onAdded }: { slot: HomeSlot; existing: string
           <div className="max-h-[420px] space-y-1.5 overflow-y-auto">
             {stories.length === 0 ? (
               <p className="py-4 text-center text-sm text-muted-foreground">
-                추가 가능한 스토리가 없습니다. <Link to="/admin/stories" className="text-primary hover:underline">콘텐츠 관리</Link>
+                추가 가능한 스토리가 없습니다.{" "}
+                <Link to="/admin/stories" className="text-primary hover:underline">
+                  콘텐츠 관리
+                </Link>
               </p>
             ) : (
-              stories.map((s: { id: string; title: string; cover_url?: string | null }) => (
+              stories.map((story) => (
                 <button
-                  key={s.id}
-                  onClick={() => mAdd.mutate(s.id)}
+                  key={story.id}
+                  onClick={() => mAdd.mutate(story.id)}
                   className="flex w-full items-center gap-3 rounded-lg border border-border bg-card/60 p-2 text-left hover:border-primary/50"
                 >
                   <div className="size-10 shrink-0 overflow-hidden rounded bg-muted">
-                    {s.cover_url ? <CoverImage src={s.cover_url} alt={s.title} className="size-full object-cover" /> : null}
+                    {story.cover_url ? (
+                      <CoverImage src={story.cover_url} alt={story.title} className="size-full object-cover" />
+                    ) : null}
                   </div>
-                  <span className="min-w-0 flex-1 truncate text-sm">{s.title}</span>
+                  <span className="min-w-0 flex-1 truncate text-sm">{story.title}</span>
                   <Plus className="size-4 shrink-0 text-muted-foreground" />
                 </button>
               ))

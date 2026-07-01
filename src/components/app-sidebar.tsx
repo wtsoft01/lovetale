@@ -1,8 +1,22 @@
 import { Link, useRouterState } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { Compass, Sparkles, MessagesSquare, Crown, UserRound, Home, Receipt, ShieldCheck, Store, Library } from "lucide-react";
+import {
+  Compass,
+  Sparkles,
+  MessagesSquare,
+  Crown,
+  UserRound,
+  Receipt,
+  ShieldCheck,
+  Store,
+  Library,
+} from "lucide-react";
+
 import { useServerFn } from "@/lib/_mock/runtime";
 import { getMyProfile } from "@/lib/profile.functions";
+import { useAuth } from "@/hooks/use-auth";
+import { getStaffAccess } from "@/lib/staff-access";
+
 const brandSymbolUrl = "/brand-symbol.png";
 
 import {
@@ -19,29 +33,44 @@ import {
 } from "@/components/ui/sidebar";
 
 const navItems = [
-  { title: "홈", url: "/", icon: Home },
   { title: "탐색", url: "/explore", icon: Compass },
   { title: "스토리마켓", url: "/marketplace", icon: Store },
-  { title: "내스토리 로맨스", url: "/builder", icon: Sparkles },
+  { title: "AI 스토리 로맨스", url: "/builder", icon: Sparkles },
   { title: "내 라이브러리", url: "/library", icon: Library },
   { title: "캐릭터 만들기", url: "/create", icon: Sparkles },
-  { title: "내 채팅", url: "/chats", icon: MessagesSquare },
+  { title: "AI 채팅", url: "/chats", icon: MessagesSquare },
 ];
 
 const accountItems = [
   { title: "프리미엄", url: "/premium", icon: Crown },
   { title: "주문 현황", url: "/orders", icon: Receipt },
   { title: "프로필", url: "/profile", icon: UserRound },
-  { title: "관리자", url: "/admin", icon: ShieldCheck },
 ];
+
+const adminAccountItem = { title: "관리자", url: "/admin", icon: ShieldCheck };
 
 export function AppSidebar() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const { session, loading: authLoading } = useAuth();
   const fetchProfile = useServerFn(getMyProfile);
   const profileQ = useQuery({
     queryKey: ["my_profile_balance"],
     queryFn: () => fetchProfile(),
   });
+  const staffQ = useQuery({
+    queryKey: ["staff_roles", session?.user.id ?? "anon"],
+    queryFn: () =>
+      getStaffAccess({
+        userId: session?.user.id,
+        accessToken: session?.access_token,
+        email: session?.user.email ?? undefined,
+      }),
+    enabled: !authLoading && Boolean(session),
+    staleTime: 60_000,
+  });
+  const visibleAccountItems = staffQ.data?.hasAny
+    ? [...accountItems, adminAccountItem]
+    : accountItems;
   const isActive = (url: string) =>
     url === "/" ? pathname === "/" : pathname.startsWith(url);
 
@@ -84,7 +113,7 @@ export function AppSidebar() {
           <SidebarGroupLabel>계정</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {accountItems.map((item) => (
+              {visibleAccountItems.map((item) => (
                 <SidebarMenuItem key={item.url}>
                   <SidebarMenuButton asChild isActive={isActive(item.url)}>
                     <Link to={item.url}>
@@ -102,14 +131,14 @@ export function AppSidebar() {
       <SidebarFooter className="px-3 pb-4 group-data-[collapsible=icon]:hidden">
         <div className="rounded-xl border border-border bg-surface-elevated/60 p-3">
           <div className="flex items-center justify-between text-xs">
-            <span className="text-muted-foreground">잔여 크레딧</span>
+            <span className="text-muted-foreground">보유 크레딧</span>
             <span className="font-semibold text-foreground">
               {profileQ.data?.credits?.toLocaleString?.() ?? "0"}
             </span>
           </div>
           <Link
             to="/premium"
-            className="mt-2 block rounded-lg bg-gradient-aurora px-3 py-1.5 text-center text-xs font-medium text-primary-foreground shadow-glow transition hover:opacity-90"
+            className="mt-2 block rounded-lg border border-primary/70 bg-primary px-3 py-1.5 text-center text-xs font-semibold text-primary-foreground shadow-sm transition hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
           >
             크레딧 충전
           </Link>

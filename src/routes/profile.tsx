@@ -13,6 +13,7 @@ import {
   Bell,
   Globe,
   Moon,
+  Sun,
   LogOut,
   ChevronRight,
 } from "lucide-react";
@@ -86,6 +87,7 @@ function Profile() {
   const [open, setOpen] = useState(false);
   const [consent, setConsent] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [darkMode, setDarkMode] = useState(true);
 
   useEffect(() => {
     if (!user) return;
@@ -96,6 +98,27 @@ function Profile() {
       .then((e) => setEndings((e ?? []) as Ending[]))
       .catch(() => {});
   }, [user, fnProfile, fnEndings]);
+
+  useEffect(() => {
+    const savedTheme = window.localStorage.getItem("lovetale-theme");
+    const prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? true;
+    const shouldUseDark = savedTheme ? savedTheme !== "light" : prefersDark;
+    setDarkMode(shouldUseDark);
+    applyTheme(shouldUseDark);
+  }, []);
+
+  function applyTheme(useDark: boolean) {
+    document.documentElement.classList.toggle("dark", useDark);
+    document.documentElement.classList.toggle("light", !useDark);
+    document.documentElement.style.colorScheme = useDark ? "dark" : "light";
+  }
+
+  function handleDarkModeChange(checked: boolean) {
+    setDarkMode(checked);
+    window.localStorage.setItem("lovetale-theme", checked ? "dark" : "light");
+    applyTheme(checked);
+    toast.success(checked ? "다크모드가 적용되었습니다." : "라이트모드가 적용되었습니다.");
+  }
 
   async function handleVerify() {
     if (!consent) return;
@@ -292,25 +315,26 @@ function Profile() {
       <section>
         <h2 className="mb-3 font-display text-xl font-semibold">환경설정</h2>
         <div className="divide-y divide-border rounded-2xl border border-border bg-card">
-          {[
-            { icon: Bell, title: "알림", desc: "새로운 캐릭터, 이벤트 알림 받기", toggle: true },
-            { icon: Moon, title: "다크 모드", desc: "항상 어두운 테마 사용", toggle: true },
-            { icon: Globe, title: "언어", desc: "한국어", toggle: false },
-            { icon: Settings, title: "콘텐츠 필터", desc: "19+ 콘텐츠 자동 숨김 (인증 후 조정 가능)", toggle: true },
-          ].map((row) => (
-            <div key={row.title} className="flex items-center justify-between gap-3 p-4">
-              <div className="flex items-center gap-3">
-                <div className="grid h-9 w-9 place-items-center rounded-lg bg-surface-elevated text-muted-foreground">
-                  <row.icon className="h-4 w-4" />
-                </div>
-                <div>
-                  <div className="text-sm font-medium">{row.title}</div>
-                  <div className="text-xs text-muted-foreground">{row.desc}</div>
-                </div>
-              </div>
-              {row.toggle ? <Switch defaultChecked /> : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
-            </div>
-          ))}
+          <SettingSwitchRow
+            icon={Bell}
+            title="알림"
+            desc="새로운 캐릭터, 이벤트 알림 받기"
+            checked
+          />
+          <SettingSwitchRow
+            icon={darkMode ? Moon : Sun}
+            title="다크 모드"
+            desc={darkMode ? "현재 어두운 테마를 사용 중입니다." : "현재 밝은 테마를 사용 중입니다."}
+            checked={darkMode}
+            onCheckedChange={handleDarkModeChange}
+          />
+          <SettingLinkRow icon={Globe} title="언어" desc="한국어" />
+          <SettingSwitchRow
+            icon={Settings}
+            title="콘텐츠 필터"
+            desc="19+ 콘텐츠 자동 숨김 (인증 후 조정 가능)"
+            checked
+          />
         </div>
       </section>
 
@@ -362,6 +386,60 @@ function Profile() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+function SettingSwitchRow({
+  icon: Icon,
+  title,
+  desc,
+  checked,
+  onCheckedChange,
+}: {
+  icon: typeof Bell;
+  title: string;
+  desc: string;
+  checked: boolean;
+  onCheckedChange?: (checked: boolean) => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 p-4">
+      <div className="flex items-center gap-3">
+        <div className="grid h-9 w-9 place-items-center rounded-lg bg-surface-elevated text-muted-foreground">
+          <Icon className="h-4 w-4" />
+        </div>
+        <div>
+          <div className="text-sm font-medium">{title}</div>
+          <div className="text-xs text-muted-foreground">{desc}</div>
+        </div>
+      </div>
+      <Switch checked={checked} onCheckedChange={onCheckedChange} />
+    </div>
+  );
+}
+
+function SettingLinkRow({
+  icon: Icon,
+  title,
+  desc,
+}: {
+  icon: typeof Globe;
+  title: string;
+  desc: string;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 p-4">
+      <div className="flex items-center gap-3">
+        <div className="grid h-9 w-9 place-items-center rounded-lg bg-surface-elevated text-muted-foreground">
+          <Icon className="h-4 w-4" />
+        </div>
+        <div>
+          <div className="text-sm font-medium">{title}</div>
+          <div className="text-xs text-muted-foreground">{desc}</div>
+        </div>
+      </div>
+      <ChevronRight className="h-4 w-4 text-muted-foreground" />
     </div>
   );
 }

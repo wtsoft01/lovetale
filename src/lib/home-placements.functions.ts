@@ -37,102 +37,95 @@ export type AdminHomePlacementRow = {
   } | null;
 };
 
-function normalizeSortOrder(value: unknown) {
-  return Math.max(0, Math.floor(Number(value) || 0));
+type ApiPayload<T> = { ok: true } & T;
+
+async function getAccessToken() {
+  const { data, error } = await supabase.auth.getSession();
+  if (error) throw new Error(error.message);
+  const token = data.session?.access_token;
+  if (!token) throw new Error("Unauthorized");
+  return token;
+}
+
+async function readError(res: Response) {
+  const contentType = res.headers.get("content-type") ?? "";
+  const raw = await res.text().catch(() => "");
+  let payload: any = null;
+  if (contentType.includes("application/json") && raw) {
+    try {
+      payload = JSON.parse(raw);
+    } catch {
+      payload = null;
+    }
+  }
+  return (
+    payload?.reason ||
+    payload?.message ||
+    raw.slice(0, 180).replace(/\s+/g, " ").trim() ||
+    res.statusText ||
+    "unknown_error"
+  );
+}
+
+async function publicPlacementsApi<T>(slot: HomeSlot): Promise<T> {
+  const params = new URLSearchParams({ slot });
+  const res = await fetch(`/api/home-placements?${params.toString()}`);
+  if (!res.ok) throw new Error(`Home placements API failed (${res.status}): ${await readError(res)}`);
+  return (await res.json()) as T;
+}
+
+async function adminPlacementsApi<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = await getAccessToken();
+  const headers = new Headers(init?.headers);
+  headers.set("Authorization", `Bearer ${token}`);
+  const res = await fetch(`/api/admin/placements${path}`, { ...init, headers });
+  if (!res.ok) throw new Error(`Admin placements API failed (${res.status}): ${await readError(res)}`);
+  return (await res.json()) as T;
 }
 
 export const listHomePlacements = createServerFn({ method: "GET" })
   .inputValidator((i: unknown) => i as { slot: HomeSlot })
   .handler(async ({ data }): Promise<HomePlacementCard[]> => {
-    const { data: rows, error } = await supabase.rpc("list_home_placements", { _slot: data.slot });
-    if (error) throw new Error(error.message);
-    return (rows ?? []).map((row) => ({
-      ...row,
-      tags: row.tags ?? [],
-    }));
+    const payload = await publicPlacementsApi<ApiPayload<{ rows: HomePlacementCard[] }>>(data.slot);
+    return payload.rows.map((row) => ({ ...row, tags: row.tags ?? [] }));
   });
 
 export const adminListPlacements = createServerFn({ method: "GET" })
   .inputValidator((i: unknown) => i as { slot: HomeSlot })
   .handler(async ({ data }): Promise<AdminHomePlacementRow[]> => {
-    const { data: rows, error } = await supabase
-      .from("home_placements")
-      .select(
-        "id,slot,sort_order,is_active,story_id,created_at,user_stories(id,title,cover_url,is_public,is_listed)",
-      )
-      .eq("slot", data.slot)
-      .order("sort_order", { ascending: true })
-      .order("created_at", { ascending: false });
-
-    if (error) throw new Error(error.message);
-    return (rows ?? []) as unknown as AdminHomePlacementRow[];
+    const params = new URLSearchParams({ slot: data.slot });
+    const payload = await adminPlacementsApi<ApiPayload<{ rows: AdminHomePlacementRow[] }>>(
+      `?${params.toString()}`,
+    );
+    return payload.rows;
   });
 
 export const addHomePlacement = createServerFn({ method: "POST" })
   .inputValidator((i: unknown) => i as { slot: HomeSlot; story_id: string; sort_order?: number })
   .handler(async ({ data }) => {
-    const { data: userData, error: userError } = await supabase.auth.getUser();
-    if (userError || !userData.user) throw new Error("Unauthorized");
-
-    const sortOrder = normalizeSortOrder(data.sort_order);
-    const { data: existing, error: existingError } = await supabase
-      .from("home_placements")
-      .select("id")
-      .eq("slot", data.slot)
-      .eq("story_id", data.story_id)
-      .limit(1);
-    if (existingError) throw new Error(existingError.message);
-
-    const existingId = existing?.[0]?.id;
-    const { error } = existingId
-      ? await supabase
-          .from("home_placements")
-          .update({
-            sort_order: sortOrder,
-            is_active: true,
-            created_by: userData.user.id,
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", existingId)
-      : await supabase.from("home_placements").insert({
-          slot: data.slot,
-          story_id: data.story_id,
-          sort_order: sortOrder,
-          is_active: true,
-          created_by: userData.user.id,
-        });
-    if (error) throw new Error(error.message);
-
-    const { error: publishError } = await supabase
-      .from("user_stories")
-      .update({
-        status: "published",
-        is_public: true,
-        is_listed: true,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", data.story_id);
-    if (publishError) throw new Error(publishError.message);
-
+    await adminPlacementsApi<ApiPayload<{}>>("", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
     return { ok: true };
   });
 
 export const updateHomePlacement = createServerFn({ method: "POST" })
   .inputValidator((i: unknown) => i as { id: string; sort_order?: number; is_active?: boolean })
   .handler(async ({ data }) => {
-    const patch: Database["public"]["Tables"]["home_placements"]["Update"] = {};
-    if (data.sort_order !== undefined) patch.sort_order = normalizeSortOrder(data.sort_order);
-    if (data.is_active !== undefined) patch.is_active = data.is_active;
-
-    const { error } = await supabase.from("home_placements").update(patch).eq("id", data.id);
-    if (error) throw new Error(error.message);
+    await adminPlacementsApi<ApiPayload<{}>>("", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
     return { ok: true };
   });
 
 export const removeHomePlacement = createServerFn({ method: "POST" })
   .inputValidator((i: unknown) => i as { id: string })
   .handler(async ({ data }) => {
-    const { error } = await supabase.from("home_placements").delete().eq("id", data.id);
-    if (error) throw new Error(error.message);
+    const params = new URLSearchParams({ id: data.id });
+    await adminPlacementsApi<ApiPayload<{}>>(`?${params.toString()}`, { method: "DELETE" });
     return { ok: true };
   });

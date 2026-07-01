@@ -129,6 +129,62 @@
   --shadow-elevated: 0 12px 40px -16px oklch(0 0 0 / 0.6);
 }
 
+html.light {
+  --background: oklch(0.985 0.008 320);
+  --foreground: oklch(0.18 0.025 290);
+
+  --surface: oklch(0.97 0.012 320);
+  --surface-elevated: oklch(1 0 0);
+
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.18 0.025 290);
+
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.18 0.025 290);
+
+  --primary: oklch(0.66 0.21 350);
+  --primary-foreground: oklch(0.99 0.004 320);
+
+  --secondary: oklch(0.94 0.025 310);
+  --secondary-foreground: oklch(0.22 0.03 290);
+
+  --muted: oklch(0.94 0.015 300);
+  --muted-foreground: oklch(0.48 0.035 300);
+
+  --accent: oklch(0.7 0.18 315);
+  --accent-foreground: oklch(0.99 0.004 320);
+
+  --destructive: oklch(0.58 0.22 25);
+  --destructive-foreground: oklch(0.99 0.004 320);
+
+  --border: oklch(0.82 0.025 300 / 58%);
+  --input: oklch(0.84 0.02 300 / 72%);
+  --ring: oklch(0.66 0.21 350);
+
+  --chart-1: oklch(0.66 0.21 350);
+  --chart-2: oklch(0.62 0.2 305);
+  --chart-3: oklch(0.58 0.17 210);
+  --chart-4: oklch(0.72 0.17 70);
+  --chart-5: oklch(0.58 0.18 145);
+
+  --sidebar: oklch(0.965 0.012 320);
+  --sidebar-foreground: oklch(0.22 0.03 290);
+  --sidebar-primary: oklch(0.66 0.21 350);
+  --sidebar-primary-foreground: oklch(0.99 0.004 320);
+  --sidebar-accent: oklch(0.93 0.025 310);
+  --sidebar-accent-foreground: oklch(0.2 0.03 290);
+  --sidebar-border: oklch(0.82 0.025 300 / 58%);
+  --sidebar-ring: oklch(0.66 0.21 350);
+
+  --neon-pink: oklch(0.66 0.22 350);
+  --neon-violet: oklch(0.6 0.22 300);
+  --neon-cyan: oklch(0.64 0.14 210);
+
+  --shadow-glow: 0 1px 0 0 oklch(1 0 0 / 0.7), 0 10px 26px -18px oklch(0.25 0.04 290 / 0.45);
+  --shadow-glow-violet: 0 1px 0 0 oklch(1 0 0 / 0.7), 0 10px 26px -18px oklch(0.25 0.04 290 / 0.45);
+  --shadow-elevated: 0 18px 46px -24px oklch(0.25 0.04 290 / 0.28);
+}
+
 @layer base {
   * {
     border-color: var(--color-border);
@@ -183,6 +239,28 @@
   box-shadow: var(--shadow-glow-violet);
 }
 
+.chapter-choice-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, var(--primary) 55%, transparent) transparent;
+}
+
+.chapter-choice-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.chapter-choice-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.chapter-choice-scroll::-webkit-scrollbar-thumb {
+  background: color-mix(in oklab, var(--primary) 48%, transparent);
+  border-radius: 999px;
+}
+
+.chapter-choice-scroll::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in oklab, var(--primary) 72%, transparent);
+}
+
 @keyframes pulse-glow {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.96; }
@@ -219,4 +297,3 @@
 @utility animate-caret {
   animation: caret-blink 1s steps(1) infinite;
 }
-

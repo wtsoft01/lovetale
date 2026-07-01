@@ -20,7 +20,9 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as PlaySessionIdRouteImport } from './routes/play.$sessionId'
 import { Route as CharacterIdRouteImport } from './routes/character.$id'
 import { Route as ApiUnlocksRouteImport } from './routes/api/unlocks'
+import { Route as ApiReaderStoryRouteImport } from './routes/api/reader-story'
 import { Route as ApiMarketplaceRouteImport } from './routes/api/marketplace'
+import { Route as ApiHomePlacementsRouteImport } from './routes/api/home-placements'
 import { Route as ApiChatRouteImport } from './routes/api/chat'
 import { Route as ApiCharacterChatRouteImport } from './routes/api/character-chat'
 import { Route as AuthenticatedOrdersRouteImport } from './routes/_authenticated/orders'
@@ -36,6 +38,7 @@ import { Route as ApiAdminStoryAiRouteImport } from './routes/api/admin/story-ai
 import { Route as ApiAdminStoriesRouteImport } from './routes/api/admin/stories'
 import { Route as ApiAdminStaffRouteImport } from './routes/api/admin/staff'
 import { Route as ApiAdminRevenueRulesRouteImport } from './routes/api/admin/revenue-rules'
+import { Route as ApiAdminPlacementsRouteImport } from './routes/api/admin/placements'
 import { Route as ApiAdminMediaRouteImport } from './routes/api/admin/media'
 import { Route as ApiAdminImportSummaryRouteImport } from './routes/api/admin/import-summary'
 import { Route as AuthenticatedMarketplaceIdRouteImport } from './routes/_authenticated/marketplace.$id'
@@ -114,9 +117,19 @@ const ApiUnlocksRoute = ApiUnlocksRouteImport.update({
   path: '/api/unlocks',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiReaderStoryRoute = ApiReaderStoryRouteImport.update({
+  id: '/api/reader-story',
+  path: '/api/reader-story',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiMarketplaceRoute = ApiMarketplaceRouteImport.update({
   id: '/api/marketplace',
   path: '/api/marketplace',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiHomePlacementsRoute = ApiHomePlacementsRouteImport.update({
+  id: '/api/home-placements',
+  path: '/api/home-placements',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiChatRoute = ApiChatRouteImport.update({
@@ -194,6 +207,11 @@ const ApiAdminStaffRoute = ApiAdminStaffRouteImport.update({
 const ApiAdminRevenueRulesRoute = ApiAdminRevenueRulesRouteImport.update({
   id: '/api/admin/revenue-rules',
   path: '/api/admin/revenue-rules',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiAdminPlacementsRoute = ApiAdminPlacementsRouteImport.update({
+  id: '/api/admin/placements',
+  path: '/api/admin/placements',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiAdminMediaRoute = ApiAdminMediaRouteImport.update({
@@ -342,7 +360,9 @@ export interface FileRoutesByFullPath {
   '/orders': typeof AuthenticatedOrdersRoute
   '/api/character-chat': typeof ApiCharacterChatRoute
   '/api/chat': typeof ApiChatRoute
+  '/api/home-placements': typeof ApiHomePlacementsRoute
   '/api/marketplace': typeof ApiMarketplaceRoute
+  '/api/reader-story': typeof ApiReaderStoryRoute
   '/api/unlocks': typeof ApiUnlocksRoute
   '/character/$id': typeof CharacterIdRoute
   '/play/$sessionId': typeof PlaySessionIdRoute
@@ -363,6 +383,7 @@ export interface FileRoutesByFullPath {
   '/marketplace/$id': typeof AuthenticatedMarketplaceIdRoute
   '/api/admin/import-summary': typeof ApiAdminImportSummaryRoute
   '/api/admin/media': typeof ApiAdminMediaRoute
+  '/api/admin/placements': typeof ApiAdminPlacementsRoute
   '/api/admin/revenue-rules': typeof ApiAdminRevenueRulesRoute
   '/api/admin/staff': typeof ApiAdminStaffRoute
   '/api/admin/stories': typeof ApiAdminStoriesRoute
@@ -392,7 +413,9 @@ export interface FileRoutesByTo {
   '/orders': typeof AuthenticatedOrdersRoute
   '/api/character-chat': typeof ApiCharacterChatRoute
   '/api/chat': typeof ApiChatRoute
+  '/api/home-placements': typeof ApiHomePlacementsRoute
   '/api/marketplace': typeof ApiMarketplaceRoute
+  '/api/reader-story': typeof ApiReaderStoryRoute
   '/api/unlocks': typeof ApiUnlocksRoute
   '/character/$id': typeof CharacterIdRoute
   '/play/$sessionId': typeof PlaySessionIdRoute
@@ -413,6 +436,7 @@ export interface FileRoutesByTo {
   '/marketplace/$id': typeof AuthenticatedMarketplaceIdRoute
   '/api/admin/import-summary': typeof ApiAdminImportSummaryRoute
   '/api/admin/media': typeof ApiAdminMediaRoute
+  '/api/admin/placements': typeof ApiAdminPlacementsRoute
   '/api/admin/revenue-rules': typeof ApiAdminRevenueRulesRoute
   '/api/admin/staff': typeof ApiAdminStaffRoute
   '/api/admin/stories': typeof ApiAdminStoriesRoute
@@ -445,7 +469,9 @@ export interface FileRoutesById {
   '/_authenticated/orders': typeof AuthenticatedOrdersRoute
   '/api/character-chat': typeof ApiCharacterChatRoute
   '/api/chat': typeof ApiChatRoute
+  '/api/home-placements': typeof ApiHomePlacementsRoute
   '/api/marketplace': typeof ApiMarketplaceRoute
+  '/api/reader-story': typeof ApiReaderStoryRoute
   '/api/unlocks': typeof ApiUnlocksRoute
   '/character/$id': typeof CharacterIdRoute
   '/play/$sessionId': typeof PlaySessionIdRoute
@@ -466,6 +492,7 @@ export interface FileRoutesById {
   '/_authenticated/marketplace/$id': typeof AuthenticatedMarketplaceIdRoute
   '/api/admin/import-summary': typeof ApiAdminImportSummaryRoute
   '/api/admin/media': typeof ApiAdminMediaRoute
+  '/api/admin/placements': typeof ApiAdminPlacementsRoute
   '/api/admin/revenue-rules': typeof ApiAdminRevenueRulesRoute
   '/api/admin/staff': typeof ApiAdminStaffRoute
   '/api/admin/stories': typeof ApiAdminStoriesRoute
@@ -498,7 +525,9 @@ export interface FileRouteTypes {
     | '/orders'
     | '/api/character-chat'
     | '/api/chat'
+    | '/api/home-placements'
     | '/api/marketplace'
+    | '/api/reader-story'
     | '/api/unlocks'
     | '/character/$id'
     | '/play/$sessionId'
@@ -519,6 +548,7 @@ export interface FileRouteTypes {
     | '/marketplace/$id'
     | '/api/admin/import-summary'
     | '/api/admin/media'
+    | '/api/admin/placements'
     | '/api/admin/revenue-rules'
     | '/api/admin/staff'
     | '/api/admin/stories'
@@ -548,7 +578,9 @@ export interface FileRouteTypes {
     | '/orders'
     | '/api/character-chat'
     | '/api/chat'
+    | '/api/home-placements'
     | '/api/marketplace'
+    | '/api/reader-story'
     | '/api/unlocks'
     | '/character/$id'
     | '/play/$sessionId'
@@ -569,6 +601,7 @@ export interface FileRouteTypes {
     | '/marketplace/$id'
     | '/api/admin/import-summary'
     | '/api/admin/media'
+    | '/api/admin/placements'
     | '/api/admin/revenue-rules'
     | '/api/admin/staff'
     | '/api/admin/stories'
@@ -600,7 +633,9 @@ export interface FileRouteTypes {
     | '/_authenticated/orders'
     | '/api/character-chat'
     | '/api/chat'
+    | '/api/home-placements'
     | '/api/marketplace'
+    | '/api/reader-story'
     | '/api/unlocks'
     | '/character/$id'
     | '/play/$sessionId'
@@ -621,6 +656,7 @@ export interface FileRouteTypes {
     | '/_authenticated/marketplace/$id'
     | '/api/admin/import-summary'
     | '/api/admin/media'
+    | '/api/admin/placements'
     | '/api/admin/revenue-rules'
     | '/api/admin/staff'
     | '/api/admin/stories'
@@ -648,12 +684,15 @@ export interface RootRouteChildren {
   ProfileRoute: typeof ProfileRoute
   ApiCharacterChatRoute: typeof ApiCharacterChatRoute
   ApiChatRoute: typeof ApiChatRoute
+  ApiHomePlacementsRoute: typeof ApiHomePlacementsRoute
   ApiMarketplaceRoute: typeof ApiMarketplaceRoute
+  ApiReaderStoryRoute: typeof ApiReaderStoryRoute
   ApiUnlocksRoute: typeof ApiUnlocksRoute
   CharacterIdRoute: typeof CharacterIdRoute
   PlaySessionIdRoute: typeof PlaySessionIdRoute
   ApiAdminImportSummaryRoute: typeof ApiAdminImportSummaryRoute
   ApiAdminMediaRoute: typeof ApiAdminMediaRoute
+  ApiAdminPlacementsRoute: typeof ApiAdminPlacementsRoute
   ApiAdminRevenueRulesRoute: typeof ApiAdminRevenueRulesRoute
   ApiAdminStaffRoute: typeof ApiAdminStaffRoute
   ApiAdminStoriesRoute: typeof ApiAdminStoriesRoute
@@ -742,11 +781,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiUnlocksRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/reader-story': {
+      id: '/api/reader-story'
+      path: '/api/reader-story'
+      fullPath: '/api/reader-story'
+      preLoaderRoute: typeof ApiReaderStoryRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/marketplace': {
       id: '/api/marketplace'
       path: '/api/marketplace'
       fullPath: '/api/marketplace'
       preLoaderRoute: typeof ApiMarketplaceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/home-placements': {
+      id: '/api/home-placements'
+      path: '/api/home-placements'
+      fullPath: '/api/home-placements'
+      preLoaderRoute: typeof ApiHomePlacementsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/chat': {
@@ -852,6 +905,13 @@ declare module '@tanstack/react-router' {
       path: '/api/admin/revenue-rules'
       fullPath: '/api/admin/revenue-rules'
       preLoaderRoute: typeof ApiAdminRevenueRulesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/admin/placements': {
+      id: '/api/admin/placements'
+      path: '/api/admin/placements'
+      fullPath: '/api/admin/placements'
+      preLoaderRoute: typeof ApiAdminPlacementsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/admin/media': {
@@ -1151,12 +1211,15 @@ const rootRouteChildren: RootRouteChildren = {
   ProfileRoute: ProfileRoute,
   ApiCharacterChatRoute: ApiCharacterChatRoute,
   ApiChatRoute: ApiChatRoute,
+  ApiHomePlacementsRoute: ApiHomePlacementsRoute,
   ApiMarketplaceRoute: ApiMarketplaceRoute,
+  ApiReaderStoryRoute: ApiReaderStoryRoute,
   ApiUnlocksRoute: ApiUnlocksRoute,
   CharacterIdRoute: CharacterIdRoute,
   PlaySessionIdRoute: PlaySessionIdRoute,
   ApiAdminImportSummaryRoute: ApiAdminImportSummaryRoute,
   ApiAdminMediaRoute: ApiAdminMediaRoute,
+  ApiAdminPlacementsRoute: ApiAdminPlacementsRoute,
   ApiAdminRevenueRulesRoute: ApiAdminRevenueRulesRoute,
   ApiAdminStaffRoute: ApiAdminStaffRoute,
   ApiAdminStoriesRoute: ApiAdminStoriesRoute,

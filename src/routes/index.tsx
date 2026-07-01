@@ -91,7 +91,7 @@ function Home() {
                 <StoryTile
                   key={s.id}
                   story={{
-                    id: s.id,
+                    id: s.story_id,
                     title: s.title,
                     logline: s.logline,
                     cover_url: s.cover_url,
@@ -142,7 +142,7 @@ function HeroSection({ story }: { story?: HomePlacementCard }) {
               </div>
               <div className="mt-6 flex flex-wrap gap-3">
                 <Button asChild size="lg" className="shadow-glow">
-                  <Link to="/marketplace/$id" params={{ id: story.story_id }}>
+                  <Link to="/play/user/$id" params={{ id: story.story_id }}>
                     <Sparkles className="mr-2 h-4 w-4" /> 바로 보기
                   </Link>
                 </Button>
@@ -230,7 +230,7 @@ function StoryTile({ story: s }: { story: TileStory }) {
   const heat = HEAT_BADGE[s.max_heat] ?? HEAT_BADGE.soft;
   return (
     <Link
-      to="/marketplace/$id"
+      to="/play/user/$id"
       params={{ id: s.id }}
       className="group rounded-2xl overflow-hidden border border-border/60 bg-card/40 backdrop-blur hover:border-primary/50 transition"
     >

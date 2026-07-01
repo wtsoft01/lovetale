@@ -129,6 +129,12 @@ function RootShell({ children }: { children: ReactNode }) {
     <html lang="ko">
       <head>
         <HeadContent />
+        <script
+          dangerouslySetInnerHTML={{
+            __html:
+              "try{var t=localStorage.getItem('lovetale-theme')||'dark';document.documentElement.classList.toggle('light',t==='light');document.documentElement.classList.toggle('dark',t==='dark');document.documentElement.style.colorScheme=t==='light'?'light':'dark';}catch(e){}",
+          }}
+        />
       </head>
       <body>
         {children}

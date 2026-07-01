@@ -880,10 +880,21 @@ export type UnifiedReaderStory = {
 export const getUnifiedReaderStory = createServerFn({ method: "POST" })
   .inputValidator((input: any) => input as { id: string })
   .handler(async ({ data }): Promise<UnifiedReaderStory> => {
-    await requireUserId();
-    const { data: story, error } = await supabase.rpc("get_playable_user_story", { _id: data.id });
-    if (error) throw new Error(error.message);
-    if (!story) throw new Error("Not found");
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError) throw new Error(sessionError.message);
+    const token = sessionData.session?.access_token;
+    if (!token) throw new Error("Unauthorized");
+
+    const params = new URLSearchParams({ id: data.id });
+    const res = await fetch(`/api/reader-story?${params.toString()}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      const payload = await res.json().catch(() => null);
+      throw new Error(payload?.message || payload?.reason || `Reader API failed (${res.status})`);
+    }
+    const payload = (await res.json()) as { ok: true; story: UnifiedReaderStory };
+    const story = payload.story;
 
     return {
       id: story.id,

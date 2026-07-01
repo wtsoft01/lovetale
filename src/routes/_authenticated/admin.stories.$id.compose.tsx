@@ -1665,7 +1665,7 @@ function AssetPackDialog({
 
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && onClose()}>
-      <DialogContent className="flex max-h-[90vh] max-w-4xl flex-col overflow-hidden p-0">
+      <DialogContent className="flex max-h-[90vh] max-w-[96vw] flex-col overflow-hidden p-0">
         <DialogHeader className="border-b border-border px-5 py-4">
           <DialogTitle>에셋 편집 - 위치 {offset.toLocaleString()}</DialogTitle>
           <DialogDescription>{excerpt}</DialogDescription>
