@@ -1,0 +1,222 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Lumi — AI Romance Visual Novel platform design tokens.
+ * Dark-first by default. Neon pink + soft violet accents on inky black.
+ * All colors use oklch. Never hardcode hex/rgb in components.
+ */
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --radius-4xl: calc(var(--radius) + 16px);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-ring-offset-background: var(--background);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* Brand neon accents */
+  --color-neon-pink: var(--neon-pink);
+  --color-neon-violet: var(--neon-violet);
+  --color-neon-cyan: var(--neon-cyan);
+  --color-surface: var(--surface);
+  --color-surface-elevated: var(--surface-elevated);
+
+  --font-display: "Geist", "Pretendard Variable", "Pretendard", system-ui, sans-serif;
+  --font-sans: "Geist", "Pretendard Variable", "Pretendard", system-ui, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* Dark-first: tokens live on :root and represent the dark theme. */
+:root {
+  --radius: 0.875rem;
+
+  --background: oklch(0.13 0.02 290);
+  --foreground: oklch(0.97 0.01 320);
+
+  --surface: oklch(0.17 0.025 290);
+  --surface-elevated: oklch(0.21 0.03 290);
+
+  --card: oklch(0.17 0.025 290);
+  --card-foreground: oklch(0.97 0.01 320);
+
+  --popover: oklch(0.18 0.03 290);
+  --popover-foreground: oklch(0.97 0.01 320);
+
+  --primary: oklch(0.78 0.16 350);
+  --primary-foreground: oklch(0.14 0.02 290);
+
+  --secondary: oklch(0.24 0.04 295);
+  --secondary-foreground: oklch(0.97 0.01 320);
+
+  --muted: oklch(0.22 0.03 290);
+  --muted-foreground: oklch(0.7 0.04 310);
+
+  --accent: oklch(0.62 0.22 305);
+  --accent-foreground: oklch(0.98 0.01 320);
+
+  --destructive: oklch(0.62 0.24 25);
+  --destructive-foreground: oklch(0.98 0.01 320);
+
+  --border: oklch(1 0 0 / 8%);
+  --input: oklch(1 0 0 / 12%);
+  --ring: oklch(0.72 0.24 350);
+
+  --chart-1: oklch(0.72 0.24 350);
+  --chart-2: oklch(0.62 0.22 305);
+  --chart-3: oklch(0.7 0.18 200);
+  --chart-4: oklch(0.78 0.18 60);
+  --chart-5: oklch(0.65 0.2 145);
+
+  --sidebar: oklch(0.11 0.02 290);
+  --sidebar-foreground: oklch(0.93 0.02 320);
+  --sidebar-primary: oklch(0.72 0.24 350);
+  --sidebar-primary-foreground: oklch(0.12 0.02 290);
+  --sidebar-accent: oklch(0.2 0.04 295);
+  --sidebar-accent-foreground: oklch(0.97 0.01 320);
+  --sidebar-border: oklch(1 0 0 / 6%);
+  --sidebar-ring: oklch(0.72 0.24 350);
+
+  --neon-pink: oklch(0.74 0.26 350);
+  --neon-violet: oklch(0.62 0.24 300);
+  --neon-cyan: oklch(0.82 0.15 200);
+
+  /* Kept as tokens for legacy classes — rendered as solid, not loud gradients. */
+  --gradient-primary: var(--primary);
+  --gradient-aurora: var(--primary);
+  --gradient-vignette: none;
+
+  --shadow-glow: 0 1px 0 0 oklch(1 0 0 / 0.04), 0 8px 24px -12px oklch(0 0 0 / 0.5);
+  --shadow-glow-violet: 0 1px 0 0 oklch(1 0 0 / 0.04), 0 8px 24px -12px oklch(0 0 0 / 0.5);
+  --shadow-elevated: 0 12px 40px -16px oklch(0 0 0 / 0.6);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  html,
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    font-feature-settings: "ss01", "cv11";
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  h1, h2, h3, h4, .font-display {
+    font-family: var(--font-display);
+    letter-spacing: -0.02em;
+    font-weight: 600;
+  }
+}
+
+@utility glass-panel {
+  background: color-mix(in oklab, var(--surface) 70%, transparent);
+  backdrop-filter: blur(20px) saturate(140%);
+  border: 1px solid var(--color-border);
+}
+
+@utility neon-border {
+  border: 1px solid color-mix(in oklab, var(--neon-pink) 40%, transparent);
+  box-shadow:
+    0 0 0 1px color-mix(in oklab, var(--neon-pink) 15%, transparent) inset,
+    var(--shadow-glow);
+}
+
+@utility text-gradient {
+  background: var(--gradient-primary);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+@utility bg-gradient-aurora {
+  background-image: var(--gradient-aurora);
+}
+
+@utility shadow-glow {
+  box-shadow: var(--shadow-glow);
+}
+
+@utility shadow-glow-violet {
+  box-shadow: var(--shadow-glow-violet);
+}
+
+@keyframes pulse-glow {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.96; }
+}
+
+@utility animate-pulse-glow {
+  animation: pulse-glow 4s ease-in-out infinite;
+}
+
+@keyframes float-soft {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+
+@utility animate-float {
+  animation: float-soft 5s ease-in-out infinite;
+}
+
+@keyframes ken-burns {
+  0% { transform: scale(1.08) translate(0, 0); }
+  50% { transform: scale(1.18) translate(-1.5%, -1.5%); }
+  100% { transform: scale(1.08) translate(0, 0); }
+}
+
+@utility animate-ken-burns {
+  animation: ken-burns 20s ease-in-out infinite;
+}
+
+@keyframes caret-blink {
+  0%, 60% { opacity: 1; }
+  61%, 100% { opacity: 0; }
+}
+
+@utility animate-caret {
+  animation: caret-blink 1s steps(1) infinite;
+}
+
