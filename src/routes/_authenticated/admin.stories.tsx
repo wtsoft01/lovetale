@@ -981,9 +981,6 @@ function StoryWorkspaceDialog({
             <DialogTitle>콘텐츠 작업공간 - {title}</DialogTitle>
             <div className="text-xs text-muted-foreground">정보수정, 회차현황, 에셋편집, 프리뷰를 한 화면에서 빠르게 확인합니다.</div>
           </div>
-            <button type="button" onClick={onClose} className="rounded-md p-2 hover:bg-muted">
-              <X className="size-4" />
-            </button>
           </div>
         </div>
         <Tabs value={tab} onValueChange={(value) => setTab(value as any)} className="flex min-h-0 flex-1 flex-col">
