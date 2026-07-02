@@ -25,18 +25,24 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import {
-  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
 } from "@/components/ui/dialog";
 
 export const Route = createFileRoute("/_authenticated/admin/users")({
-  head: () => ({ meta: [{ title: "Users & Roles — Studio" }] }),
+  head: () => ({ meta: [{ title: "Users & Roles | Studio" }] }),
   component: UsersPage,
 });
 
 const ROLE_META: Record<StaffRole, { label: string; desc: string; icon: typeof Shield }> = {
-  admin: { label: "Admin", desc: "전체 권한 · 결제·설정·역할 관리", icon: ShieldCheck },
-  editor: { label: "Editor", desc: "스토리·캐릭터·미디어(이미지/영상) 등록 권한", icon: Shield },
-  moderator: { label: "Moderator", desc: "신고 · 자동 플래그 처리", icon: ShieldAlert },
+  admin: { label: "Admin", desc: "전체 권한, 결제, 설정, 역할 관리", icon: ShieldCheck },
+  editor: { label: "Editor", desc: "스토리, 캐릭터, 미디어 이미지/영상 등록 권한", icon: Shield },
+  moderator: { label: "Moderator", desc: "신고와 자동 플래그 처리", icon: ShieldAlert },
 };
 const ALL_ROLES: StaffRole[] = ["admin", "editor", "moderator"];
 
@@ -66,51 +72,51 @@ function UsersPage() {
   const createM = useMutation({
     mutationFn: (input: typeof form) => create({ data: input }),
     onSuccess: () => {
-      toast.success("스태프 계정이 생성되었습니다.");
+      toast.success("스태프 계정을 생성했습니다.");
       setOpenCreate(false);
       setForm({ email: "", password: "", displayName: "", roles: ["editor"] });
       qc.invalidateQueries({ queryKey: ["staff_users"] });
     },
-    onError: (e: any) => toast.error(e?.message ?? "생성 실패"),
+    onError: (e: any) => toast.error(e?.message ?? "생성에 실패했습니다."),
   });
 
   const rolesM = useMutation({
     mutationFn: (input: { userId: string; roles: StaffRole[] }) =>
       updateRoles({ data: input }),
     onSuccess: () => {
-      toast.success("권한이 업데이트되었습니다.");
+      toast.success("권한을 업데이트했습니다.");
       qc.invalidateQueries({ queryKey: ["staff_users"] });
     },
-    onError: (e: any) => toast.error(e?.message ?? "업데이트 실패"),
+    onError: (e: any) => toast.error(e?.message ?? "권한 업데이트에 실패했습니다."),
   });
 
   const removeM = useMutation({
     mutationFn: (userId: string) => remove({ data: { userId } }),
     onSuccess: () => {
-      toast.success("스태프 권한이 회수되었습니다.");
+      toast.success("스태프 권한을 회수했습니다.");
       qc.invalidateQueries({ queryKey: ["staff_users"] });
     },
-    onError: (e: any) => toast.error(e?.message ?? "회수 실패"),
+    onError: (e: any) => toast.error(e?.message ?? "권한 회수에 실패했습니다."),
   });
 
   const resetM = useMutation({
     mutationFn: (input: { userId: string; password: string }) =>
       resetPw({ data: input }),
-    onSuccess: () => toast.success("비밀번호가 재설정되었습니다."),
-    onError: (e: any) => toast.error(e?.message ?? "재설정 실패"),
+    onSuccess: () => toast.success("비밀번호를 재설정했습니다."),
+    onError: (e: any) => toast.error(e?.message ?? "비밀번호 재설정에 실패했습니다."),
   });
 
   const creditM = useMutation({
     mutationFn: (input: { userId: string; delta: number; note?: string }) =>
       adjustCredits({ data: input }),
     onSuccess: (res) => {
-      toast.success(`크레딧이 반영되었습니다. 현재 잔액 ${res.balanceAfter.toLocaleString()} cr`);
+      toast.success(`크레딧을 반영했습니다. 현재 잔액 ${res.balanceAfter.toLocaleString()} cr`);
       setCreditTarget(null);
       setCreditForm({ mode: "grant", amount: 0, note: "" });
       qc.invalidateQueries({ queryKey: ["admin_credit_users"] });
       qc.invalidateQueries({ queryKey: ["my_profile_balance"] });
     },
-    onError: (e: any) => toast.error(e?.message ?? "크레딧 처리 실패"),
+    onError: (e: any) => toast.error(e?.message ?? "크레딧 처리에 실패했습니다."),
   });
 
   function openCreditDialog(user: AdminCreditUserRow, mode: "grant" | "deduct") {
@@ -146,7 +152,7 @@ function UsersPage() {
             <DialogHeader>
               <DialogTitle>새 스태프 계정</DialogTitle>
               <DialogDescription>
-                이메일·비밀번호를 발급하고 접근 가능한 메뉴(역할)를 선택하세요.
+                이메일과 비밀번호를 발급하고 접근 가능한 역할을 선택하세요.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4">
@@ -227,7 +233,7 @@ function UsersPage() {
         <CardContent>
           {staffQ.isLoading && (
             <div className="text-sm text-muted-foreground flex items-center gap-2">
-              <Loader2 className="h-4 w-4 animate-spin" /> 불러오는 중…
+              <Loader2 className="h-4 w-4 animate-spin" /> 불러오는 중...
             </div>
           )}
           {staffQ.error && (
@@ -243,7 +249,7 @@ function UsersPage() {
                   <div className="flex items-center gap-2">
                     <span className="font-medium">{u.email ?? "(no email)"}</span>
                     {u.displayName && (
-                      <span className="text-xs text-muted-foreground">— {u.displayName}</span>
+                      <span className="text-xs text-muted-foreground">· {u.displayName}</span>
                     )}
                   </div>
                   <div className="mt-1 flex flex-wrap gap-1">
@@ -273,7 +279,7 @@ function UsersPage() {
                   size="sm"
                   className="text-destructive"
                   onClick={() => {
-                    if (confirm(`${u.email} 의 스태프 권한을 모두 회수할까요?`)) {
+                    if (confirm(`${u.email} 계정의 스태프 권한을 모두 회수할까요?`)) {
                       removeM.mutate(u.userId);
                     }
                   }}
@@ -299,7 +305,7 @@ function UsersPage() {
         <CardContent>
           {creditUsersQ.isLoading && (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="size-4 animate-spin" /> 회원 크레딧을 불러오는 중…
+              <Loader2 className="size-4 animate-spin" /> 회원 크레딧을 불러오는 중...
             </div>
           )}
           {creditUsersQ.error && (
@@ -311,7 +317,7 @@ function UsersPage() {
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-medium">{user.email ?? user.userId}</span>
-                    {user.displayName && <span className="text-xs text-muted-foreground">— {user.displayName}</span>}
+                    {user.displayName && <span className="text-xs text-muted-foreground">· {user.displayName}</span>}
                   </div>
                   <div className="mt-1 text-xs text-muted-foreground">
                     최근 갱신 {user.updatedAt ? new Date(user.updatedAt).toLocaleString() : "-"}
@@ -413,7 +419,7 @@ function RolePicker({
         return (
           <label
             key={r}
-            className={`flex items-center gap-2 rounded-md border px-2 py-1.5 text-sm cursor-pointer ${
+            className={`flex cursor-pointer items-center gap-2 rounded-md border px-2 py-1.5 text-sm ${
               checked ? "bg-accent" : ""
             }`}
           >

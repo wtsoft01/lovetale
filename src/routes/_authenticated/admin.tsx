@@ -1,5 +1,4 @@
-import { useEffect } from "react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   createFileRoute,
   Link,
@@ -62,7 +61,7 @@ const NAV: NavItem[] = [
   {
     to: "/admin/import",
     label: "새 콘텐츠 등록",
-    desc: "원문 등록, 단편/회차형 제작 시작",
+    desc: "본문 등록, 단편/회차형 스토리 생성",
     icon: FilePlus2,
     requires: "editor",
     section: "content",
@@ -70,7 +69,7 @@ const NAV: NavItem[] = [
   {
     to: "/admin/placements",
     label: "메인 노출 관리",
-    desc: "히어로, 트렌딩, 신작 슬롯 운영",
+    desc: "히어로, 뜨거운 스토리, 신작 운영",
     icon: LayoutGrid,
     requires: "editor",
     section: "content",
@@ -86,7 +85,7 @@ const NAV: NavItem[] = [
   {
     to: "/admin/media",
     label: "미디어 자료실",
-    desc: "이미지, 영상, 음원 자산 관리",
+    desc: "이미지, 영상, 에셋 파일 관리",
     icon: ImageIcon,
     requires: "editor",
     section: "content",
@@ -116,7 +115,7 @@ const NAV: NavItem[] = [
   },
   {
     to: "/admin/analytics",
-    label: "사용량 분석",
+    label: "사용자 분석",
     desc: "활성, 전환, 이용 지표 분석",
     icon: Gauge,
     requires: "admin",
@@ -140,8 +139,8 @@ const NAV: NavItem[] = [
   },
   {
     to: "/admin/heat",
-    label: "분기/잠금 규칙",
-    desc: "분위기 강도와 잠금 규칙",
+    label: "분위기/과금 규칙",
+    desc: "호감도 단계와 과금 규칙",
     icon: Flame,
     requires: "admin",
     section: "settings",
@@ -149,7 +148,7 @@ const NAV: NavItem[] = [
   {
     to: "/admin/llm",
     label: "LLM API",
-    desc: "모델, 요금, 프로바이더 설정",
+    desc: "모델, 요금, 제공자 설정",
     icon: KeyRound,
     requires: "admin",
     section: "settings",
@@ -161,7 +160,7 @@ const NAV_SECTIONS: Array<{
   title: string;
   desc: string;
 }> = [
-  { id: "content", title: "콘텐츠", desc: "상품과 자산" },
+  { id: "content", title: "콘텐츠", desc: "상품과 에셋" },
   { id: "operations", title: "운영", desc: "회원, 매출, 지표" },
   { id: "settings", title: "설정", desc: "정책과 시스템" },
 ];
@@ -216,14 +215,22 @@ function AdminLayout() {
 
   return (
     <div className="min-h-dvh bg-background">
-      <div className={cn(
-        "grid w-full gap-4 px-4 py-4 md:px-5 xl:gap-5 xl:px-6",
-        navOpen ? "md:grid-cols-[18rem_minmax(0,1fr)] xl:grid-cols-[19rem_minmax(0,1fr)]" : "md:grid-cols-[4.5rem_minmax(0,1fr)] xl:grid-cols-[4.5rem_minmax(0,1fr)]",
-      )}>
+      <div
+        className={cn(
+          "grid w-full gap-4 px-4 py-4 md:px-5 xl:gap-5 xl:px-6",
+          navOpen
+            ? "md:grid-cols-[18rem_minmax(0,1fr)] xl:grid-cols-[19rem_minmax(0,1fr)]"
+            : "md:grid-cols-[4.5rem_minmax(0,1fr)] xl:grid-cols-[4.5rem_minmax(0,1fr)]",
+        )}
+      >
         <aside className="self-start md:sticky md:top-4">
           <div className="rounded-lg border border-border bg-card p-3">
             <div className="mb-3 flex items-center justify-between gap-2 px-2">
-              {navOpen && <span className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">메뉴</span>}
+              {navOpen && (
+                <span className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                  메뉴
+                </span>
+              )}
               <button
                 type="button"
                 onClick={() => setNavOpen((v) => !v)}
