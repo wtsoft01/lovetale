@@ -1744,6 +1744,8 @@ function InlineAssetEditor({
   const [movingSlotIds, setMovingSlotIds] = useState<string[]>([]);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewAffection, setPreviewAffection] = useState(55);
+  const [assetLibraryExpanded, setAssetLibraryExpanded] = useState(false);
+  const [assetLibraryQuery, setAssetLibraryQuery] = useState("");
   const activeExcerpt = chapter && activeOffset != null ? getOffsetExcerpt(chapter.body, activeOffset) : "";
 
   const mediaLibraryQ = useQuery({
@@ -2063,6 +2065,24 @@ function InlineAssetEditor({
   );
   const mediaAssetLibrary = (mediaLibraryQ.data ?? []).map(mediaAssetToLibraryEntry);
   const librarySlots = dedupeLibraryEntries([...mediaAssetLibrary, ...savedSlotLibrary]);
+  const filteredLibrarySlots = useMemo(() => {
+    const needle = assetLibraryQuery.trim().toLowerCase();
+    if (!needle) return librarySlots;
+    return librarySlots.filter((slot) => {
+      const haystack = [
+        slot.scene_description,
+        slot.caption,
+        slot.chapterTitle,
+        slot.source,
+        slot.media_type,
+        ASSET_TIERS.find((tier) => tier.key === slot.heat_tier)?.label,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(needle);
+    });
+  }, [assetLibraryQuery, librarySlots]);
 
   async function uploadFilesToAssetLibrary(fileList: FileList | File[]) {
     const files = Array.from(fileList);
@@ -2436,8 +2456,9 @@ function InlineAssetEditor({
 
             <section
               className={cn(
-                "rounded-lg border border-dashed bg-card p-3 transition",
+                "rounded-lg border bg-card p-3 transition",
                 activeOffset == null ? "border-border" : "border-primary bg-primary/5",
+                assetLibraryExpanded && "xl:w-[520px] xl:-translate-x-[140px]",
               )}
               onDragOver={(event) => {
                 event.preventDefault();
@@ -2453,42 +2474,75 @@ function InlineAssetEditor({
                 </div>
                 <div className="min-w-0">
                   <div className="text-sm font-semibold">에셋 라이브러리</div>
+                  <div className="text-[11px] text-muted-foreground">
+                    {filteredLibrarySlots.length.toLocaleString()} / {librarySlots.length.toLocaleString()}개
+                  </div>
                 </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="ml-auto h-8 px-2 text-xs"
+                  onClick={() => setAssetLibraryExpanded((value) => !value)}
+                >
+                  {assetLibraryExpanded ? "접기" : "펼치기"}
+                </Button>
               </div>
-              <label className="mt-2 flex h-12 cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed border-border bg-background px-3 text-sm text-muted-foreground hover:border-primary/50">
-                {bulkUploading ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
-                파일 업로드
-                <input
-                  type="file"
-                  multiple
-                  accept="image/*,video/*"
-                  className="sr-only"
-                  disabled={bulkUploading}
-                  onChange={(event) => {
-                    if (!event.target.files) return;
-                    void uploadFilesToAssetLibrary(event.target.files);
-                    event.target.value = "";
-                  }}
-                />
-              </label>
+              <div className="mt-2 flex gap-2">
+                <div className="relative min-w-0 flex-1">
+                  <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    value={assetLibraryQuery}
+                    onChange={(event) => setAssetLibraryQuery(event.target.value)}
+                    placeholder="검색"
+                    className="h-9 pl-8 text-xs"
+                  />
+                </div>
+                <label className="grid h-9 w-10 shrink-0 cursor-pointer place-items-center rounded-md border border-border bg-background text-muted-foreground hover:border-primary/50 hover:text-primary">
+                  {bulkUploading ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
+                  <input
+                    type="file"
+                    multiple
+                    accept="image/*,video/*"
+                    className="sr-only"
+                    disabled={bulkUploading}
+                    onChange={(event) => {
+                      if (!event.target.files) return;
+                      void uploadFilesToAssetLibrary(event.target.files);
+                      event.target.value = "";
+                    }}
+                  />
+                </label>
+              </div>
               {mediaLibraryQ.isLoading ? (
                 <div className="mt-2 rounded-md border border-dashed border-border p-3 text-xs text-muted-foreground">
                   라이브러리 불러오는 중
                 </div>
-              ) : librarySlots.length ? (
-                <div className="mt-2 grid max-h-48 gap-2 overflow-hidden">
-                  {librarySlots.slice(0, 5).map((slot) => (
-                    <AssetLibraryItem key={`${slot.chapterTitle}-${slot.id}`} slot={slot} />
+              ) : filteredLibrarySlots.length ? (
+                <div
+                  className={cn(
+                    "mt-2 grid gap-2 overflow-y-auto pr-1",
+                    assetLibraryExpanded
+                      ? "max-h-[58vh] grid-cols-3 sm:grid-cols-4 xl:grid-cols-5"
+                      : "max-h-36 grid-cols-4",
+                  )}
+                >
+                  {filteredLibrarySlots.slice(0, assetLibraryExpanded ? 240 : 8).map((slot) => (
+                    <AssetLibraryItem key={`${slot.chapterTitle}-${slot.id}-${slot.media_url}`} slot={slot} compact={!assetLibraryExpanded} />
                   ))}
-                  {librarySlots.length > 5 && (
-                    <div className="rounded-md border border-border bg-background px-3 py-2 text-center text-xs text-muted-foreground">
-                      외 {librarySlots.length - 5}개
-                    </div>
+                  {!assetLibraryExpanded && filteredLibrarySlots.length > 8 && (
+                    <button
+                      type="button"
+                      onClick={() => setAssetLibraryExpanded(true)}
+                      className="grid aspect-square place-items-center rounded-md border border-border bg-background px-2 text-center text-[11px] text-muted-foreground hover:border-primary/40 hover:text-primary"
+                    >
+                      +{filteredLibrarySlots.length - 8}
+                    </button>
                   )}
                 </div>
               ) : (
                 <div className="mt-2 rounded-md border border-dashed border-border p-3 text-xs text-muted-foreground">
-                  등록된 에셋 없음
+                  {assetLibraryQuery ? "검색 결과가 없습니다." : "등록된 에셋 없음"}
                 </div>
               )}
             </section>
@@ -3657,7 +3711,7 @@ function SelectedAssetEditor({
   );
 }
 
-function AssetLibraryItem({ slot }: { slot: AssetLibraryEntry }) {
+function AssetLibraryItem({ slot, compact = false }: { slot: AssetLibraryEntry; compact?: boolean }) {
   const mediaUrl = useSignedCover(slot.media_url);
   return (
     <div
@@ -3676,9 +3730,10 @@ function AssetLibraryItem({ slot }: { slot: AssetLibraryEntry }) {
           }),
         );
       }}
-      className="flex cursor-grab items-center gap-3 rounded-md border border-border bg-background p-2 active:cursor-grabbing"
+      className="group cursor-grab overflow-hidden rounded-md border border-border bg-background active:cursor-grabbing"
+      title={slot.scene_description || slot.caption || "에셋"}
     >
-      <div className="grid size-14 shrink-0 place-items-center overflow-hidden rounded-md border border-border bg-muted">
+      <div className="relative grid aspect-square place-items-center overflow-hidden bg-muted">
         {mediaUrl ? (
           slot.media_type === "video" ? (
             <video src={mediaUrl} className="size-full object-cover" muted />
@@ -3688,11 +3743,21 @@ function AssetLibraryItem({ slot }: { slot: AssetLibraryEntry }) {
         ) : (
           <ImageIcon className="size-4 text-muted-foreground" />
         )}
+        {slot.media_type === "video" && (
+          <span className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-medium text-white">
+            영상
+          </span>
+        )}
+        <span className="absolute bottom-1 left-1 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-medium text-white">
+          {ASSET_TIERS.find((tier) => tier.key === slot.heat_tier)?.label ?? "에셋"}
+        </span>
       </div>
-      <div className="min-w-0">
-        <div className="truncate text-sm font-medium">{slot.scene_description || slot.caption || "에셋"}</div>
-        <div className="truncate text-xs text-muted-foreground">{slot.chapterTitle}</div>
-      </div>
+      {!compact && (
+        <div className="min-w-0 p-2">
+          <div className="truncate text-xs font-medium">{slot.scene_description || slot.caption || "에셋"}</div>
+          <div className="mt-0.5 truncate text-[11px] text-muted-foreground">{slot.chapterTitle}</div>
+        </div>
+      )}
     </div>
   );
 }
