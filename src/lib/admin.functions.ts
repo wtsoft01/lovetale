@@ -30,6 +30,34 @@ function requireAnyRole(roles: string[]) {
   if (roles.length === 0) throw new Error("Forbidden");
 }
 
+type OrderNote = {
+  kind?: string;
+  months?: number;
+  planId?: string;
+  planName?: string;
+  monthlyCredits?: number;
+};
+
+function parseOrderNote(note: string | null): OrderNote | null {
+  if (!note) return null;
+  try {
+    const parsed = JSON.parse(note) as OrderNote;
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function addSubscriptionMonths(currentExpiresAt: string | null, months: number) {
+  const now = new Date();
+  const base =
+    currentExpiresAt && new Date(currentExpiresAt).getTime() > now.getTime()
+      ? new Date(currentExpiresAt)
+      : now;
+  base.setMonth(base.getMonth() + Math.max(1, months));
+  return base.toISOString();
+}
+
 export const checkIsAdmin = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
@@ -108,7 +136,7 @@ export const confirmCreditOrder = createServerFn({ method: "POST" })
 
     const { data: order, error: orderError } = await supabaseAdmin
       .from("credit_orders")
-      .select("id, user_id, credits, status, tx_hash, note")
+      .select("id, user_id, package_id, credits, status, tx_hash, note")
       .eq("id", data.orderId)
       .single();
     if (orderError) throw new Error(orderError.message);
@@ -118,24 +146,38 @@ export const confirmCreditOrder = createServerFn({ method: "POST" })
 
     const { data: profile, error: profileError } = await supabaseAdmin
       .from("profiles")
-      .select("credits")
+      .select("credits, subscription_expires_at")
       .eq("id", order.user_id)
       .single();
     if (profileError) throw new Error(profileError.message);
 
     const balanceAfter = Math.max(0, Number(profile?.credits ?? 0)) + Math.max(0, Number(order.credits ?? 0));
     const now = new Date().toISOString();
+    const orderNote = parseOrderNote(order.note);
+    const isSubscription = order.package_id?.startsWith("sub_") || orderNote?.kind === "subscription";
+    const profileUpdate: Record<string, string | number | boolean> = {
+      credits: balanceAfter,
+      updated_at: now,
+    };
+
+    if (isSubscription) {
+      profileUpdate.is_subscribed = true;
+      profileUpdate.subscription_expires_at = addSubscriptionMonths(
+        profile?.subscription_expires_at ?? null,
+        Number(orderNote?.months ?? 1),
+      );
+    }
 
     const { error: creditError } = await supabaseAdmin
       .from("profiles")
-      .update({ credits: balanceAfter, updated_at: now })
+      .update(profileUpdate)
       .eq("id", order.user_id);
     if (creditError) throw new Error(creditError.message);
 
     const { error: ledgerError } = await supabaseAdmin.from("credit_ledger").insert({
       user_id: order.user_id,
       delta: Math.max(0, Number(order.credits ?? 0)),
-      reason: "order_confirmed",
+      reason: isSubscription ? "subscription_order_confirmed" : "order_confirmed",
       ref_type: "credit_order",
       ref_id: order.id,
       balance_after: balanceAfter,

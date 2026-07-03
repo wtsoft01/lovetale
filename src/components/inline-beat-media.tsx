@@ -25,7 +25,7 @@ type Props = {
   hasSubscription?: boolean;
   userCredits?: number;
   onUnlock?: () => void;
-  onPreviewUpgrade?: () => void;
+  onPreviewUpgrade?: (payload: { requiredCredits: number; currentCredits: number }) => void;
 };
 
 // Storage path conventions inside `story-media`:
@@ -250,7 +250,12 @@ export function InlineBeatMedia({
               <div className="flex flex-col items-center gap-1.5">
                 <Button
                   size="sm"
-                  onClick={onPreviewUpgrade}
+                  onClick={() =>
+                    onPreviewUpgrade?.({
+                      requiredCredits: cost,
+                      currentCredits: userCredits ?? 0,
+                    })
+                  }
                   className="rounded-full bg-rose-600 text-white shadow-glow hover:bg-rose-500"
                 >
                   <Sparkles className="mr-1.5 h-3.5 w-3.5" />

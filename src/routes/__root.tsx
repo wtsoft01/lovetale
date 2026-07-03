@@ -8,8 +8,8 @@ import {
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
-import { useEffect, type ReactNode } from "react";
-import { Coins, Bell, LogIn, LogOut } from "lucide-react";
+import { useEffect, useState, type ReactNode } from "react";
+import { Coins, Bell, LogIn, LogOut, Moon, Sun } from "lucide-react";
 
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
@@ -151,11 +151,16 @@ function RootComponent() {
       s.location.pathname.startsWith("/admin") ||
       s.location.pathname.startsWith("/_authenticated/admin"),
   });
+  const isPlayRoute = useRouterState({
+    select: (s) =>
+      s.location.pathname.startsWith("/play/") ||
+      s.location.pathname.startsWith("/_authenticated/play/"),
+  });
 
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
-        {isAdminRoute ? (
+        {isAdminRoute || isPlayRoute ? (
           <Outlet />
         ) : (
           <SidebarProvider>
@@ -207,6 +212,7 @@ function HeaderAuth() {
       <button className="grid h-9 w-9 place-items-center rounded-full border border-border bg-surface-elevated/60 text-muted-foreground transition hover:text-foreground">
         <Bell className="h-4 w-4" />
       </button>
+      <HeaderThemeToggle />
       <Link
         to="/profile"
         className="grid h-9 w-9 place-items-center rounded-full bg-primary text-sm font-semibold text-primary-foreground"
@@ -222,5 +228,40 @@ function HeaderAuth() {
         <LogOut className="h-4 w-4" />
       </button>
     </>
+  );
+}
+
+function HeaderThemeToggle() {
+  const [darkMode, setDarkMode] = useState(true);
+
+  useEffect(() => {
+    const savedTheme = window.localStorage.getItem("lovetale-theme");
+    const prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? true;
+    setDarkMode(savedTheme ? savedTheme !== "light" : prefersDark);
+  }, []);
+
+  function applyTheme(useDark: boolean) {
+    document.documentElement.classList.toggle("dark", useDark);
+    document.documentElement.classList.toggle("light", !useDark);
+    document.documentElement.style.colorScheme = useDark ? "dark" : "light";
+  }
+
+  function toggleTheme() {
+    const next = !darkMode;
+    setDarkMode(next);
+    window.localStorage.setItem("lovetale-theme", next ? "dark" : "light");
+    applyTheme(next);
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={toggleTheme}
+      className="grid h-9 w-9 place-items-center rounded-full border border-border bg-surface-elevated/60 text-muted-foreground transition hover:text-foreground"
+      title={darkMode ? "라이트 모드로 전환" : "다크 모드로 전환"}
+      aria-label={darkMode ? "라이트 모드로 전환" : "다크 모드로 전환"}
+    >
+      {darkMode ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
+    </button>
   );
 }

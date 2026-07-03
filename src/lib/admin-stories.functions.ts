@@ -210,11 +210,21 @@ export const createDraftStory = createServerFn({ method: "POST" })
         sourceText?: string;
         targetStoryId?: string;
         coverUrl?: string | null;
+        logline?: string | null;
         storyOverview?: string | null;
+        episodeTitle?: string | null;
         episodeSummary?: string | null;
         authorName?: string | null;
         previewUrl?: string | null;
         previewType?: "image" | "video" | null;
+        tags?: string[];
+        audience?: "all" | "female" | "male";
+        maxHeat?: "soft" | "warm" | "spicy" | "steamy";
+        priceCredits?: number;
+        characterName?: string | null;
+        characterRole?: string | null;
+        characterPersona?: string | null;
+        characterSpeakingStyle?: string | null;
       },
   )
   .handler(async ({ data }): Promise<{ id: string }> => {
@@ -227,11 +237,21 @@ export const createDraftStory = createServerFn({ method: "POST" })
         sourceText: data.sourceText ?? "",
         targetStoryId: data.targetStoryId,
         coverUrl: data.coverUrl ?? null,
+        logline: data.logline ?? null,
         storyOverview: data.storyOverview ?? "",
+        episodeTitle: data.episodeTitle ?? "",
         episodeSummary: data.episodeSummary ?? "",
         authorName: data.authorName ?? "",
         previewUrl: data.previewUrl ?? null,
         previewType: data.previewType ?? null,
+        tags: data.tags ?? [],
+        audience: data.audience ?? "all",
+        maxHeat: data.maxHeat ?? "warm",
+        priceCredits: Math.max(0, Math.floor(Number(data.priceCredits) || 0)),
+        characterName: data.characterName ?? "",
+        characterRole: data.characterRole ?? "",
+        characterPersona: data.characterPersona ?? "",
+        characterSpeakingStyle: data.characterSpeakingStyle ?? "",
       }),
     });
     return { id: payload.id };

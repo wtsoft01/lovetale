@@ -1,24 +1,23 @@
-import { Link, useRouterState } from "@tanstack/react-router";
+﻿import { Link, useRouterState } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
+import type { ComponentType } from "react";
 import {
-  Compass,
-  Sparkles,
-  MessagesSquare,
+  BookHeart,
+  Coins,
   Crown,
-  UserRound,
-  Receipt,
+  Gift,
+  HeartHandshake,
+  Library,
   ShieldCheck,
   Store,
-  Library,
+  UserRound,
+  WandSparkles,
 } from "lucide-react";
 
 import { useServerFn } from "@/lib/_mock/runtime";
 import { getMyProfile } from "@/lib/profile.functions";
 import { useAuth } from "@/hooks/use-auth";
 import { getStaffAccess } from "@/lib/staff-access";
-
-const brandSymbolUrl = "/brand-symbol.png";
-
 import {
   Sidebar,
   SidebarContent,
@@ -32,22 +31,55 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
 
-const navItems = [
-  { title: "탐색", url: "/explore", icon: Compass },
+const brandSymbolUrl = "/brand-symbol.png";
+
+const playItems = [
+  { title: "스토리탐색", url: "/", icon: BookHeart },
+  { title: "캐릭터채팅", url: "/chats", icon: HeartHandshake },
+];
+
+const createItems = [
+  { title: "자작스토리", url: "/builder", icon: WandSparkles },
   { title: "스토리마켓", url: "/marketplace", icon: Store },
-  { title: "AI 스토리 로맨스", url: "/builder", icon: Sparkles },
-  { title: "내 라이브러리", url: "/library", icon: Library },
-  { title: "캐릭터 만들기", url: "/create", icon: Sparkles },
-  { title: "AI 채팅", url: "/chats", icon: MessagesSquare },
+  { title: "라이브러리", url: "/library", icon: Library },
 ];
 
 const accountItems = [
-  { title: "프리미엄", url: "/premium", icon: Crown },
-  { title: "주문 현황", url: "/orders", icon: Receipt },
-  { title: "프로필", url: "/profile", icon: UserRound },
+  { title: "무료크래딧", url: "/rewards", icon: Gift },
+  { title: "충전,구독", url: "/premium", icon: Crown },
+  { title: "내 프로필", url: "/profile", icon: UserRound },
 ];
 
 const adminAccountItem = { title: "관리자", url: "/admin", icon: ShieldCheck };
+
+type SidebarItem = {
+  title: string;
+  url: string;
+  icon: ComponentType<{ className?: string }>;
+};
+
+function SidebarItemList({
+  items,
+  isActive,
+}: {
+  items: SidebarItem[];
+  isActive: (url: string) => boolean;
+}) {
+  return (
+    <SidebarMenu>
+      {items.map((item) => (
+        <SidebarMenuItem key={item.url}>
+          <SidebarMenuButton asChild isActive={isActive(item.url)}>
+            <Link to={item.url}>
+              <item.icon className="h-4 w-4" />
+              <span>{item.title}</span>
+            </Link>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+      ))}
+    </SidebarMenu>
+  );
+}
 
 export function AppSidebar() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
@@ -68,11 +100,8 @@ export function AppSidebar() {
     enabled: !authLoading && Boolean(session),
     staleTime: 60_000,
   });
-  const visibleAccountItems = staffQ.data?.hasAny
-    ? [...accountItems, adminAccountItem]
-    : accountItems;
-  const isActive = (url: string) =>
-    url === "/" ? pathname === "/" : pathname.startsWith(url);
+  const visibleAccountItems = staffQ.data?.hasAny ? [...accountItems, adminAccountItem] : accountItems;
+  const isActive = (url: string) => (url === "/" ? pathname === "/" : pathname.startsWith(url));
 
   return (
     <Sidebar collapsible="icon" className="border-r border-sidebar-border">
@@ -92,38 +121,23 @@ export function AppSidebar() {
 
       <SidebarContent>
         <SidebarGroup>
-          <SidebarGroupLabel>플레이</SidebarGroupLabel>
+          <SidebarGroupLabel>PLAY</SidebarGroupLabel>
           <SidebarGroupContent>
-            <SidebarMenu>
-              {navItems.map((item) => (
-                <SidebarMenuItem key={item.url}>
-                  <SidebarMenuButton asChild isActive={isActive(item.url)}>
-                    <Link to={item.url}>
-                      <item.icon className="h-4 w-4" />
-                      <span>{item.title}</span>
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
+            <SidebarItemList items={playItems} isActive={isActive} />
           </SidebarGroupContent>
         </SidebarGroup>
 
         <SidebarGroup>
-          <SidebarGroupLabel>계정</SidebarGroupLabel>
+          <SidebarGroupLabel>CREATE</SidebarGroupLabel>
           <SidebarGroupContent>
-            <SidebarMenu>
-              {visibleAccountItems.map((item) => (
-                <SidebarMenuItem key={item.url}>
-                  <SidebarMenuButton asChild isActive={isActive(item.url)}>
-                    <Link to={item.url}>
-                      <item.icon className="h-4 w-4" />
-                      <span>{item.title}</span>
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
+            <SidebarItemList items={createItems} isActive={isActive} />
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        <SidebarGroup>
+          <SidebarGroupLabel>MY</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarItemList items={visibleAccountItems} isActive={isActive} />
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
@@ -131,16 +145,25 @@ export function AppSidebar() {
       <SidebarFooter className="px-3 pb-4 group-data-[collapsible=icon]:hidden">
         <div className="rounded-xl border border-border bg-surface-elevated/60 p-3">
           <div className="flex items-center justify-between text-xs">
-            <span className="text-muted-foreground">보유 크레딧</span>
+            <span className="inline-flex items-center gap-1 text-muted-foreground">
+              <Coins className="h-3.5 w-3.5 text-primary" />
+              보유 크레딧
+            </span>
             <span className="font-semibold text-foreground">
               {profileQ.data?.credits?.toLocaleString?.() ?? "0"}
             </span>
           </div>
           <Link
-            to="/premium"
-            className="mt-2 block rounded-lg border border-primary/70 bg-primary px-3 py-1.5 text-center text-xs font-semibold text-primary-foreground shadow-sm transition hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+            to="/rewards"
+            className="mt-2 block rounded-lg border border-pink-400/60 bg-pink-500 px-3 py-1.5 text-center text-xs font-semibold text-white shadow-sm transition hover:bg-pink-500/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-400/60"
           >
-            크레딧 충전
+            무료크래딧
+          </Link>
+          <Link
+            to="/premium"
+            className="mt-1.5 block rounded-lg border border-primary/40 px-3 py-1.5 text-center text-xs font-semibold text-foreground transition hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+          >
+            충전,구독
           </Link>
         </div>
       </SidebarFooter>

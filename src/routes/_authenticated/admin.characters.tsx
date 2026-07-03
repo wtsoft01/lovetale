@@ -14,7 +14,9 @@ import {
   Search,
   Star,
   Trash2,
+  Upload,
   UserCircle2,
+  Wand2,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -24,6 +26,8 @@ import {
   type CharacterStoryRow,
   type StoryCharacter,
 } from "@/lib/admin-characters.functions";
+import { ensureStoryMediaBucket } from "@/lib/storage.functions";
+import { supabase } from "@/integrations/supabase/client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -317,6 +321,7 @@ function CharactersPage() {
 
           {selectedCharacter && (
             <CharacterEditor
+              storyId={selectedStory.storyId}
               character={selectedCharacter}
               onPatch={(patch) => patchCharacter(selectedCharacter.id, patch)}
               onPrimary={() => setPrimaryCharacter(selectedCharacter.id)}
@@ -387,6 +392,7 @@ function CharactersPage() {
 }
 
 function CharacterEditor({
+  storyId,
   character,
   onPatch,
   onPrimary,
@@ -394,6 +400,7 @@ function CharacterEditor({
   onRemove,
   canRemove,
 }: {
+  storyId: string;
   character: CharacterDraft;
   onPatch: (patch: Partial<CharacterDraft>) => void;
   onPrimary: () => void;
@@ -401,6 +408,72 @@ function CharacterEditor({
   onRemove: () => void;
   canRemove: boolean;
 }) {
+  const [uploading, setUploading] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const avatarPreview = useSignedCharacterImage(character.avatarUrl);
+
+  async function uploadAvatar(file: File | null) {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      toast.error("이미지 파일만 등록할 수 있습니다.");
+      return;
+    }
+    setUploading(true);
+    try {
+      await ensureStoryMediaBucket();
+      const ext = file.name.split(".").pop() || "png";
+      const key = `characters/${storyId}/${character.id}-${Date.now()}.${ext}`;
+      const { error } = await supabase.storage
+        .from("story-media")
+        .upload(key, file, { upsert: true, contentType: file.type || undefined });
+      if (error) throw error;
+      onPatch({ avatarUrl: key });
+      toast.success("캐릭터 이미지가 등록되었습니다.");
+    } catch (error: any) {
+      toast.error(error?.message ?? "이미지 업로드에 실패했습니다.");
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function generateAvatar() {
+    if (!character.name.trim()) {
+      toast.error("캐릭터 이름을 먼저 입력해주세요.");
+      return;
+    }
+    setGenerating(true);
+    try {
+      const { data, error } = await supabase.auth.getSession();
+      if (error) throw error;
+      const token = data.session?.access_token;
+      if (!token) throw new Error("로그인이 필요합니다.");
+      const response = await fetch("/api/reader-profile-image", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          name: character.name,
+          bio: [character.role, character.persona, character.personality, character.relationship].filter(Boolean).join("\n"),
+          prompt:
+            character.visualPrompt ||
+            "romantic manga style character portrait, expressive face, polished webtoon character profile",
+        }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !payload?.ok) {
+        throw new Error(payload?.message || payload?.reason || "AI 이미지 생성에 실패했습니다.");
+      }
+      onPatch({ avatarUrl: payload.storagePath || payload.signedUrl || null });
+      toast.success("AI 캐릭터 이미지가 생성되었습니다. 저장 버튼을 눌러 반영해주세요.");
+    } catch (error: any) {
+      toast.error(error?.message ?? "AI 이미지 생성에 실패했습니다.");
+    } finally {
+      setGenerating(false);
+    }
+  }
+
   return (
     <Card>
       <CardHeader>
@@ -496,6 +569,44 @@ function CharacterEditor({
           />
         </Field>
 
+        <Field label="캐릭터 이미지 등록 / AI 생성">
+          <div className="flex flex-col gap-3 rounded-lg border border-border bg-background p-3 sm:flex-row sm:items-center">
+            <div className="grid size-20 shrink-0 place-items-center overflow-hidden rounded-xl border border-border bg-muted">
+              {avatarPreview ? (
+                <img src={avatarPreview} alt={character.name} className="size-full object-cover" />
+              ) : (
+                <UserCircle2 className="size-8 text-muted-foreground" />
+              )}
+            </div>
+            <div className="min-w-0 flex-1 space-y-2">
+              <div className="text-xs leading-5 text-muted-foreground">
+                이미지는 채팅 상대 썸네일과 친구목록 프로필에 사용됩니다. 직접 등록하거나 비주얼 프롬프트를 바탕으로 AI 생성할 수 있습니다.
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <label className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-md border border-border bg-card px-3 text-sm hover:border-primary/50">
+                  {uploading ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
+                  이미지 등록
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    disabled={uploading}
+                    onChange={(event) => {
+                      const file = event.currentTarget.files?.[0] ?? null;
+                      event.currentTarget.value = "";
+                      void uploadAvatar(file);
+                    }}
+                  />
+                </label>
+                <Button type="button" variant="outline" size="sm" onClick={generateAvatar} disabled={generating}>
+                  {generating ? <Loader2 className="size-4 animate-spin" /> : <Wand2 className="size-4" />}
+                  AI 생성
+                </Button>
+              </div>
+            </div>
+          </div>
+        </Field>
+
         <div className="grid gap-3 md:grid-cols-3">
           <ToggleLine
             checked={character.chatEnabled}
@@ -558,6 +669,30 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
       {children}
     </div>
   );
+}
+
+function useSignedCharacterImage(path?: string | null) {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    if (!path) {
+      setUrl(null);
+      return;
+    }
+    if (/^(https?:|data:|blob:)/.test(path)) {
+      setUrl(path);
+      return;
+    }
+    supabase.storage
+      .from("story-media")
+      .createSignedUrl(path, 60 * 60)
+      .then(({ data }) => !cancelled && setUrl(data?.signedUrl ?? null))
+      .catch(() => !cancelled && setUrl(null));
+    return () => {
+      cancelled = true;
+    };
+  }, [path]);
+  return url;
 }
 
 function ToggleLine({

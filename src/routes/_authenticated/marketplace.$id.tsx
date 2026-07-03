@@ -7,6 +7,7 @@ import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { CreditShortageDialog } from "@/components/credit-shortage-dialog";
 import { CoverImage } from "@/components/cover-image";
 import {
   Dialog,
@@ -45,6 +46,7 @@ function MarketplaceDetailPage() {
   const fetchProfile = useServerFn(getMyProfile);
 
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [creditShortageOpen, setCreditShortageOpen] = useState(false);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["marketplace_story", id],
@@ -67,7 +69,13 @@ function MarketplaceDetailPage() {
       // Auto-navigate to play
       navigate({ to: "/play/user/$id", params: { id } });
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (e: Error) => {
+      if (e.message === "INSUFFICIENT_CREDITS" || e.message.includes("credit")) {
+        setCreditShortageOpen(true);
+        return;
+      }
+      toast.error(e.message);
+    },
   });
 
   if (isLoading) {
@@ -275,8 +283,14 @@ function MarketplaceDetailPage() {
           <DialogFooter>
             <Button variant="ghost" onClick={() => setConfirmOpen(false)}>취소</Button>
             <Button
-              disabled={buyMut.isPending || insufficient}
-              onClick={() => buyMut.mutate()}
+              disabled={buyMut.isPending}
+              onClick={() => {
+                if (insufficient) {
+                  setCreditShortageOpen(true);
+                  return;
+                }
+                buyMut.mutate();
+              }}
             >
               {buyMut.isPending && <Loader2 className="size-4 animate-spin mr-1" />}
               <Coins className="size-4 mr-1" /> {price} 결제
@@ -284,6 +298,14 @@ function MarketplaceDetailPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <CreditShortageDialog
+        open={creditShortageOpen}
+        onOpenChange={setCreditShortageOpen}
+        requiredCredits={price}
+        currentCredits={credits}
+        description="이 스토리를 구매하려면 크레딧이 조금 더 필요해요. 무료 보상으로 먼저 채우거나 충전·구독으로 바로 이어갈 수 있어요."
+      />
     </div>
   );
 }

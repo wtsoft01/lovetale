@@ -1,35 +1,32 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useServerFn } from "@/lib/_mock/runtime";
-import { Loader2, Sparkles, ArrowLeft, Trash2, Lock, BookOpen, Store, Coins } from "lucide-react";
-import { toast } from "sonner";
+﻿import { createFileRoute, Link } from "@tanstack/react-router";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import type { ComponentType, ReactNode } from "react";
+import { ArrowLeft, BookOpen, Coins, Library, Loader2, Lock, Pencil, Play, Plus, Store, Trash2 } from "lucide-react";
+import { toast } from "sonner";
 
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { CoverImage } from "@/components/cover-image";
 import {
   Dialog,
   DialogContent,
-  DialogHeader,
-  DialogTitle,
   DialogDescription,
   DialogFooter,
+  DialogHeader,
+  DialogTitle,
 } from "@/components/ui/dialog";
-import { listMyUserStories, deleteMyUserStory } from "@/lib/story-builder.functions";
-import {
-  publishUserStory,
-  unpublishUserStory,
-  listMyPurchasedStories,
-} from "@/lib/marketplace.functions";
+import { Input } from "@/components/ui/input";
+import { useServerFn } from "@/lib/_mock/runtime";
+import { deleteMyUserStory, listMyUserStories } from "@/lib/story-builder.functions";
+import { listMyPurchasedStories, publishUserStory, unpublishUserStory } from "@/lib/marketplace.functions";
 import { getMyCreatorRevenueRule } from "@/lib/revenue-rules.functions";
 
 export const Route = createFileRoute("/_authenticated/library")({
   head: () => ({
     meta: [
-      { title: "내 라이브러리 — Lovetale" },
-      { name: "description", content: "AI로 생성한 비공개 스토리들." },
+      { title: "?쇱씠釉뚮윭由?| Lovetale" },
+      { name: "description", content: "援щℓ???ㅽ넗由? ?먯옉?ㅽ넗由? ?먮ℓ 以묒씤 ?묓뭹??愿由ы빀?덈떎." },
     ],
   }),
   component: LibraryPage,
@@ -41,37 +38,39 @@ function LibraryPage() {
   const del = useServerFn(deleteMyUserStory);
   const publish = useServerFn(publishUserStory);
   const unpublish = useServerFn(unpublishUserStory);
+  const fetchPurchased = useServerFn(listMyPurchasedStories);
   const getRule = useServerFn(getMyCreatorRevenueRule);
 
   const [publishTarget, setPublishTarget] = useState<{ id: string; title: string; current: number } | null>(null);
   const [priceInput, setPriceInput] = useState<number>(10);
   const [audienceInput, setAudienceInput] = useState<"all" | "female" | "male">("all");
   const [heatInput, setHeatInput] = useState<"soft" | "warm" | "spicy" | "steamy">("warm");
-  const [tagsInput, setTagsInput] = useState<string>("");
+  const [tagsInput, setTagsInput] = useState("");
 
   const { data, isLoading } = useQuery({
     queryKey: ["my_user_stories"],
     queryFn: () => list(),
   });
-
-  const fetchPurchased = useServerFn(listMyPurchasedStories);
-  const { data: purchased } = useQuery({
+  const { data: purchased, isLoading: purchasedLoading } = useQuery({
     queryKey: ["my_purchased_stories"],
     queryFn: () => fetchPurchased(),
   });
-
   const { data: creatorRule } = useQuery({
     queryKey: ["my_creator_revenue_rule"],
     queryFn: () => getRule(),
   });
 
+  const created = data ?? [];
+  const listedCount = created.filter((story) => story.is_listed).length;
+  const draftCount = created.length - listedCount;
+
   const delMut = useMutation({
     mutationFn: (id: string) => del({ data: { id } }),
     onSuccess: () => {
-      toast.success("삭제됨");
+      toast.success("??젣?덉뒿?덈떎.");
       qc.invalidateQueries({ queryKey: ["my_user_stories"] });
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (error: Error) => toast.error(error.message),
   });
 
   const publishMut = useMutation({
@@ -92,286 +91,338 @@ function LibraryPage() {
         },
       }),
     onSuccess: () => {
-      toast.success("마켓에 등록됐어요!");
+      toast.success("留덉폆???깅줉?덉뒿?덈떎.");
       setPublishTarget(null);
       qc.invalidateQueries({ queryKey: ["my_user_stories"] });
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (error: Error) => toast.error(error.message),
   });
 
   const unpublishMut = useMutation({
     mutationFn: (id: string) => unpublish({ data: { id } }),
     onSuccess: () => {
-      toast.success("마켓에서 내렸어요.");
+      toast.success("留덉폆?먯꽌 ?대졇?듬땲??");
       qc.invalidateQueries({ queryKey: ["my_user_stories"] });
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (error: Error) => toast.error(error.message),
   });
 
   return (
-    <div className="min-h-dvh bg-gradient-to-b from-background via-background to-background/80">
-      <header className="sticky top-0 z-30 backdrop-blur-xl bg-background/70 border-b border-border/40">
-        <div className="mx-auto max-w-3xl px-4 h-14 flex items-center justify-between">
-          <Link to="/" className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground">
-            <ArrowLeft className="size-4" /> 홈
+    <div className="min-h-dvh bg-background">
+      <header className="sticky top-0 z-30 border-b border-border/40 bg-background/80 backdrop-blur-xl">
+        <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4">
+          <Link to="/" className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground">
+            <ArrowLeft className="size-4" />
+            스토리탐색
           </Link>
-          <h1 className="text-sm font-semibold">내 라이브러리</h1>
+          <div className="flex items-center gap-2">
+            <Library className="size-4 text-primary" />
+            <h1 className="text-sm font-semibold">라이브러리</h1>
+          </div>
           <div className="flex items-center gap-3">
-            <Link to="/marketplace" className="text-sm text-muted-foreground hover:text-foreground flex items-center gap-1">
-              <Store className="size-4" /> 마켓
-            </Link>
-            <Link to="/builder" className="text-sm text-primary hover:text-primary/80 flex items-center gap-1">
-              <Sparkles className="size-4" /> 새로 만들기
-            </Link>
+            <Link to="/builder" className="inline-flex items-center gap-1 text-sm text-primary hover:text-primary/80">
+              <Plus className="size-4" />
+              자작스토리`n            </Link>
+            <Link to="/marketplace" className="hidden items-center gap-1 text-sm text-muted-foreground hover:text-foreground sm:inline-flex">
+              <Store className="size-4" />
+              스토리마켓`n            </Link>
           </div>
         </div>
       </header>
 
-      <main className="mx-auto max-w-3xl px-4 py-8 space-y-8">
-        {/* Purchased stories */}
-        {(purchased?.length ?? 0) > 0 && (
-          <section className="space-y-3">
-            <div className="flex items-center gap-2">
-              <h2 className="text-sm font-semibold text-muted-foreground">
-                구매한 스토리 ({purchased!.length})
-              </h2>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {purchased!.map((p) => (
+      <main className="mx-auto max-w-6xl space-y-8 px-4 py-6">
+        <div className="grid gap-3 sm:grid-cols-3">
+          <StatCard label="구매" value={purchased?.length ?? 0} />
+          <StatCard label="제작" value={created.length} />
+          <StatCard label="판매중" value={listedCount} hint={draftCount ? `비공개 ${draftCount}` : undefined} />
+        </div>
+
+        <section className="space-y-3">
+          <SectionTitle title="구매한 스토리" count={purchased?.length ?? 0} />
+          {purchasedLoading ? (
+            <LoadingRow />
+          ) : (purchased?.length ?? 0) === 0 ? (
+            <EmptyState icon={BookOpen} text="援щℓ???ㅽ넗由ш? ?놁뒿?덈떎." actionLabel="留덉폆 蹂닿린" href="/marketplace" />
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {purchased!.map((story) => (
                 <Link
-                  key={p.id}
+                  key={story.id}
                   to="/play/user/$id"
-                  params={{ id: p.id }}
-                  className="rounded-xl border border-border/60 bg-card/40 backdrop-blur p-3 flex gap-3 hover:border-primary/60 transition"
+                  params={{ id: story.id }}
+                  className="group flex gap-3 rounded-3xl border border-border/60 bg-card/45 p-3 transition hover:border-primary/50"
                 >
-                  {p.cover_url ? (
-                    <CoverImage src={p.cover_url} alt={p.title} className="size-16 rounded-lg object-cover shrink-0" />
-                  ) : (
-                    <div className="size-16 rounded-lg bg-gradient-to-br from-primary/20 to-card flex items-center justify-center shrink-0">
-                      <BookOpen className="size-6 text-muted-foreground/60" />
-                    </div>
-                  )}
-                  <div className="min-w-0 flex-1 space-y-0.5">
-                    <p className="font-semibold text-sm truncate">{p.title}</p>
-                    <p className="text-[10px] text-muted-foreground truncate">@{p.author_name}</p>
-                    <div className="flex items-center gap-1.5 pt-0.5">
-                      <Badge variant="secondary" className="text-[9px] gap-0.5">
-                        <Coins className="size-2.5" /> {p.price_credits_paid}
-                      </Badge>
-                      <span className="text-[10px] text-muted-foreground/70">
-                        {new Date(p.purchased_at).toLocaleDateString("ko-KR")}
-                      </span>
-                    </div>
+                  <StoryThumb src={story.cover_url} title={story.title} />
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <h3 className="truncate text-sm font-semibold group-hover:text-primary">{story.title}</h3>
+                    <p className="truncate text-xs text-muted-foreground">@{story.author_name}</p>
+                    <Badge variant="secondary" className="gap-1 text-[10px]">
+                      <Coins className="size-3" />
+                      {story.price_credits_paid}
+                    </Badge>
                   </div>
                 </Link>
               ))}
             </div>
-          </section>
-        )}
+          )}
+        </section>
 
-        {/* My created stories */}
         <section className="space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h2 className="text-sm font-semibold text-muted-foreground">
-                내가 만든 스토리 {data ? `(${data.length})` : ""}
-              </h2>
-              <p className="mt-1 text-xs text-muted-foreground/80">
-                발행하면 스토리마켓에 등록되고, 현재 내 수익공유율은 {creatorRule?.sharePercent ?? 70}%입니다.
-              </p>
-            </div>
-            <Button asChild variant="outline" size="sm">
-              <Link to="/marketplace"><Store className="size-3.5 mr-1" /> 마켓 판매페이지</Link>
-            </Button>
-          </div>
+          <SectionTitle title="내 자작스토리" count={created.length} />
+          {isLoading ? (
+            <LoadingRow />
+          ) : created.length === 0 ? (
+            <EmptyState icon={Plus} text="아직 만든 스토리가 없습니다." actionLabel="만들기" href="/builder" />
+          ) : (
+            <div className="grid gap-3">
+              {created.map((story) => (
+                <article key={story.id} className="rounded-3xl border border-border/60 bg-card/45 p-4">
+                  <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                    <div className="min-w-0 flex-1 space-y-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h3 className="truncate font-semibold">{story.title}</h3>
+                        {story.is_listed ? (
+                          <Badge className="gap-1 text-[10px]">
+                            <Store className="size-3" />
+                            {story.price_credits} ?щ젅??                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="gap-1 text-[10px]">
+                            <Lock className="size-3" />
+                            鍮꾧났媛?                          </Badge>
+                        )}
+                        <Badge variant="secondary" className="text-[10px] capitalize">
+                          {story.status}
+                        </Badge>
+                      </div>
+                      {story.logline && <p className="line-clamp-2 text-sm text-muted-foreground">{story.logline}</p>}
+                      <p className="text-[10px] text-muted-foreground/70">
+                        {new Date(story.updated_at).toLocaleDateString("ko-KR")}
+                      </p>
+                    </div>
 
-          {isLoading && (
-            <div className="flex items-center justify-center py-20 text-muted-foreground">
-              <Loader2 className="size-5 animate-spin" />
+                    <div className="flex flex-wrap gap-2 md:justify-end">
+                      <Button asChild size="sm" variant="outline">
+                        <Link to="/play/user/$id" params={{ id: story.id }}>
+                          <Play className="mr-1 size-3.5" />
+                          蹂닿린
+                        </Link>
+                      </Button>
+                      <Button asChild size="sm" variant="outline">
+                        <Link to="/builder/$id" params={{ id: story.id }}>
+                          <Pencil className="mr-1 size-3.5" />
+                          ?몄쭛
+                        </Link>
+                      </Button>
+                      {story.is_listed ? (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          disabled={unpublishMut.isPending}
+                          onClick={() => {
+                            if (confirm("留덉폆?먯꽌 ?대┫源뚯슂?")) unpublishMut.mutate(story.id);
+                          }}
+                        >
+                          ?대━湲?                        </Button>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => {
+                            setPriceInput(story.price_credits || 10);
+                            setPublishTarget({ id: story.id, title: story.title, current: story.price_credits || 10 });
+                          }}
+                        >
+                          <Store className="mr-1 size-3.5" />
+                          ?먮ℓ
+                        </Button>
+                      )}
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={delMut.isPending}
+                        onClick={() => {
+                          if (confirm("???ㅽ넗由щ? ??젣?좉퉴??")) delMut.mutate(story.id);
+                        }}
+                        aria-label="?ㅽ넗由???젣"
+                      >
+                        <Trash2 className="size-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                </article>
+              ))}
             </div>
           )}
-
-          {!isLoading && (data?.length ?? 0) === 0 && (
-            <div className="rounded-2xl border border-dashed border-border/60 p-10 text-center space-y-3">
-              <BookOpen className="size-8 mx-auto text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">아직 만든 스토리가 없습니다.</p>
-              <Button asChild>
-                <Link to="/builder">
-                  <Sparkles className="size-4 mr-1" /> 첫 스토리 만들기
-                </Link>
-              </Button>
-            </div>
-          )}
-
-        <ul className="space-y-3">
-          {data?.map((s) => (
-            <li
-              key={s.id}
-              className="rounded-xl border border-border/60 bg-card/60 backdrop-blur p-4 flex items-start justify-between gap-3"
-            >
-              <div className="min-w-0 flex-1 space-y-1.5">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <h3 className="font-semibold truncate">{s.title}</h3>
-                  {!s.is_listed ? (
-                    <Badge variant="outline" className="text-[10px] gap-1">
-                      <Lock className="size-3" /> 비공개
-                    </Badge>
-                  ) : (
-                    <Badge className="text-[10px] gap-0.5">
-                      <Store className="size-3" /> 마켓 · {s.price_credits} 크레딧
-                    </Badge>
-                  )}
-                  <Badge variant="secondary" className="text-[10px] capitalize">{s.status}</Badge>
-                </div>
-                {s.logline && (
-                  <p className="text-xs text-muted-foreground line-clamp-2">{s.logline}</p>
-                )}
-                <p className="text-[10px] text-muted-foreground/70">
-                  수정: {new Date(s.updated_at).toLocaleString("ko-KR")}
-                </p>
-              </div>
-              <div className="flex flex-col gap-1.5 shrink-0 w-24">
-                <Button asChild size="sm">
-                  <Link to="/play/user/$id" params={{ id: s.id }}>플레이</Link>
-                </Button>
-                <Button asChild size="sm" variant="outline">
-                  <Link to="/builder/$id" params={{ id: s.id }}>편집</Link>
-                </Button>
-                {!s.is_listed ? (
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() => {
-                      setPriceInput(s.price_credits || 10);
-                      setPublishTarget({ id: s.id, title: s.title, current: s.price_credits || 10 });
-                    }}
-                  >
-                    <Store className="size-3.5 mr-1" /> 발행
-                  </Button>
-                ) : (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    disabled={unpublishMut.isPending}
-                    onClick={() => {
-                      if (confirm("마켓에서 내릴까요?")) unpublishMut.mutate(s.id);
-                    }}
-                  >
-                    내리기
-                  </Button>
-                )}
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  disabled={delMut.isPending}
-                  onClick={() => {
-                    if (confirm("이 스토리를 삭제할까요?")) delMut.mutate(s.id);
-                  }}
-                >
-                  <Trash2 className="size-3.5" />
-                </Button>
-              </div>
-            </li>
-          ))}
-        </ul>
         </section>
       </main>
 
-      <Dialog open={!!publishTarget} onOpenChange={(o) => !o && setPublishTarget(null)}>
+      <Dialog open={!!publishTarget} onOpenChange={(open) => !open && setPublishTarget(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>마켓에 발행</DialogTitle>
+            <DialogTitle>留덉폆???먮ℓ</DialogTitle>
             <DialogDescription>
-              {publishTarget?.title} — 가격을 정해주세요. 판매 시 작가에게 {creatorRule?.sharePercent ?? 70}%가 분배됩니다.
+              ?먮ℓ ?섏씡??{creatorRule?.sharePercent ?? 70}%媛 ?묎??먭쾶 遺꾨같?⑸땲??
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
-            <div className="space-y-1.5">
-              <label className="text-xs text-muted-foreground flex items-center gap-1">
-                <Coins className="size-3.5" /> 판매 가격 (크레딧)
-              </label>
+            <Field label="가격">
               <Input
                 type="number"
                 min={0}
                 max={500}
                 value={priceInput}
-                onChange={(e) => setPriceInput(Number(e.target.value))}
+                onChange={(event) => setPriceInput(Number(event.target.value))}
               />
-              <p className="text-[11px] text-muted-foreground">
-                0 = 무료 공개. 추천: 10–30 크레딧.
-              </p>
-            </div>
+            </Field>
 
-            <div className="space-y-1.5">
-              <label className="text-xs text-muted-foreground">대상 독자</label>
-              <div className="flex gap-1.5">
-                {(["all", "female", "male"] as const).map((v) => (
-                  <Button
-                    key={v}
-                    type="button"
-                    size="sm"
-                    variant={audienceInput === v ? "default" : "outline"}
-                    onClick={() => setAudienceInput(v)}
-                  >
-                    {v === "all" ? "전체" : v === "female" ? "여성향" : "남성향"}
-                  </Button>
-                ))}
-              </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-xs text-muted-foreground">최고 수위</label>
-              <div className="flex gap-1.5">
-                {(["soft", "warm", "spicy", "steamy"] as const).map((v) => (
-                  <Button
-                    key={v}
-                    type="button"
-                    size="sm"
-                    variant={heatInput === v ? "default" : "outline"}
-                    onClick={() => setHeatInput(v)}
-                  >
-                    {v}
-                  </Button>
-                ))}
-              </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-xs text-muted-foreground">테마 태그 (쉼표 구분, 최대 8개)</label>
-              <Input
-                value={tagsInput}
-                placeholder="예: 오피스, 재회, 비밀연애"
-                onChange={(e) => setTagsInput(e.target.value)}
+            <Field label="대상">
+              <Segmented
+                value={audienceInput}
+                values={[
+                  ["all", "전체"],
+                  ["female", "여성향"],
+                  ["male", "남성향"],
+                ]}
+                onChange={(value) => setAudienceInput(value as typeof audienceInput)}
               />
-            </div>
+            </Field>
+
+            <Field label="媛뺣룄">
+              <Segmented
+                value={heatInput}
+                values={[
+                  ["soft", "Soft"],
+                  ["warm", "Warm"],
+                  ["spicy", "Spicy"],
+                  ["steamy", "Steamy"],
+                ]}
+                onChange={(value) => setHeatInput(value as typeof heatInput)}
+              />
+            </Field>
+
+            <Field label="?쒓렇">
+              <Input value={tagsInput} placeholder="?ㅽ뵾?? ?ы쉶, 鍮꾨?怨꾩빟" onChange={(event) => setTagsInput(event.target.value)} />
+            </Field>
           </div>
           <DialogFooter>
-            <Button variant="ghost" onClick={() => setPublishTarget(null)}>취소</Button>
+            <Button variant="ghost" onClick={() => setPublishTarget(null)}>
+              痍⑥냼
+            </Button>
             <Button
               disabled={publishMut.isPending}
               onClick={() => {
-                if (publishTarget) {
-                  const tags = tagsInput
-                    .split(",")
-                    .map((t) => t.trim())
-                    .filter(Boolean)
-                    .slice(0, 8);
-                  publishMut.mutate({
-                    id: publishTarget.id,
-                    price: Math.max(0, priceInput),
-                    audience: audienceInput,
-                    max_heat: heatInput,
-                    tags,
-                  });
-                }
+                if (!publishTarget) return;
+                const tags = tagsInput
+                  .split(",")
+                  .map((tag) => tag.trim())
+                  .filter(Boolean)
+                  .slice(0, 8);
+                publishMut.mutate({
+                  id: publishTarget.id,
+                  price: Math.max(0, priceInput),
+                  audience: audienceInput,
+                  max_heat: heatInput,
+                  tags,
+                });
               }}
             >
-              {publishMut.isPending && <Loader2 className="size-4 animate-spin mr-1" />}
-              마켓에 등록
+              {publishMut.isPending && <Loader2 className="mr-1 size-4 animate-spin" />}
+              ?먮ℓ ?깅줉
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+function StatCard({ label, value, hint }: { label: string; value: number; hint?: string }) {
+  return (
+    <div className="rounded-3xl border border-border/60 bg-card/45 p-4">
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className="mt-1 text-2xl font-semibold">{value}</div>
+      {hint && <div className="mt-1 text-xs text-muted-foreground">{hint}</div>}
+    </div>
+  );
+}
+
+function SectionTitle({ title, count }: { title: string; count: number }) {
+  return (
+    <div className="flex items-center gap-2">
+      <h2 className="font-display text-xl font-semibold">{title}</h2>
+      <Badge variant="secondary" className="text-[10px]">
+        {count}
+      </Badge>
+    </div>
+  );
+}
+
+function LoadingRow() {
+  return (
+    <div className="flex items-center justify-center py-12 text-muted-foreground">
+      <Loader2 className="size-5 animate-spin" />
+    </div>
+  );
+}
+
+function EmptyState({
+  icon: Icon,
+  text,
+  actionLabel,
+  href,
+}: {
+  icon: ComponentType<{ className?: string }>;
+  text: string;
+  actionLabel: string;
+  href: "/builder" | "/marketplace";
+}) {
+  return (
+    <div className="rounded-3xl border border-dashed border-border/60 p-10 text-center">
+      <Icon className="mx-auto size-8 text-muted-foreground" />
+      <p className="mt-3 text-sm text-muted-foreground">{text}</p>
+      <Button asChild className="mt-4" size="sm">
+        <Link to={href}>{actionLabel}</Link>
+      </Button>
+    </div>
+  );
+}
+
+function StoryThumb({ src, title }: { src: string | null; title: string }) {
+  if (src) {
+    return <CoverImage src={src} alt={title} className="size-16 shrink-0 rounded-2xl object-cover" />;
+  }
+  return (
+    <div className="grid size-16 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-primary/20 to-card">
+      <BookOpen className="size-6 text-muted-foreground/60" />
+    </div>
+  );
+}
+
+function Field({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="space-y-1.5">
+      <label className="text-xs text-muted-foreground">{label}</label>
+      {children}
+    </div>
+  );
+}
+
+function Segmented({
+  value,
+  values,
+  onChange,
+}: {
+  value: string;
+  values: Array<[string, string]>;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {values.map(([key, label]) => (
+        <Button key={key} type="button" size="sm" variant={value === key ? "default" : "outline"} onClick={() => onChange(key)}>
+          {label}
+        </Button>
+      ))}
     </div>
   );
 }

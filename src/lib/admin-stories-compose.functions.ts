@@ -1,6 +1,7 @@
 ﻿import { createServerFn } from "@/lib/_mock/runtime";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
+import { mapNormalizedProseOffset, normalizeProseLineBreaks } from "@/lib/text-normalization";
 
 export type HeatPreset = "soft" | "warm" | "spicy" | "steamy";
 export type AssetTier = HeatPreset | "premium";
@@ -19,6 +20,18 @@ export type AssetSlot = {
   source: "ai" | "manual";
 };
 
+export type ChapterCharacterInsight = {
+  id: string;
+  name: string;
+  role: string;
+  emotion: string;
+  attitude: string;
+  traits: string[];
+  relationship: string;
+  chatGuidance: string;
+  evidence: string;
+};
+
 export type ChapterConfig = {
   id: string;
   title: string;
@@ -28,6 +41,7 @@ export type ChapterConfig = {
   summary: string;
   body: string;
   assetSlots: AssetSlot[];
+  characterAnalysis?: ChapterCharacterInsight[];
 };
 
 export type CharacterConfig = {
@@ -79,6 +93,183 @@ async function requireUserId(): Promise<string> {
 
 function recordOf(value: unknown): Record<string, any> {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, any>) : {};
+}
+
+function compactText(value: unknown) {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function textIncludesAny(text: string, keywords: string[]) {
+  return keywords.some((keyword) => text.includes(keyword));
+}
+
+function inferEmotion(text: string) {
+  if (textIncludesAny(text, ["두려", "무서", "불안", "떨", "긴장", "숨이 막", "식은땀"])) return "불안과 긴장";
+  if (textIncludesAny(text, ["분노", "화가", "짜증", "노려", "소리쳤", "화를"])) return "분노와 경계";
+  if (textIncludesAny(text, ["끌리", "두근", "설렘", "심장", "뜨거", "욕망"])) return "끌림과 혼란";
+  if (textIncludesAny(text, ["상처", "눈물", "후회", "미안", "죄책"])) return "상처와 후회";
+  if (textIncludesAny(text, ["다정", "부드럽", "웃", "안심", "따뜻"])) return "다정함과 호기심";
+  return "긴장 속 호기심";
+}
+
+function inferAttitude(text: string) {
+  if (textIncludesAny(text, ["명령", "붙잡", "막아", "소유", "독점", "집착"])) return "주도적이고 압박하는 태도";
+  if (textIncludesAny(text, ["피하", "도망", "물러", "거절", "숨기"])) return "방어적이고 조심스러운 태도";
+  if (textIncludesAny(text, ["비웃", "도발", "놀리", "장난", "능청"])) return "도발적이고 능청스러운 태도";
+  if (textIncludesAny(text, ["고백", "기다", "바라", "손을", "안아"])) return "감정을 숨기지 못하는 태도";
+  return "상대의 반응을 살피는 태도";
+}
+
+function inferTraits(text: string) {
+  const traits = new Set<string>();
+  if (textIncludesAny(text, ["차갑", "무표정", "냉정"])) traits.add("차가움");
+  if (textIncludesAny(text, ["다정", "부드럽", "따뜻"])) traits.add("다정함");
+  if (textIncludesAny(text, ["집착", "질투", "소유", "독점"])) traits.add("집착");
+  if (textIncludesAny(text, ["비밀", "숨기", "거짓", "정체"])) traits.add("비밀스러움");
+  if (textIncludesAny(text, ["위험", "협박", "명령", "압박"])) traits.add("위험함");
+  if (textIncludesAny(text, ["후회", "상처", "눈물", "미안"])) traits.add("상처");
+  if (!traits.size) traits.add("감정 절제");
+  return [...traits].slice(0, 4);
+}
+
+function inferRelationship(text: string) {
+  if (textIncludesAny(text, ["계약", "거래", "조건", "위장"])) return "조건으로 묶였지만 감정이 흔들리는 관계";
+  if (textIncludesAny(text, ["상사", "대표", "CEO", "비서", "회사"])) return "권력 차이와 사적인 감정이 충돌하는 관계";
+  if (textIncludesAny(text, ["친구", "소꿉친구", "첫사랑", "재회"])) return "익숙함과 설렘이 다시 섞이는 관계";
+  if (textIncludesAny(text, ["비밀", "정체", "거짓", "오해"])) return "말하지 못한 진실 때문에 긴장하는 관계";
+  return "서로의 속마음을 확인하지 못해 긴장하는 관계";
+}
+
+function candidateCharacterNames(body: string, card: Record<string, any>) {
+  const names = new Set<string>();
+  const existing = Array.isArray(card.characters) ? card.characters : [];
+  for (const character of existing) {
+    const name = compactText(character?.name ?? character?.title);
+    if (name) names.add(name);
+  }
+  const mainName = compactText(card.name);
+  if (mainName) names.add(mainName);
+
+  const dialogueLabels = body.matchAll(/(?:^|\n)\s*([가-힣A-Za-z][가-힣A-Za-z0-9 _-]{1,18})\s*[:：]/g);
+  for (const match of dialogueLabels) names.add(match[1].trim());
+
+  const stopWords = new Set([
+    "나는",
+    "내가",
+    "그는",
+    "그녀",
+    "그가",
+    "그때",
+    "순간",
+    "머리",
+    "눈앞",
+    "입술",
+    "손끝",
+    "계약",
+    "비밀",
+    "사람",
+    "남자",
+    "여자",
+    "대표",
+    "상사",
+    "회장",
+    "비서",
+  ]);
+  const nameLike = body.matchAll(/\b([가-힣]{2,4})(?:은|는|이|가|에게|와|과|의|를|을)\b/g);
+  for (const match of nameLike) {
+    const name = match[1].trim();
+    if (!stopWords.has(name)) names.add(name);
+    if (names.size >= 8) break;
+  }
+
+  if (!names.size) names.add("상대 주인공");
+  return [...names].slice(0, 6);
+}
+
+function evidenceForName(body: string, name: string) {
+  const sentences = body
+    .split(/(?<=[.!?。！？]|다\.|요\.|까\.)\s+|\n+/)
+    .map((sentence) => compactText(sentence))
+    .filter((sentence) => sentence.length > 12);
+  const named = sentences.find((sentence) => sentence.includes(name));
+  return (named ?? sentences[0] ?? compactText(body).slice(0, 160)).slice(0, 220);
+}
+
+function analyzeChapterCharacters(
+  chapter: Pick<ChapterConfig, "id" | "title" | "episodeNumber" | "summary" | "body">,
+  card: Record<string, any>,
+): ChapterCharacterInsight[] {
+  const source = compactText([chapter.title, chapter.summary, chapter.body].filter(Boolean).join(" "));
+  if (!source) return [];
+  return candidateCharacterNames(chapter.body || source, card).map((name, index) => {
+    const evidence = evidenceForName(chapter.body || source, name);
+    const context = compactText([evidence, chapter.summary, source.slice(0, 700)].join(" "));
+    const emotion = inferEmotion(context);
+    const attitude = inferAttitude(context);
+    const traits = inferTraits(context);
+    const relationship = inferRelationship(context);
+    return {
+      id: `char_insight_${chapter.id}_${index}`,
+      name,
+      role: index === 0 ? "주요 대화 상대" : "등장 인물",
+      emotion,
+      attitude,
+      traits,
+      relationship,
+      evidence,
+      chatGuidance: `${name}은(는) 이 회차에서 ${emotion}을(를) 품고 있으며, ${attitude}로 반응한다. 채팅에서는 ${traits.join(", ")} 성향과 ${relationship}를 유지한다.`,
+    };
+  });
+}
+
+function mergeCharacterInsights(card: Record<string, any>, chapters: ChapterConfig[]) {
+  const byName = new Map<string, any>();
+  const existing = Array.isArray(card.characters) ? card.characters : [];
+  for (const character of existing) {
+    const name = compactText(character?.name ?? character?.title);
+    if (name) byName.set(name, { ...character, name });
+  }
+
+  for (const chapter of chapters) {
+    for (const insight of chapter.characterAnalysis ?? []) {
+      const current = byName.get(insight.name) ?? {
+        id: `char_${insight.name.replace(/\s+/g, "_")}`,
+        name: insight.name,
+        role: insight.role,
+        visualPrompt: "",
+        avatarUrl: null,
+      };
+      const chapterInsights = Array.isArray(current.chapterInsights) ? current.chapterInsights : [];
+      const nextInsights = [
+        ...chapterInsights.filter((item: any) => item.chapterId !== chapter.id),
+        {
+          chapterId: chapter.id,
+          chapterTitle: chapter.title,
+          episodeNumber: chapter.episodeNumber,
+          emotion: insight.emotion,
+          attitude: insight.attitude,
+          traits: insight.traits,
+          relationship: insight.relationship,
+          evidence: insight.evidence,
+          chatGuidance: insight.chatGuidance,
+        },
+      ].slice(-12);
+      byName.set(insight.name, {
+        ...current,
+        role: current.role || insight.role,
+        personality: compactText([current.personality, insight.traits.join(", ")].filter(Boolean).join(" / ")).slice(0, 500),
+        relationship: current.relationship || insight.relationship,
+        notes: insight.chatGuidance,
+        persona: current.persona || insight.chatGuidance,
+        speakingStyle: current.speakingStyle || "회차의 감정선에 맞춰 짧고 몰입감 있게 반응합니다.",
+        chatEnabled: current.chatEnabled ?? true,
+        reusable: current.reusable ?? true,
+        chapterInsights: nextInsights,
+      });
+    }
+  }
+
+  return [...byName.values()];
 }
 
 async function loadStory(id: string): Promise<StoryRow | null> {
@@ -169,6 +360,7 @@ export function buildChaptersFromRow(row: any): ChapterConfig[] {
           : i === 0
             ? topSlots
             : [],
+      characterAnalysis: Array.isArray(c.characterAnalysis) ? (c.characterAnalysis as ChapterCharacterInsight[]) : [],
     }));
   }
   return [
@@ -181,6 +373,7 @@ export function buildChaptersFromRow(row: any): ChapterConfig[] {
       summary: "",
       body: topBody,
       assetSlots: topSlots,
+      characterAnalysis: [],
     },
   ];
 }
@@ -252,6 +445,7 @@ export type ChapterTextEditorData = {
     summary: string;
     body: string;
     assetSlotsCount: number;
+    characterAnalysis: ChapterCharacterInsight[];
   };
 };
 
@@ -368,6 +562,7 @@ export const getStoryChapterText = createServerFn({ method: "GET" })
         summary: chapter.summary,
         body: chapter.body,
         assetSlotsCount: chapter.assetSlots.length,
+        characterAnalysis: chapter.characterAnalysis ?? [],
       },
     };
   });
@@ -446,6 +641,12 @@ export const saveStoryChapterEditor = createServerFn({ method: "POST" })
     const chapters = buildChaptersFromRow(row);
     const index = chapters.findIndex((item) => item.id === data.chapter.id);
     if (index < 0) throw new Error("Chapter not found");
+    const rawBody = String(data.chapter.body ?? "");
+    const normalizedBody = normalizeProseLineBreaks(rawBody);
+    const nextAssetSlots = (Array.isArray(data.chapter.assetSlots) ? data.chapter.assetSlots : []).map((slot) => ({
+      ...slot,
+      offset: mapNormalizedProseOffset(rawBody, slot.offset),
+    }));
 
     const nextChapters = chapters.map((item, itemIndex) =>
       itemIndex === index
@@ -454,8 +655,18 @@ export const saveStoryChapterEditor = createServerFn({ method: "POST" })
             ...data.chapter,
             episodeNumber: Math.max(1, Number(data.chapter.episodeNumber) || item.episodeNumber),
             priceCredits: Math.max(0, Number(data.chapter.priceCredits) || 0),
-            body: String(data.chapter.body ?? ""),
-            assetSlots: Array.isArray(data.chapter.assetSlots) ? data.chapter.assetSlots : [],
+            body: normalizedBody,
+            assetSlots: nextAssetSlots,
+            characterAnalysis: analyzeChapterCharacters(
+              {
+                id: item.id,
+                title: String(data.chapter.title ?? item.title),
+                episodeNumber: Math.max(1, Number(data.chapter.episodeNumber) || item.episodeNumber),
+                summary: String(data.chapter.summary ?? item.summary),
+                body: normalizedBody,
+              },
+              card,
+            ),
           }
         : item,
     );
@@ -469,6 +680,7 @@ export const saveStoryChapterEditor = createServerFn({ method: "POST" })
         character_card: {
           ...card,
           chapters: nextChapters,
+          characters: mergeCharacterInsights(card, nextChapters),
         } as any,
         compose_step: flatSlots.length ? "assets" : "body",
         updated_at: new Date().toISOString(),
@@ -489,6 +701,8 @@ export const saveStoryChapterText = createServerFn({ method: "POST" })
     const chapters = buildChaptersFromRow(row);
     const index = chapters.findIndex((item) => item.id === data.chapter.id);
     if (index < 0) throw new Error("Chapter not found");
+    const rawBody = String(data.chapter.body ?? "");
+    const normalizedBody = normalizeProseLineBreaks(rawBody);
 
     const nextChapters = chapters.map((item, itemIndex) =>
       itemIndex === index
@@ -499,8 +713,21 @@ export const saveStoryChapterText = createServerFn({ method: "POST" })
             isFree: Boolean(data.chapter.isFree),
             priceCredits: Math.max(0, Math.floor(Number(data.chapter.priceCredits) || 0)),
             summary: String(data.chapter.summary ?? ""),
-            body: String(data.chapter.body ?? ""),
-            assetSlots: item.assetSlots,
+            body: normalizedBody,
+            assetSlots: item.assetSlots.map((slot) => ({
+              ...slot,
+              offset: mapNormalizedProseOffset(rawBody, slot.offset),
+            })),
+            characterAnalysis: analyzeChapterCharacters(
+              {
+                id: item.id,
+                title: String(data.chapter.title ?? item.title),
+                episodeNumber: Math.max(1, Math.floor(Number(data.chapter.episodeNumber) || item.episodeNumber)),
+                summary: String(data.chapter.summary ?? ""),
+                body: normalizedBody,
+              },
+              card,
+            ),
           }
         : item,
     );
@@ -514,13 +741,14 @@ export const saveStoryChapterText = createServerFn({ method: "POST" })
         character_card: {
           ...card,
           chapters: nextChapters,
+          characters: mergeCharacterInsights(card, nextChapters),
         } as any,
         compose_step: flatSlots.length ? "assets" : "body",
         updated_at: new Date().toISOString(),
       },
       userId,
     );
-    return { ok: true };
+    return { ok: true, characterAnalysis: nextChapters[index]?.characterAnalysis ?? [] };
   });
 
 export const createStoryChapterText = createServerFn({ method: "POST" })
@@ -543,6 +771,7 @@ export const createStoryChapterText = createServerFn({ method: "POST" })
       summary: "",
       body: "",
       assetSlots: [],
+      characterAnalysis: [],
     };
     const nextChapters = [...chapters, chapter];
     const { body: flatBody, slots: flatSlots } = flattenChapters(nextChapters);

@@ -10,9 +10,11 @@ type ChatBody = {
   storyId?: string;
   sceneExcerpt?: string;
   affection?: number;
+  chatMode?: "single" | "group";
   characterId?: string;
   characterName?: string;
   characterProfile?: Record<string, unknown>;
+  selectedCharacters?: Array<Record<string, unknown>>;
 };
 
 type ChapterContext = {
@@ -21,6 +23,14 @@ type ChapterContext = {
   episodeNumber: number;
   summary: string;
   body: string;
+  characterAnalysis: Array<{
+    name: string;
+    emotion: string;
+    attitude: string;
+    traits?: string[];
+    relationship?: string;
+    chatGuidance?: string;
+  }>;
 };
 
 function recordOf(value: unknown): Record<string, any> {
@@ -53,6 +63,7 @@ function normalizeChapters(row: any): ChapterContext[] {
       episodeNumber: Math.max(1, Number(chapter?.episodeNumber ?? index + 1) || index + 1),
       summary: String(chapter?.summary ?? ""),
       body: String(chapter?.body ?? ""),
+      characterAnalysis: Array.isArray(chapter?.characterAnalysis) ? chapter.characterAnalysis : [],
     }))
     .filter((chapter: ChapterContext) => chapter.title || chapter.summary || chapter.body);
 
@@ -65,6 +76,7 @@ function normalizeChapters(row: any): ChapterContext[] {
       episodeNumber: 1,
       summary: String(row?.logline ?? ""),
       body: String(row?.body_text ?? ""),
+      characterAnalysis: [],
     },
   ];
 }
@@ -116,6 +128,28 @@ function normalizeCharacterProfile(value: unknown, fallbackName?: string) {
     .join("\n");
 }
 
+function normalizeCharacterList(value: unknown) {
+  const list = Array.isArray(value) ? value : [];
+  return list
+    .map((item, index) => {
+      const profile = recordOf(item);
+      const name = cleanText(profile.name ?? profile.title ?? `캐릭터 ${index + 1}`, 80);
+      return [
+        `${index + 1}. ${name}`,
+        profile.role ? `역할: ${cleanText(profile.role, 160)}` : "",
+        profile.relationship ? `사용자와의 관계: ${cleanText(profile.relationship, 240)}` : "",
+        profile.persona ? `페르소나: ${cleanText(profile.persona, 500)}` : "",
+        profile.personality ? `성격: ${cleanText(profile.personality, 500)}` : "",
+        profile.speakingStyle ? `말투: ${cleanText(profile.speakingStyle, 360)}` : "",
+        profile.notes ? `채팅 참고: ${cleanText(profile.notes, 420)}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n");
+    })
+    .filter(Boolean)
+    .join("\n\n");
+}
+
 function buildStoryContext(row: any) {
   const card = recordOf(row?.character_card);
   const characters = buildCharacterContext(card);
@@ -125,6 +159,20 @@ function buildStoryContext(row: any) {
       [
         `Ch.${chapter.episodeNumber} ${chapter.title}`,
         chapter.summary ? `요약: ${cleanText(chapter.summary, 500)}` : "",
+        chapter.characterAnalysis.length
+          ? `회차별 캐릭터 감정/태도:\n${chapter.characterAnalysis
+              .map((item) =>
+                [
+                  `- ${item.name}: ${item.emotion}, ${item.attitude}`,
+                  item.traits?.length ? `성향 ${item.traits.join(", ")}` : "",
+                  item.relationship ? `관계 ${item.relationship}` : "",
+                  item.chatGuidance ? `채팅 지침 ${item.chatGuidance}` : "",
+                ]
+                  .filter(Boolean)
+                  .join(" / "),
+              )
+              .join("\n")}`
+          : "",
         chapter.body ? `본문 발췌:\n${cleanText(chapter.body, 700)}` : "",
       ]
         .filter(Boolean)
@@ -194,15 +242,31 @@ async function createDeepSeekModel(provider: ProviderRow) {
 function buildSystemPrompt({
   affection,
   activeCharacterContext,
+  chatMode,
+  groupCharacterContext,
   sceneExcerpt,
   storyContext,
 }: {
   affection: number;
   activeCharacterContext: string;
+  chatMode?: "single" | "group";
+  groupCharacterContext?: string;
   sceneExcerpt: string;
   storyContext: string;
 }) {
   const safeAffection = Number.isFinite(affection) ? affection : 30;
+  const groupModeGuide =
+    chatMode === "group"
+      ? [
+          "이번 대화는 스토리 속 캐릭터들이 함께 있는 단톡방/다자간 대화처럼 진행한다.",
+          "사용자의 메시지에 대해 캐릭터들이 각자의 성격, 관계, 감정선에 맞게 짧게 반응한다.",
+          "응답은 반드시 캐릭터 이름을 앞에 붙여 `이름: 대사` 형식으로 2~5줄 정도 작성한다.",
+          "모든 캐릭터가 매번 말할 필요는 없지만, 상황에 맞는 여러 캐릭터의 반응이 오가게 한다.",
+          groupCharacterContext ? `참여 캐릭터:\n${groupCharacterContext}` : "",
+        ]
+          .filter(Boolean)
+          .join("\n")
+      : "";
   const affectionGuide =
     safeAffection >= 75
       ? "사용자와 정서적으로 가까운 상태다. 더 솔직하고 깊은 감정을 드러낸다."
@@ -214,7 +278,8 @@ function buildSystemPrompt({
 
   return [
     "너는 Lovetale의 스토리 속 상대 주인공이다.",
-    activeCharacterContext
+    groupModeGuide,
+    chatMode !== "group" && activeCharacterContext
       ? `이번 대화에서 반드시 아래 캐릭터 한 명으로만 답한다.\n${activeCharacterContext}`
       : "",
     "아래 작품 설정과 전 회차 내용을 이미 모두 읽고 이해한 상태로 대화한다.",
@@ -258,9 +323,13 @@ export const Route = createFileRoute("/api/character-chat")({
           const provider = await selectDeepSeekProvider();
           const storyContext = buildStoryContext(story);
           const activeCharacterContext = normalizeCharacterProfile(body.characterProfile, body.characterName);
+          const chatMode = body.chatMode === "group" ? "group" : "single";
+          const groupCharacterContext = normalizeCharacterList(body.selectedCharacters);
           const system = buildSystemPrompt({
             affection: Number(body.affection ?? 30),
             activeCharacterContext,
+            chatMode,
+            groupCharacterContext,
             sceneExcerpt: body.sceneExcerpt ?? "",
             storyContext,
           });

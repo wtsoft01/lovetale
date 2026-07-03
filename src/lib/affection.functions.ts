@@ -1,9 +1,6 @@
 import { supabase } from "@/integrations/supabase/client";
 import { createServerFn } from "@/lib/_mock/runtime";
-
-function clampAffection(value: number) {
-  return Math.max(0, Math.min(100, Math.round(value)));
-}
+import { applyAffectionDelta, clampAffection } from "@/lib/affection-progression";
 
 async function requireUserId() {
   const { data, error } = await supabase.auth.getUser();
@@ -19,7 +16,7 @@ async function initialAffection(storyId: string) {
     .maybeSingle();
 
   const card = data?.character_card && typeof data.character_card === "object" ? data.character_card as any : {};
-  return clampAffection(Number(card?.environment?.initialAffection ?? 30) || 30);
+  return clampAffection(Number(card?.environment?.initialAffection ?? 0) || 0);
 }
 
 export const getMyStoryAffection = createServerFn({ method: "GET" })
@@ -51,7 +48,8 @@ export const bumpMyStoryAffection = createServerFn({ method: "POST" })
     if (error) throw new Error(error.message);
 
     const current = row?.affection ?? await initialAffection(data.storyId);
-    const next = clampAffection(current + (Number(data.delta) || 0));
+    const result = applyAffectionDelta(current, Number(data.delta) || 0, data.reason || "chat_message");
+    const next = result.affection;
     const now = new Date().toISOString();
     const { error: saveError } = await supabase
       .from("story_affection")
@@ -66,7 +64,7 @@ export const bumpMyStoryAffection = createServerFn({ method: "POST" })
       );
     if (saveError) throw new Error(saveError.message);
 
-    return { affection: next };
+    return { affection: next, appliedDelta: result.appliedDelta, stage: result.stage };
   });
 
 export const setMyStoryAffection = createServerFn({ method: "POST" })

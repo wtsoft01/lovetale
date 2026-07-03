@@ -169,7 +169,7 @@ type Props = {
 
 export function BeatReader({
   beats,
-  initialAffection = 30,
+  initialAffection = 0,
   title,
   cover,
   paginate = true,
@@ -212,7 +212,8 @@ export function BeatReader({
   });
 
   const bumpMut = useMutation({
-    mutationFn: (delta: number) => bumpAff({ data: { storyId: storyId!, delta } }),
+    mutationFn: (reward: { delta: number; reason: string }) =>
+      bumpAff({ data: { storyId: storyId!, delta: reward.delta, reason: reward.reason } }),
     onSuccess: (res) =>
       qc.setQueryData(["story_affection", storyId], {
         affection: res.affection,
@@ -253,7 +254,7 @@ export function BeatReader({
     if (pageIdx === 0) return; // 첫 로딩은 보상 제외
     if (lastBumpedPage.current >= pageIdx) return;
     lastBumpedPage.current = pageIdx;
-    bumpMut.mutate(2);
+    bumpMut.mutate({ delta: 2, reason: "reading_page" });
   }, [pageIdx, enableBackend]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const visibleBeats = useMemo(() => pages.slice(0, pageIdx + 1).flat(), [pages, pageIdx]);
@@ -414,8 +415,8 @@ export function BeatReader({
                 <Button
                   size="sm"
                   onClick={() => {
-                    bumpMut.mutate(5, {
-                      onSuccess: () => toast.success("끝까지 읽었어요 · 친밀도 +5"),
+                    bumpMut.mutate({ delta: 5, reason: "quest" }, {
+                      onSuccess: (res) => toast.success(`끝까지 읽었어요 · 친밀도 +${res.appliedDelta ?? 0}`),
                     });
                   }}
                   disabled={bumpMut.isPending}

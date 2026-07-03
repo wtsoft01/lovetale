@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import type { Database } from "@/integrations/supabase/types";
+import { normalizeProseLineBreaks } from "@/lib/text-normalization";
 
 const SUPER_ADMIN_EMAIL = "admin@lovetale.org";
 const STAFF_ROLES = ["admin", "editor", "moderator"] as const;
@@ -23,11 +24,21 @@ type CreateStoryPayload = {
   sourceText?: string;
   targetStoryId?: string;
   coverUrl?: string | null;
+  logline?: string | null;
   storyOverview?: string | null;
+  episodeTitle?: string | null;
   episodeSummary?: string | null;
   authorName?: string | null;
   previewUrl?: string | null;
   previewType?: "image" | "video" | null;
+  tags?: string[];
+  audience?: "all" | "female" | "male";
+  maxHeat?: "soft" | "warm" | "spicy" | "steamy";
+  priceCredits?: number;
+  characterName?: string | null;
+  characterRole?: string | null;
+  characterPersona?: string | null;
+  characterSpeakingStyle?: string | null;
 };
 
 type BulkStatusPayload = {
@@ -296,13 +307,24 @@ async function createOrAppendStory(request: Request, payload?: Partial<CreateSto
 
   const body = payload ?? ((await request.json().catch(() => ({}))) as Partial<CreateStoryPayload>);
   const title = String(body.title ?? "").trim();
-  const sourceText = String(body.sourceText ?? "").trim();
+  const sourceText = normalizeProseLineBreaks(String(body.sourceText ?? "")).trim();
   const contentType = (body.contentType ?? "web_novel") as ContentType;
   const targetStoryId = String(body.targetStoryId ?? "").trim();
   const coverUrl = typeof body.coverUrl === "string" && body.coverUrl.trim() ? body.coverUrl.trim() : null;
+  const logline = typeof body.logline === "string" && body.logline.trim() ? body.logline.trim() : "";
   const storyOverview = String(body.storyOverview ?? sourceText).trim();
+  const episodeTitleInput = String(body.episodeTitle ?? "").trim();
   const episodeSummary = String(body.episodeSummary ?? "").trim();
   const authorName = String(body.authorName ?? "").trim();
+  const tags = Array.isArray(body.tags) ? body.tags.map(String).map((tag) => tag.trim()).filter(Boolean).slice(0, 12) : [];
+  const audience = body.audience === "female" || body.audience === "male" ? body.audience : "all";
+  const maxHeat =
+    body.maxHeat === "soft" || body.maxHeat === "spicy" || body.maxHeat === "steamy" ? body.maxHeat : "warm";
+  const priceCredits = Math.max(0, Math.floor(Number(body.priceCredits) || 0));
+  const characterName = String(body.characterName ?? "").trim();
+  const characterRole = String(body.characterRole ?? "").trim();
+  const characterPersona = String(body.characterPersona ?? "").trim();
+  const characterSpeakingStyle = String(body.characterSpeakingStyle ?? "").trim();
   const previewUrl =
     typeof body.previewUrl === "string" && body.previewUrl.trim() ? body.previewUrl.trim() : null;
   const previewType = previewUrl ? (body.previewType === "video" ? "video" : "image") : null;
@@ -321,7 +343,7 @@ async function createOrAppendStory(request: Request, payload?: Partial<CreateSto
     const card = recordOf(target.character_card);
     const chapters = Array.isArray(card.chapters) ? [...card.chapters] : [];
     const nextEpisodeNumber = chapters.length + 1;
-    const episodeTitle = title || `Episode ${nextEpisodeNumber}`;
+    const episodeTitle = episodeTitleInput || title || `Episode ${nextEpisodeNumber}`;
     chapters.push(buildChapter(sourceText, contentType, nextEpisodeNumber, episodeTitle, episodeSummary));
     const existingBody = typeof target.body_text === "string" ? target.body_text.trim() : "";
     const nextOverview = storyOverview || String(card.storyOverview ?? target.logline ?? "").trim();
@@ -351,12 +373,29 @@ async function createOrAppendStory(request: Request, payload?: Partial<CreateSto
     return Response.json({ ok: true, id: updated.id });
   }
 
-  const chapter = sourceText ? buildChapter(sourceText, contentType, 1) : null;
+  const chapter = sourceText ? buildChapter(sourceText, contentType, 1, episodeTitleInput, episodeSummary) : null;
+  const primaryCharacter = characterName
+    ? {
+        id: "main",
+        name: characterName,
+        role: characterRole || "상대 주인공",
+        persona: characterPersona,
+        personality: "",
+        relationship: "",
+        speakingStyle: characterSpeakingStyle,
+        visualPrompt: "",
+        avatarUrl: null,
+        tags: [],
+        isPrimary: true,
+        chatEnabled: true,
+        reusable: true,
+      }
+    : null;
   const insert = normalizeStoryInsert({
     id: typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : newId("story"),
     user_id: staff.userId,
     title: safeTitle,
-    logline: storyOverview ? storyOverview.slice(0, 180) : null,
+    logline: (logline || storyOverview) ? (logline || storyOverview).slice(0, 180) : null,
     cover_url: coverUrl,
     body_text: sourceText,
     beats: [],
@@ -364,18 +403,23 @@ async function createOrAppendStory(request: Request, payload?: Partial<CreateSto
     character_card: {
       contentType,
       chapters: chapter ? [chapter] : [],
-      characters: [],
+      characters: primaryCharacter ? [primaryCharacter] : [],
       storyOverview: storyOverview ? storyOverview.slice(0, 280) : "",
       authorName,
       preview: previewUrl ? { url: previewUrl, type: previewType } : null,
+      name: primaryCharacter?.name,
+      role: primaryCharacter?.role,
+      persona: primaryCharacter?.persona,
+      notes: primaryCharacter?.persona,
+      speakingStyle: primaryCharacter?.speakingStyle,
     },
     status: "draft",
     is_public: false,
     is_listed: false,
-    price_credits: 0,
-    audience: "all",
-    max_heat: "warm",
-    tags: [],
+    price_credits: priceCredits,
+    audience,
+    max_heat: maxHeat,
+    tags,
     compose_step: "body",
     source_prompt: "admin create",
     created_at: now,

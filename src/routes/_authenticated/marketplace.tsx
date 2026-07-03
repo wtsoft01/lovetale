@@ -1,25 +1,39 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+﻿import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@/lib/_mock/runtime";
 import { useMemo, useState } from "react";
-import { Loader2, ArrowLeft, Store, Coins, BookOpen, Sparkles, Search, X, HeartHandshake, PenLine } from "lucide-react";
+import {
+  ArrowLeft,
+  BookOpen,
+  Coins,
+  Library,
+  Loader2,
+  Search,
+  Sparkles,
+  Store,
+  WandSparkles,
+  X,
+} from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { CoverImage } from "@/components/cover-image";
 import {
   listMarketplace,
   type Audience,
   type HeatTier,
+  type MarketplaceCard,
 } from "@/lib/marketplace.functions";
-import { getMyCreatorRevenueRule } from "@/lib/revenue-rules.functions";
-import { CoverImage } from "@/components/cover-image";
 
 export const Route = createFileRoute("/_authenticated/marketplace")({
   head: () => ({
     meta: [
-      { title: "스토리 마켓 — Lovetale" },
-      { name: "description", content: "크리에이터가 만든 인터랙티브 로맨스 스토리를 둘러보고 크레딧으로 플레이하세요." },
+      { title: "?ㅽ넗由?留덉폆 | Lovetale" },
+      {
+        name: "description",
+        content: "?ъ슜?먭? 吏곸젒 留뚮뱺 硫?곕え???ㅽ넗由щ? 援щℓ?섍퀬 ?쇱씠釉뚮윭由ъ뿉 ??ν빐 ?대엺?섎뒗 Lovetale 留덉폆?낅땲??",
+      },
     ],
   }),
   component: MarketplacePage,
@@ -39,236 +53,236 @@ const HEAT_OPTIONS: { value: HeatTier | "any"; label: string }[] = [
   { value: "steamy", label: "Steamy" },
 ];
 
-const POPULAR_TAGS = [
-  "오피스", "캠퍼스", "재회", "비밀연애", "판타지", "어둠", "사내연애", "소꿉친구",
-];
+const POPULAR_TAGS = ["계약연애", "집착", "후회", "비밀관계", "위험한사랑", "캠퍼스", "스파이", "금단"];
 
 const HEAT_BADGE: Record<HeatTier, { label: string; className: string }> = {
-  soft:   { label: "Soft",   className: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30" },
-  warm:   { label: "Warm",   className: "bg-amber-500/15 text-amber-300 border-amber-500/30" },
-  spicy:  { label: "Spicy",  className: "bg-rose-500/15 text-rose-300 border-rose-500/30" },
-  steamy: { label: "Steamy", className: "bg-fuchsia-500/15 text-fuchsia-300 border-fuchsia-500/30" },
+  soft: { label: "Soft", className: "border-emerald-400/40 bg-emerald-400/10 text-emerald-200" },
+  warm: { label: "Warm", className: "border-amber-400/40 bg-amber-400/10 text-amber-200" },
+  spicy: { label: "Spicy", className: "border-rose-400/40 bg-rose-400/10 text-rose-200" },
+  steamy: { label: "Steamy", className: "border-fuchsia-400/40 bg-fuchsia-400/10 text-fuchsia-200" },
 };
 
 function MarketplacePage() {
   const list = useServerFn(listMarketplace);
-  const getRule = useServerFn(getMyCreatorRevenueRule);
   const [q, setQ] = useState("");
   const [audience, setAudience] = useState<Audience>("all");
   const [maxHeat, setMaxHeat] = useState<HeatTier | "any">("any");
   const [tags, setTags] = useState<string[]>([]);
 
   const filters = useMemo(() => ({ q, audience, max_heat: maxHeat, tags }), [q, audience, maxHeat, tags]);
+  const hasFilters = q.trim().length > 0 || audience !== "all" || maxHeat !== "any" || tags.length > 0;
 
   const { data, isLoading, isFetching } = useQuery({
     queryKey: ["marketplace_stories", filters],
     queryFn: () => list({ data: filters }),
   });
 
-  const { data: creatorRule } = useQuery({
-    queryKey: ["my_creator_revenue_rule"],
-    queryFn: () => getRule(),
-  });
+  const toggleTag = (tag: string) => {
+    setTags((prev) => (prev.includes(tag) ? prev.filter((item) => item !== tag) : [...prev, tag]));
+  };
 
-  const toggleTag = (t: string) =>
-    setTags((prev) => (prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]));
-
-  const hasFilters = q || audience !== "all" || maxHeat !== "any" || tags.length > 0;
+  const resetFilters = () => {
+    setQ("");
+    setAudience("all");
+    setMaxHeat("any");
+    setTags([]);
+  };
 
   return (
-    <div className="min-h-dvh bg-gradient-to-b from-background via-background to-background/80">
-      <header className="sticky top-0 z-30 backdrop-blur-xl bg-background/70 border-b border-border/40">
-        <div className="mx-auto max-w-5xl px-4 h-14 flex items-center justify-between">
-          <Link to="/" className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground">
-            <ArrowLeft className="size-4" /> 홈
-          </Link>
-          <h1 className="text-sm font-semibold flex items-center gap-1.5">
-            <Store className="size-4 text-primary" /> 스토리 마켓
-          </h1>
-          <Link to="/library" className="text-sm text-muted-foreground hover:text-foreground">
-            내 라이브러리
-          </Link>
+    <div className="min-h-dvh bg-background text-foreground">
+      <header className="sticky top-0 z-30 border-b border-border/40 bg-background/80 backdrop-blur-xl">
+        <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4">
+          <Button asChild variant="ghost" size="sm" className="gap-1.5">
+            <Link to="/">
+              <ArrowLeft className="size-4" />
+              ?ㅽ넗由??먮젅?댁뀡
+            </Link>
+          </Button>
+          <div className="flex items-center gap-2 text-sm font-semibold">
+            <Store className="size-4 text-primary" />
+            ?ㅽ넗由?留덉폆
+          </div>
+          <Button asChild variant="ghost" size="sm" className="gap-1.5">
+            <Link to="/library">
+              <Library className="size-4" />
+              ?쇱씠釉뚮윭由?            </Link>
+          </Button>
         </div>
       </header>
 
-      <main className="mx-auto max-w-5xl px-4 py-8">
-        <section className="rounded-2xl border border-border/60 bg-card/40 backdrop-blur p-6 mb-6 space-y-5">
-          <div className="flex items-center justify-between gap-4 flex-wrap">
-            <div className="max-w-2xl">
-              <Badge variant="secondary" className="mb-3 gap-1"><HeartHandshake className="size-3" /> Creator Marketplace</Badge>
-              <h2 className="text-2xl font-bold mb-2">현실감 있는 이야기를 함께 공감하고 구매하는 스토리마켓</h2>
-              <p className="text-sm text-muted-foreground leading-relaxed">
-                크리에이터가 직접 만든 스토리를 마켓에 올리고, 다른 사용자는 첫 장면과 캐릭터를 확인한 뒤 크레딧으로 구매합니다.
-                구매 수익은 운영자가 설정한 작가별 수익공유룰에 따라 자동 분배됩니다.
-              </p>
-            </div>
-            <div className="flex flex-col gap-2 sm:min-w-52">
-              <Button asChild>
-                <Link to="/builder">
-                  <PenLine className="size-4 mr-1" /> 내스토리 로맨스
-                </Link>
-              </Button>
-              <Button asChild variant="outline">
-                <Link to="/library">
-                  <Store className="size-4 mr-1" /> 완성작 등록하기
-                </Link>
-              </Button>
-            </div>
+      <main className="mx-auto max-w-6xl px-4 py-6">
+        <section className="mb-5 grid gap-3 md:grid-cols-[1fr_auto] md:items-center">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <Badge variant="secondary" className="gap-1 rounded-full px-2.5 py-1 text-[11px]">
+              <Sparkles className="size-3" />
+              USER MADE
+            </Badge>
+            <span className="text-sm text-muted-foreground">援щℓ??肄섑뀗痢좊뒗 ?쇱씠釉뚮윭由ъ뿉 ??λ맗?덈떎.</span>
           </div>
-
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-            <div className="rounded-xl border border-border/60 bg-background/30 p-3">
-              <p className="text-xs text-muted-foreground">작가 수익공유</p>
-              <p className="mt-1 text-lg font-semibold">{creatorRule?.sharePercent ?? 70}%</p>
-              <p className="mt-1 text-[11px] text-muted-foreground">관리자가 회원별로 조정 가능</p>
-            </div>
-            <div className="rounded-xl border border-border/60 bg-background/30 p-3">
-              <p className="text-xs text-muted-foreground">구매 방식</p>
-              <p className="mt-1 text-lg font-semibold">크레딧 1회 구매</p>
-              <p className="mt-1 text-[11px] text-muted-foreground">구매 후 라이브러리에 영구 저장</p>
-            </div>
-            <div className="rounded-xl border border-border/60 bg-background/30 p-3">
-              <p className="text-xs text-muted-foreground">제작 동선</p>
-              <p className="mt-1 text-lg font-semibold">작성 → 편집 → 등록</p>
-              <p className="mt-1 text-[11px] text-muted-foreground">긴 원문도 AI 빌더에서 바로 변환</p>
-            </div>
-          </div>
+          <Button asChild size="sm" className="gap-1.5 rounded-full">
+            <Link to="/builder">
+              <WandSparkles className="size-4" />
+              ?먯옉?ㅽ넗由?留뚮뱾湲?            </Link>
+          </Button>
         </section>
 
-        {/* Filters */}
-        <section className="space-y-4 mb-6">
+        <section className="mb-5 space-y-3">
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
+            <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="제목·시놉시스로 검색"
-              className="pl-9"
+              onChange={(event) => setQ(event.target.value)}
+              placeholder="작품명, 작가, 태그 검색"
+              className="h-11 rounded-full border-border/60 bg-card/40 pl-9"
             />
           </div>
 
-          <div className="flex flex-wrap gap-2">
-            {AUDIENCE_OPTIONS.map((opt) => (
-              <Button
-                key={opt.value}
-                size="sm"
-                variant={audience === opt.value ? "default" : "outline"}
-                onClick={() => setAudience(opt.value)}
+          <div className="flex gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            {AUDIENCE_OPTIONS.map((option) => (
+              <FilterChip
+                key={option.value}
+                active={audience === option.value}
+                onClick={() => setAudience(option.value)}
               >
-                {opt.label}
-              </Button>
+                {option.label}
+              </FilterChip>
             ))}
-            <span className="w-px bg-border mx-1" />
-            {HEAT_OPTIONS.map((opt) => (
-              <Button
-                key={opt.value}
-                size="sm"
-                variant={maxHeat === opt.value ? "default" : "outline"}
-                onClick={() => setMaxHeat(opt.value)}
+            <span className="w-px shrink-0 bg-border/60" />
+            {HEAT_OPTIONS.map((option) => (
+              <FilterChip
+                key={option.value}
+                active={maxHeat === option.value}
+                onClick={() => setMaxHeat(option.value)}
               >
-                {opt.label}
-              </Button>
+                {option.label}
+              </FilterChip>
             ))}
           </div>
 
-          <div className="flex flex-wrap gap-1.5">
-            {POPULAR_TAGS.map((t) => {
-              const active = tags.includes(t);
-              return (
-                <button
-                  key={t}
-                  onClick={() => toggleTag(t)}
-                  className={`text-xs px-2.5 py-1 rounded-full border transition ${
-                    active
-                      ? "border-primary/60 bg-primary/15 text-primary"
-                      : "border-border/60 text-muted-foreground hover:border-border"
-                  }`}
-                >
-                  #{t}
-                </button>
-              );
-            })}
+          <div className="flex gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            {POPULAR_TAGS.map((tag) => (
+              <FilterChip key={tag} active={tags.includes(tag)} onClick={() => toggleTag(tag)}>
+                #{tag}
+              </FilterChip>
+            ))}
             {hasFilters && (
               <button
-                onClick={() => {
-                  setQ(""); setAudience("all"); setMaxHeat("any"); setTags([]);
-                }}
-                className="text-xs px-2.5 py-1 rounded-full border border-border/60 text-muted-foreground hover:text-foreground flex items-center gap-1"
+                type="button"
+                onClick={resetFilters}
+                className="inline-flex h-8 shrink-0 items-center gap-1 rounded-full border border-border/60 px-3 text-xs text-muted-foreground transition hover:text-foreground"
               >
-                <X className="size-3" /> 필터 초기화
-              </button>
+                <X className="size-3" />
+                珥덇린??              </button>
             )}
           </div>
         </section>
 
         {(isLoading || isFetching) && (
-          <div className="flex items-center justify-center py-10 text-muted-foreground">
+          <div className="flex items-center justify-center py-14 text-muted-foreground">
             <Loader2 className="size-5 animate-spin" />
           </div>
         )}
 
-        {!isLoading && (data?.length ?? 0) === 0 && (
-          <div className="rounded-2xl border border-dashed border-border/60 p-10 text-center space-y-3">
-            <Store className="size-8 mx-auto text-muted-foreground" />
+        {!isLoading && !isFetching && (data?.length ?? 0) === 0 && (
+          <div className="rounded-2xl border border-dashed border-border/60 p-10 text-center">
+            <Store className="mx-auto mb-3 size-8 text-muted-foreground" />
             <p className="text-sm text-muted-foreground">
-              {hasFilters ? "조건에 맞는 스토리가 없어요." : "아직 마켓에 등록된 스토리가 없어요."}
+              {hasFilters ? "議곌굔??留욌뒗 ?먯옉?ㅽ넗由ш? ?놁뒿?덈떎." : "?꾩쭅 ?먮ℓ 以묒씤 ?먯옉?ㅽ넗由ш? ?놁뒿?덈떎."}
             </p>
           </div>
         )}
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {data?.map((s) => {
-            const heat = HEAT_BADGE[s.max_heat] ?? HEAT_BADGE.soft;
-            return (
-              <Link
-                key={s.id}
-                to="/marketplace/$id"
-                params={{ id: s.id }}
-                className="group rounded-xl border border-border/60 bg-card/60 backdrop-blur p-4 hover:border-primary/60 hover:shadow-lg hover:shadow-primary/10 transition space-y-2"
-              >
-                {s.cover_url ? (
-                  <div className="aspect-[4/5] rounded-lg overflow-hidden bg-muted">
-                    <CoverImage src={s.cover_url} alt={s.title} className="size-full object-cover group-hover:scale-105 transition" />
-                  </div>
-                ) : (
-                  <div className="aspect-[4/5] rounded-lg bg-gradient-to-br from-primary/20 via-card to-card/60 flex items-center justify-center">
-                    <BookOpen className="size-12 text-muted-foreground/50" />
-                  </div>
-                )}
-                <div className="flex items-center gap-1 flex-wrap">
-                  <Badge variant="outline" className={`text-[9px] ${heat.className}`}>{heat.label}</Badge>
-                  {s.audience !== "all" && (
-                    <Badge variant="outline" className="text-[9px]">
-                      {s.audience === "female" ? "여성향" : "남성향"}
-                    </Badge>
-                  )}
-                </div>
-                <h3 className="font-semibold truncate">{s.title}</h3>
-                {s.logline && (
-                  <p className="text-xs text-muted-foreground line-clamp-2">{s.logline}</p>
-                )}
-                {s.tags && s.tags.length > 0 && (
-                  <div className="flex flex-wrap gap-1">
-                    {s.tags.slice(0, 3).map((t) => (
-                      <span key={t} className="text-[10px] text-muted-foreground/80">#{t}</span>
-                    ))}
-                  </div>
-                )}
-                <div className="flex items-center justify-between pt-1">
-                  <span className="text-[10px] text-muted-foreground">@{s.author_name}</span>
-                  {s.price_credits > 0 ? (
-                    <Badge className="text-[10px] gap-0.5">
-                      <Coins className="size-3" /> {s.price_credits}
-                    </Badge>
-                  ) : (
-                    <Badge variant="secondary" className="text-[10px]">FREE</Badge>
-                  )}
-                </div>
-              </Link>
-            );
-          })}
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-4">
+          {data?.map((story) => (
+            <MarketplaceStoryCard key={story.id} story={story} />
+          ))}
         </div>
       </main>
     </div>
+  );
+}
+
+function FilterChip({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`h-8 shrink-0 rounded-full border px-3 text-xs transition ${
+        active
+          ? "border-primary/60 bg-primary text-primary-foreground"
+          : "border-border/60 bg-card/40 text-muted-foreground hover:text-foreground"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function MarketplaceStoryCard({ story }: { story: MarketplaceCard }) {
+  const heat = HEAT_BADGE[story.max_heat] ?? HEAT_BADGE.soft;
+
+  return (
+    <Link
+      to="/marketplace/$id"
+      params={{ id: story.id }}
+      className="group min-w-0 rounded-2xl border border-border/50 bg-card/50 p-2 transition hover:-translate-y-0.5 hover:border-primary/50 hover:bg-card"
+    >
+      <div className="relative overflow-hidden rounded-xl bg-muted">
+        <div className="aspect-[3/4]">
+          {story.cover_url ? (
+            <CoverImage
+              src={story.cover_url}
+              alt={story.title}
+              className="size-full object-cover transition duration-300 group-hover:scale-105"
+            />
+          ) : (
+            <div className="flex size-full items-center justify-center bg-gradient-to-br from-primary/20 via-card to-card">
+              <BookOpen className="size-9 text-muted-foreground/60" />
+            </div>
+          )}
+        </div>
+        <div className="absolute left-2 top-2 flex gap-1">
+          <Badge variant="outline" className={`border px-1.5 py-0 text-[10px] ${heat.className}`}>
+            {heat.label}
+          </Badge>
+        </div>
+        <div className="absolute bottom-2 right-2 rounded-full bg-background/85 px-2 py-1 text-[11px] font-semibold backdrop-blur">
+          {story.price_credits > 0 ? (
+            <span className="inline-flex items-center gap-1">
+              <Coins className="size-3 text-yellow-300" />
+              {story.price_credits}
+            </span>
+          ) : (
+            "FREE"
+          )}
+        </div>
+      </div>
+
+      <div className="space-y-1 px-1 py-2">
+        <h2 className="truncate text-sm font-semibold">{story.title}</h2>
+        <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+          <span className="truncate">@{story.author_name || "creator"}</span>
+          <span className="shrink-0">{story.beats_count}회차</span>
+        </div>
+        {story.logline && <p className="line-clamp-2 text-xs leading-5 text-muted-foreground">{story.logline}</p>}
+        {story.tags.length > 0 && (
+          <div className="flex min-h-5 flex-wrap gap-1">
+            {story.tags.slice(0, 2).map((tag) => (
+              <span key={tag} className="text-[10px] text-primary/80">
+                #{tag}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+    </Link>
   );
 }

@@ -1,30 +1,33 @@
-import { useState } from "react";
+﻿import { useState } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useServerFn } from "@/lib/_mock/runtime";
-import { Loader2, Sparkles, Wand2, Library, ArrowLeft, Lock, SlidersHorizontal, Store, FileText } from "lucide-react";
+import { ArrowLeft, Coins, FileText, Image, Library, Loader2, Settings2, Store, WandSparkles } from "lucide-react";
 import { toast } from "sonner";
 
-import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { generateUserStory, BUILDER_PRICING } from "@/lib/story-builder.functions";
+import { Textarea } from "@/components/ui/textarea";
+import { useServerFn } from "@/lib/_mock/runtime";
+import { BUILDER_PRICING, generateUserStory } from "@/lib/story-builder.functions";
 
 export const Route = createFileRoute("/_authenticated/builder")({
   head: () => ({
     meta: [
-      { title: "AI 스토리 빌더 — Lovetale" },
-      { name: "description", content: "당신의 시놉시스를 몰입형 인터랙티브 스토리로 변환합니다." },
+      { title: "?먯옉?ㅽ넗由?| Lovetale" },
+      {
+        name: "description",
+        content: "?먭퀬, PDF ?댁슜, 罹먮┃???ㅼ젙??硫?곕え???명꽣?숉떚釉??ㅽ넗由щ줈 ?쒖옉?⑸땲??",
+      },
     ],
   }),
   component: BuilderPage,
 });
 
 const SAMPLES = [
-  "비 오는 밤, 헤어진 전 연인과 우연히 같은 술집에서 마주친다. 그녀는 여전히 내가 준 목걸이를 차고 있다.",
-  "회사 옥상. 평소 까칠하던 사수가 야근 끝에 무너지듯 내 어깨에 기댄다. 그녀의 향수 냄새가 짙다.",
-  "오랜 친구의 결혼식 전날 밤, 신부가 내 방문을 두드린다. 손에는 와인 한 병.",
+  "鍮꾧? ?ㅻ뒗 諛? ?ㅻ옒???ㅼ뼱吏??곗씤怨?媛숈? ??앹뿉??留덉＜移쒕떎. 洹몃뒗 ?꾩쭅???닿? 以 紐⑷구?대? 李④퀬 ?덈떎.",
+  "?닿렐 ??硫덉텣 ?섎━踰좎씠?? ?됱냼 ?됱젙?섎뜕 ?곸궗媛 泥섏쓬?쇰줈 ?붾뱾由щ뒗 ?쒖젙??蹂댁씤??",
+  "寃고샎???꾨궇 諛? 媛??移쒗븳 移쒓뎄???띾뫁?닿? 留덉?留?遺?곸쓣 ?꾪븯??李얠븘?⑤떎.",
 ];
 
 function BuilderPage() {
@@ -51,13 +54,13 @@ function BuilderPage() {
         },
       }),
     onSuccess: (res) => {
-      toast.success(`스토리가 생성되었습니다 (-${res.creditsCharged} 크레딧)`);
+      toast.success(`?ㅽ넗由ш? ?앹꽦?섏뿀?듬땲??(-${res.creditsCharged} ?щ젅??`);
       qc.invalidateQueries({ queryKey: ["my_user_stories"] });
       qc.invalidateQueries({ queryKey: ["profile_balance"] });
       navigate({ to: "/builder/$id", params: { id: res.id } });
     },
-    onError: (e: Error) => {
-      toast.error(e.message ?? "생성 실패");
+    onError: (error: Error) => {
+      toast.error(error.message ?? "?앹꽦???ㅽ뙣?덉뒿?덈떎.");
     },
   });
 
@@ -66,180 +69,191 @@ function BuilderPage() {
   const nearLimit = len > 90000;
 
   return (
-    <div className="min-h-dvh bg-gradient-to-b from-background via-background to-background/80">
-      <header className="sticky top-0 z-30 backdrop-blur-xl bg-background/70 border-b border-border/40">
-        <div className="mx-auto max-w-5xl px-4 h-14 flex items-center justify-between">
-          <Link to="/" className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground">
-            <ArrowLeft className="size-4" /> 홈
+    <div className="min-h-dvh bg-background">
+      <header className="sticky top-0 z-30 border-b border-border/40 bg-background/80 backdrop-blur-xl">
+        <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4">
+          <Link to="/" className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground">
+            <ArrowLeft className="size-4" />
+            스토리탐색
           </Link>
           <div className="flex items-center gap-2">
-            <Sparkles className="size-4 text-primary" />
-            <h1 className="text-sm font-semibold">AI 스토리 빌더</h1>
+            <WandSparkles className="size-4 text-primary" />
+            <h1 className="text-sm font-semibold">자작스토리</h1>
           </div>
           <div className="flex items-center gap-3">
-            <Link to="/marketplace" className="text-sm text-muted-foreground hover:text-foreground flex items-center gap-1">
-              <Store className="size-4" /> 스토리마켓
+            <Link to="/library" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
+              <Library className="size-4" />
+              라이브러리
             </Link>
-            <Link to="/library" className="text-sm text-muted-foreground hover:text-foreground flex items-center gap-1">
-              <Library className="size-4" /> 라이브러리
+            <Link to="/marketplace" className="hidden items-center gap-1 text-sm text-muted-foreground hover:text-foreground sm:inline-flex">
+              <Store className="size-4" />
+              留덉폆
             </Link>
           </div>
         </div>
       </header>
 
-      <main className="mx-auto max-w-5xl px-4 py-8 space-y-6">
-        <section className="space-y-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <h2 className="text-2xl font-bold tracking-tight">내 이야기로 로맨스 만들기</h2>
-            <Badge variant="secondary" className="gap-1"><FileText className="size-3" /> 최대 10만자</Badge>
+      <main className="mx-auto grid max-w-6xl gap-5 px-4 py-6 lg:grid-cols-[1fr_280px]">
+        <section className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <Badge variant="outline" className="gap-1 border-primary/30 bg-primary/10 text-primary">
+                <FileText className="size-3" />
+                理쒕? 10留뚯옄
+              </Badge>
+              <Badge variant="outline" className="gap-1">
+                <Image className="size-3" />
+                硫?곕え??              </Badge>
+            </div>
+            <Button size="sm" variant={advanced ? "secondary" : "outline"} onClick={() => setAdvanced((value) => !value)}>
+              <Settings2 className="mr-1 size-3.5" />
+              ?ㅼ젙
+            </Button>
           </div>
-          <p className="text-sm text-muted-foreground leading-relaxed">
-            실제 경험담, 긴 원고, 시놉시스, 등장인물 설정을 넉넉하게 붙여넣으세요. AI가 편집 가능한
-            인터랙티브 스토리로 정리하고, 완성 후 바로 스토리마켓 등록 흐름으로 이어집니다.
-          </p>
-        </section>
 
-        <section className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_320px]">
-          <div className="rounded-2xl border border-border/60 bg-card/60 backdrop-blur p-4 space-y-3">
-            <div className="space-y-1.5">
-              <label className="text-xs text-muted-foreground">제목 (선택)</label>
+          <div className="rounded-3xl border border-border/60 bg-card/45 p-4 backdrop-blur">
+            <div className="space-y-3">
               <Input
                 value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder="예: 비 오는 밤의 재회"
+                onChange={(event) => setTitle(event.target.value)}
+                placeholder="제목"
                 maxLength={200}
                 disabled={mut.isPending}
+                className="h-12 border-transparent bg-background/60 text-lg font-semibold focus-visible:ring-primary/40"
               />
+
+              <Textarea
+                value={prompt}
+                onChange={(event) => setPrompt(event.target.value)}
+                placeholder="원고, PDF에서 복사한 글, 실제 경험, 캐릭터 설정을 붙여넣으세요."
+                className="min-h-[520px] resize-y border-transparent bg-background/60 text-base leading-8 focus-visible:ring-primary/40"
+                maxLength={100000}
+                disabled={mut.isPending}
+              />
+
+              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                <span className={!ok || nearLimit ? "text-primary" : ""}>
+                  {len.toLocaleString()} / 100,000{len > 0 && len < 20 ? " · 최소 20자" : nearLimit ? " · 제한에 가까워요" : ""}
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <Coins className="size-3 text-primary" />
+                  기본 {BUILDER_PRICING.text} 크레딧
+                </span>
+              </div>
             </div>
 
-            <Textarea
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              placeholder="원문, 실제 경험담, 캐릭터 설정, 장면 메모를 자유롭게 붙여넣으세요. 긴 텍스트도 스크롤하면서 편집할 수 있습니다."
-              className="min-h-[430px] resize-y bg-background/40 border-border/60 text-base leading-relaxed lg:min-h-[560px]"
-              maxLength={100000}
-              disabled={mut.isPending}
-            />
-          <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span className={!ok || nearLimit ? "text-primary" : ""}>
-              {len.toLocaleString()} / 100,000자 {len < 20 ? "(최소 20자)" : nearLimit ? "(제한에 가까워요)" : ""}
-            </span>
-            <span className="flex items-center gap-1">
-              <Lock className="size-3" /> 비공개로 라이브러리에 저장됩니다
-            </span>
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            {SAMPLES.map((s) => (
-              <button
-                key={s}
-                type="button"
-                disabled={mut.isPending}
-                onClick={() => setPrompt(s)}
-                className="text-xs px-2.5 py-1 rounded-full border border-border/60 bg-background/30 text-muted-foreground hover:text-foreground hover:border-primary/40 transition disabled:opacity-50"
-              >
-                예시 ↗
-              </button>
-            ))}
-          </div>
-
             {advanced && (
-              <div className="rounded-xl border border-border/60 bg-background/30 p-3 space-y-3">
-                <div className="flex items-center gap-1.5 text-sm font-medium">
-                  <SlidersHorizontal className="size-4 text-primary" /> 상세 설정
+              <div className="mt-4 grid gap-3 rounded-2xl border border-border/60 bg-background/35 p-3 md:grid-cols-[140px_160px_1fr]">
+                <div className="space-y-1.5">
+                  <label className="text-xs text-muted-foreground">장면 수</label>
+                  <Input
+                    type="number"
+                    min={5}
+                    max={14}
+                    value={targetBeats}
+                    onChange={(event) => setTargetBeats(Math.max(5, Math.min(14, Number(event.target.value) || 8)))}
+                  />
                 </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <label className="text-xs text-muted-foreground">장면 개수</label>
-                    <Input
-                      type="number"
-                      min={5}
-                      max={14}
-                      value={targetBeats}
-                      onChange={(e) => setTargetBeats(Math.max(5, Math.min(14, Number(e.target.value) || 8)))}
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-xs text-muted-foreground">분위기 강도</label>
-                    <select
-                      value={maxHeat}
-                      onChange={(e) => setMaxHeat(e.target.value as typeof maxHeat)}
-                      className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                    >
-                      <option value="soft">잔잔하게</option>
-                      <option value="warm">따뜻하게</option>
-                      <option value="spicy">설레게</option>
-                      <option value="steamy">뜨겁게</option>
-                    </select>
-                  </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs text-muted-foreground">분위기</label>
+                  <select
+                    value={maxHeat}
+                    onChange={(event) => setMaxHeat(event.target.value as typeof maxHeat)}
+                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                  >
+                    <option value="soft">Soft</option>
+                    <option value="warm">Warm</option>
+                    <option value="spicy">Spicy</option>
+                    <option value="steamy">Steamy</option>
+                  </select>
                 </div>
-                <Textarea
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  placeholder="원하는 분위기나 꼭 살리고 싶은 장면, 빼고 싶은 설정을 자유롭게 적어주세요."
-                  maxLength={4000}
-                  className="min-h-24 bg-background/40"
-                />
+                <div className="space-y-1.5">
+                  <label className="text-xs text-muted-foreground">메모</label>
+                  <Input
+                    value={notes}
+                    onChange={(event) => setNotes(event.target.value)}
+                    placeholder="꼭 살릴 장면, 금지 표현, 캐릭터 메모"
+                    maxLength={4000}
+                  />
+                </div>
               </div>
             )}
 
-            <div className="flex items-center justify-between pt-2 border-t border-border/40">
-              <div className="text-xs text-muted-foreground space-y-0.5">
-              <div className="flex items-center gap-2">
-                <Badge variant="outline" className="text-[10px]">텍스트 장면</Badge>
-                <span>-{BUILDER_PRICING.text} 크레딧</span>
+            <div className="mt-4 flex flex-col gap-3 border-t border-border/40 pt-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex flex-wrap gap-2">
+                {SAMPLES.map((sample, index) => (
+                  <button
+                    key={sample}
+                    type="button"
+                    disabled={mut.isPending}
+                    onClick={() => setPrompt(sample)}
+                    className="rounded-full border border-border/60 bg-background/40 px-3 py-1 text-xs text-muted-foreground transition hover:border-primary/40 hover:text-foreground disabled:opacity-50"
+                  >
+                    ?덉떆 {index + 1}
+                  </button>
+                ))}
               </div>
-              <div className="flex items-center gap-2">
-                <Badge variant="outline" className="text-[10px]">이미지 슬롯</Badge>
-                <span>장면당 -{BUILDER_PRICING.perImageSlot} 크레딧</span>
-              </div>
-            </div>
-              <Button
-                size="lg"
-                disabled={!ok || mut.isPending}
-                onClick={() => mut.mutate()}
-                className="gap-2"
-              >
-                {mut.isPending ? <Loader2 className="size-4 animate-spin" /> : <Wand2 className="size-4" />}
-                {mut.isPending ? "생성 중…" : "AI로 스토리 생성"}
+              <Button size="lg" disabled={!ok || mut.isPending} onClick={() => mut.mutate()} className="gap-2 sm:min-w-44">
+                {mut.isPending ? <Loader2 className="size-4 animate-spin" /> : <WandSparkles className="size-4" />}
+                {mut.isPending ? "생성 중" : "생성"}
               </Button>
             </div>
           </div>
-
-          <aside className="space-y-4">
-            <div className="rounded-2xl border border-border/60 bg-card/50 p-4 space-y-3">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h3 className="text-sm font-semibold">상세 설정</h3>
-                  <p className="text-xs text-muted-foreground">장면 개수, 분위기, 작가 메모를 직접 조절하고 싶을 때 켜세요.</p>
-                </div>
-                <Button size="sm" variant={advanced ? "secondary" : "outline"} onClick={() => setAdvanced((v) => !v)}>
-                  {advanced ? "켜짐" : "켜기"}
-                </Button>
-              </div>
-            </div>
-
-            <div className="rounded-2xl border border-border/60 bg-card/50 p-4 space-y-3">
-              <h3 className="text-sm font-semibold flex items-center gap-1.5"><Store className="size-4 text-primary" /> 마켓 업로드 흐름</h3>
-              <ol className="space-y-2 text-xs text-muted-foreground">
-                <li>1. 긴 원문을 붙여넣고 AI 초안을 생성</li>
-                <li>2. 편집 화면에서 제목·장면·선택지를 다듬기</li>
-                <li>3. 라이브러리에서 가격·태그·독자층 선택 후 등록</li>
-              </ol>
-              <Button asChild variant="outline" className="w-full">
-                <Link to="/marketplace">스토리마켓 보기</Link>
-              </Button>
-            </div>
-          </aside>
         </section>
 
-        <section className="text-xs text-muted-foreground/80 space-y-1.5 px-1">
-          <p>· 생성된 장면은 분기 3단계까지 자동으로 이어집니다.</p>
-          <p>· 친밀한 선택지에는 호감도 조건이 자동으로 부여됩니다.</p>
-          <p>· 긴 입력은 요약·한 줄 소개·캐릭터 카드로 자동 정리되며, 생성 후 편집 화면에서 바로 수정할 수 있습니다.</p>
-          <p>· 라이브러리에서 검토 후 공개·마켓 등록을 결정합니다.</p>
-        </section>
+        <aside className="space-y-3 lg:sticky lg:top-20 lg:self-start">
+          <MiniAction href="/library" icon={Library} title="라이브러리" />
+          <MiniAction href="/marketplace" icon={Store} title="스토리마켓" />
+
+          <div className="rounded-3xl border border-border/60 bg-card/45 p-4">
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-muted-foreground">?띿뒪???앹꽦</span>
+              <span className="font-semibold">{BUILDER_PRICING.text}</span>
+            </div>
+            <div className="mt-3 flex items-center justify-between text-sm">
+              <span className="text-muted-foreground">?대?吏 ?щ’</span>
+              <span className="font-semibold">{BUILDER_PRICING.perImageSlot}/?λ㈃</span>
+            </div>
+          </div>
+
+          <div className="rounded-3xl border border-border/60 bg-card/45 p-4">
+            <div className="text-sm font-semibold">?쒖옉 ?먮쫫</div>
+            <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+              <span className="rounded-full bg-primary px-2 py-0.5 text-primary-foreground">1</span>
+              ?낅젰
+              <span className="h-px flex-1 bg-border" />
+              <span className="rounded-full bg-primary px-2 py-0.5 text-primary-foreground">2</span>
+              ?몄쭛
+              <span className="h-px flex-1 bg-border" />
+              <span className="rounded-full bg-primary px-2 py-0.5 text-primary-foreground">3</span>
+              ?먮ℓ
+            </div>
+          </div>
+        </aside>
       </main>
     </div>
+  );
+}
+
+function MiniAction({
+  href,
+  icon: Icon,
+  title,
+}: {
+  href: "/library" | "/marketplace";
+  icon: typeof Library;
+  title: string;
+}) {
+  return (
+    <Link
+      to={href}
+      className="flex items-center justify-between rounded-3xl border border-border/60 bg-card/45 px-4 py-3 text-sm transition hover:border-primary/50"
+    >
+      <span className="inline-flex items-center gap-2 font-medium">
+        <Icon className="size-4 text-primary" />
+        {title}
+      </span>
+      <span className="text-muted-foreground">›</span>
+    </Link>
   );
 }

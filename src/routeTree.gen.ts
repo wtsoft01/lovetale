@@ -21,10 +21,12 @@ import { Route as PlaySessionIdRouteImport } from './routes/play.$sessionId'
 import { Route as CharacterIdRouteImport } from './routes/character.$id'
 import { Route as ApiUnlocksRouteImport } from './routes/api/unlocks'
 import { Route as ApiReaderStoryRouteImport } from './routes/api/reader-story'
+import { Route as ApiReaderProfileImageRouteImport } from './routes/api/reader-profile-image'
 import { Route as ApiMarketplaceRouteImport } from './routes/api/marketplace'
 import { Route as ApiHomePlacementsRouteImport } from './routes/api/home-placements'
 import { Route as ApiChatRouteImport } from './routes/api/chat'
 import { Route as ApiCharacterChatRouteImport } from './routes/api/character-chat'
+import { Route as AuthenticatedRewardsRouteImport } from './routes/_authenticated/rewards'
 import { Route as AuthenticatedOrdersRouteImport } from './routes/_authenticated/orders'
 import { Route as AuthenticatedMarketplaceRouteImport } from './routes/_authenticated/marketplace'
 import { Route as AuthenticatedLibraryRouteImport } from './routes/_authenticated/library'
@@ -47,6 +49,7 @@ import { Route as AuthenticatedAdminUsersRouteImport } from './routes/_authentic
 import { Route as AuthenticatedAdminStudioRouteImport } from './routes/_authenticated/admin.studio'
 import { Route as AuthenticatedAdminStoriesRouteImport } from './routes/_authenticated/admin.stories'
 import { Route as AuthenticatedAdminSettingsRouteImport } from './routes/_authenticated/admin.settings'
+import { Route as AuthenticatedAdminRewardsRouteImport } from './routes/_authenticated/admin.rewards'
 import { Route as AuthenticatedAdminPlacementsRouteImport } from './routes/_authenticated/admin.placements'
 import { Route as AuthenticatedAdminOrdersRouteImport } from './routes/_authenticated/admin.orders'
 import { Route as AuthenticatedAdminModerationRouteImport } from './routes/_authenticated/admin.moderation'
@@ -122,6 +125,11 @@ const ApiReaderStoryRoute = ApiReaderStoryRouteImport.update({
   path: '/api/reader-story',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiReaderProfileImageRoute = ApiReaderProfileImageRouteImport.update({
+  id: '/api/reader-profile-image',
+  path: '/api/reader-profile-image',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiMarketplaceRoute = ApiMarketplaceRouteImport.update({
   id: '/api/marketplace',
   path: '/api/marketplace',
@@ -141,6 +149,11 @@ const ApiCharacterChatRoute = ApiCharacterChatRouteImport.update({
   id: '/api/character-chat',
   path: '/api/character-chat',
   getParentRoute: () => rootRouteImport,
+} as any)
+const AuthenticatedRewardsRoute = AuthenticatedRewardsRouteImport.update({
+  id: '/rewards',
+  path: '/rewards',
+  getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
 const AuthenticatedOrdersRoute = AuthenticatedOrdersRouteImport.update({
   id: '/orders',
@@ -258,6 +271,12 @@ const AuthenticatedAdminSettingsRoute =
     path: '/settings',
     getParentRoute: () => AuthenticatedAdminRoute,
   } as any)
+const AuthenticatedAdminRewardsRoute =
+  AuthenticatedAdminRewardsRouteImport.update({
+    id: '/rewards',
+    path: '/rewards',
+    getParentRoute: () => AuthenticatedAdminRoute,
+  } as any)
 const AuthenticatedAdminPlacementsRoute =
   AuthenticatedAdminPlacementsRouteImport.update({
     id: '/placements',
@@ -358,10 +377,12 @@ export interface FileRoutesByFullPath {
   '/library': typeof AuthenticatedLibraryRoute
   '/marketplace': typeof AuthenticatedMarketplaceRouteWithChildren
   '/orders': typeof AuthenticatedOrdersRoute
+  '/rewards': typeof AuthenticatedRewardsRoute
   '/api/character-chat': typeof ApiCharacterChatRoute
   '/api/chat': typeof ApiChatRoute
   '/api/home-placements': typeof ApiHomePlacementsRoute
   '/api/marketplace': typeof ApiMarketplaceRoute
+  '/api/reader-profile-image': typeof ApiReaderProfileImageRoute
   '/api/reader-story': typeof ApiReaderStoryRoute
   '/api/unlocks': typeof ApiUnlocksRoute
   '/character/$id': typeof CharacterIdRoute
@@ -375,6 +396,7 @@ export interface FileRoutesByFullPath {
   '/admin/moderation': typeof AuthenticatedAdminModerationRoute
   '/admin/orders': typeof AuthenticatedAdminOrdersRoute
   '/admin/placements': typeof AuthenticatedAdminPlacementsRoute
+  '/admin/rewards': typeof AuthenticatedAdminRewardsRoute
   '/admin/settings': typeof AuthenticatedAdminSettingsRoute
   '/admin/stories': typeof AuthenticatedAdminStoriesRouteWithChildren
   '/admin/studio': typeof AuthenticatedAdminStudioRoute
@@ -411,10 +433,12 @@ export interface FileRoutesByTo {
   '/library': typeof AuthenticatedLibraryRoute
   '/marketplace': typeof AuthenticatedMarketplaceRouteWithChildren
   '/orders': typeof AuthenticatedOrdersRoute
+  '/rewards': typeof AuthenticatedRewardsRoute
   '/api/character-chat': typeof ApiCharacterChatRoute
   '/api/chat': typeof ApiChatRoute
   '/api/home-placements': typeof ApiHomePlacementsRoute
   '/api/marketplace': typeof ApiMarketplaceRoute
+  '/api/reader-profile-image': typeof ApiReaderProfileImageRoute
   '/api/reader-story': typeof ApiReaderStoryRoute
   '/api/unlocks': typeof ApiUnlocksRoute
   '/character/$id': typeof CharacterIdRoute
@@ -428,6 +452,7 @@ export interface FileRoutesByTo {
   '/admin/moderation': typeof AuthenticatedAdminModerationRoute
   '/admin/orders': typeof AuthenticatedAdminOrdersRoute
   '/admin/placements': typeof AuthenticatedAdminPlacementsRoute
+  '/admin/rewards': typeof AuthenticatedAdminRewardsRoute
   '/admin/settings': typeof AuthenticatedAdminSettingsRoute
   '/admin/stories': typeof AuthenticatedAdminStoriesRouteWithChildren
   '/admin/studio': typeof AuthenticatedAdminStudioRoute
@@ -467,10 +492,12 @@ export interface FileRoutesById {
   '/_authenticated/library': typeof AuthenticatedLibraryRoute
   '/_authenticated/marketplace': typeof AuthenticatedMarketplaceRouteWithChildren
   '/_authenticated/orders': typeof AuthenticatedOrdersRoute
+  '/_authenticated/rewards': typeof AuthenticatedRewardsRoute
   '/api/character-chat': typeof ApiCharacterChatRoute
   '/api/chat': typeof ApiChatRoute
   '/api/home-placements': typeof ApiHomePlacementsRoute
   '/api/marketplace': typeof ApiMarketplaceRoute
+  '/api/reader-profile-image': typeof ApiReaderProfileImageRoute
   '/api/reader-story': typeof ApiReaderStoryRoute
   '/api/unlocks': typeof ApiUnlocksRoute
   '/character/$id': typeof CharacterIdRoute
@@ -484,6 +511,7 @@ export interface FileRoutesById {
   '/_authenticated/admin/moderation': typeof AuthenticatedAdminModerationRoute
   '/_authenticated/admin/orders': typeof AuthenticatedAdminOrdersRoute
   '/_authenticated/admin/placements': typeof AuthenticatedAdminPlacementsRoute
+  '/_authenticated/admin/rewards': typeof AuthenticatedAdminRewardsRoute
   '/_authenticated/admin/settings': typeof AuthenticatedAdminSettingsRoute
   '/_authenticated/admin/stories': typeof AuthenticatedAdminStoriesRouteWithChildren
   '/_authenticated/admin/studio': typeof AuthenticatedAdminStudioRoute
@@ -523,10 +551,12 @@ export interface FileRouteTypes {
     | '/library'
     | '/marketplace'
     | '/orders'
+    | '/rewards'
     | '/api/character-chat'
     | '/api/chat'
     | '/api/home-placements'
     | '/api/marketplace'
+    | '/api/reader-profile-image'
     | '/api/reader-story'
     | '/api/unlocks'
     | '/character/$id'
@@ -540,6 +570,7 @@ export interface FileRouteTypes {
     | '/admin/moderation'
     | '/admin/orders'
     | '/admin/placements'
+    | '/admin/rewards'
     | '/admin/settings'
     | '/admin/stories'
     | '/admin/studio'
@@ -576,10 +607,12 @@ export interface FileRouteTypes {
     | '/library'
     | '/marketplace'
     | '/orders'
+    | '/rewards'
     | '/api/character-chat'
     | '/api/chat'
     | '/api/home-placements'
     | '/api/marketplace'
+    | '/api/reader-profile-image'
     | '/api/reader-story'
     | '/api/unlocks'
     | '/character/$id'
@@ -593,6 +626,7 @@ export interface FileRouteTypes {
     | '/admin/moderation'
     | '/admin/orders'
     | '/admin/placements'
+    | '/admin/rewards'
     | '/admin/settings'
     | '/admin/stories'
     | '/admin/studio'
@@ -631,10 +665,12 @@ export interface FileRouteTypes {
     | '/_authenticated/library'
     | '/_authenticated/marketplace'
     | '/_authenticated/orders'
+    | '/_authenticated/rewards'
     | '/api/character-chat'
     | '/api/chat'
     | '/api/home-placements'
     | '/api/marketplace'
+    | '/api/reader-profile-image'
     | '/api/reader-story'
     | '/api/unlocks'
     | '/character/$id'
@@ -648,6 +684,7 @@ export interface FileRouteTypes {
     | '/_authenticated/admin/moderation'
     | '/_authenticated/admin/orders'
     | '/_authenticated/admin/placements'
+    | '/_authenticated/admin/rewards'
     | '/_authenticated/admin/settings'
     | '/_authenticated/admin/stories'
     | '/_authenticated/admin/studio'
@@ -686,6 +723,7 @@ export interface RootRouteChildren {
   ApiChatRoute: typeof ApiChatRoute
   ApiHomePlacementsRoute: typeof ApiHomePlacementsRoute
   ApiMarketplaceRoute: typeof ApiMarketplaceRoute
+  ApiReaderProfileImageRoute: typeof ApiReaderProfileImageRoute
   ApiReaderStoryRoute: typeof ApiReaderStoryRoute
   ApiUnlocksRoute: typeof ApiUnlocksRoute
   CharacterIdRoute: typeof CharacterIdRoute
@@ -788,6 +826,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiReaderStoryRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/reader-profile-image': {
+      id: '/api/reader-profile-image'
+      path: '/api/reader-profile-image'
+      fullPath: '/api/reader-profile-image'
+      preLoaderRoute: typeof ApiReaderProfileImageRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/marketplace': {
       id: '/api/marketplace'
       path: '/api/marketplace'
@@ -815,6 +860,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/api/character-chat'
       preLoaderRoute: typeof ApiCharacterChatRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/_authenticated/rewards': {
+      id: '/_authenticated/rewards'
+      path: '/rewards'
+      fullPath: '/rewards'
+      preLoaderRoute: typeof AuthenticatedRewardsRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/orders': {
       id: '/_authenticated/orders'
@@ -968,6 +1020,13 @@ declare module '@tanstack/react-router' {
       path: '/settings'
       fullPath: '/admin/settings'
       preLoaderRoute: typeof AuthenticatedAdminSettingsRouteImport
+      parentRoute: typeof AuthenticatedAdminRoute
+    }
+    '/_authenticated/admin/rewards': {
+      id: '/_authenticated/admin/rewards'
+      path: '/rewards'
+      fullPath: '/admin/rewards'
+      preLoaderRoute: typeof AuthenticatedAdminRewardsRouteImport
       parentRoute: typeof AuthenticatedAdminRoute
     }
     '/_authenticated/admin/placements': {
@@ -1127,6 +1186,7 @@ interface AuthenticatedAdminRouteChildren {
   AuthenticatedAdminModerationRoute: typeof AuthenticatedAdminModerationRoute
   AuthenticatedAdminOrdersRoute: typeof AuthenticatedAdminOrdersRoute
   AuthenticatedAdminPlacementsRoute: typeof AuthenticatedAdminPlacementsRoute
+  AuthenticatedAdminRewardsRoute: typeof AuthenticatedAdminRewardsRoute
   AuthenticatedAdminSettingsRoute: typeof AuthenticatedAdminSettingsRoute
   AuthenticatedAdminStoriesRoute: typeof AuthenticatedAdminStoriesRouteWithChildren
   AuthenticatedAdminStudioRoute: typeof AuthenticatedAdminStudioRoute
@@ -1144,6 +1204,7 @@ const AuthenticatedAdminRouteChildren: AuthenticatedAdminRouteChildren = {
   AuthenticatedAdminModerationRoute: AuthenticatedAdminModerationRoute,
   AuthenticatedAdminOrdersRoute: AuthenticatedAdminOrdersRoute,
   AuthenticatedAdminPlacementsRoute: AuthenticatedAdminPlacementsRoute,
+  AuthenticatedAdminRewardsRoute: AuthenticatedAdminRewardsRoute,
   AuthenticatedAdminSettingsRoute: AuthenticatedAdminSettingsRoute,
   AuthenticatedAdminStoriesRoute: AuthenticatedAdminStoriesRouteWithChildren,
   AuthenticatedAdminStudioRoute: AuthenticatedAdminStudioRoute,
@@ -1185,6 +1246,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedLibraryRoute: typeof AuthenticatedLibraryRoute
   AuthenticatedMarketplaceRoute: typeof AuthenticatedMarketplaceRouteWithChildren
   AuthenticatedOrdersRoute: typeof AuthenticatedOrdersRoute
+  AuthenticatedRewardsRoute: typeof AuthenticatedRewardsRoute
   AuthenticatedPlayUserIdRoute: typeof AuthenticatedPlayUserIdRoute
 }
 
@@ -1194,6 +1256,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedLibraryRoute: AuthenticatedLibraryRoute,
   AuthenticatedMarketplaceRoute: AuthenticatedMarketplaceRouteWithChildren,
   AuthenticatedOrdersRoute: AuthenticatedOrdersRoute,
+  AuthenticatedRewardsRoute: AuthenticatedRewardsRoute,
   AuthenticatedPlayUserIdRoute: AuthenticatedPlayUserIdRoute,
 }
 
@@ -1213,6 +1276,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiChatRoute: ApiChatRoute,
   ApiHomePlacementsRoute: ApiHomePlacementsRoute,
   ApiMarketplaceRoute: ApiMarketplaceRoute,
+  ApiReaderProfileImageRoute: ApiReaderProfileImageRoute,
   ApiReaderStoryRoute: ApiReaderStoryRoute,
   ApiUnlocksRoute: ApiUnlocksRoute,
   CharacterIdRoute: CharacterIdRoute,

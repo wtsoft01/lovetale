@@ -102,6 +102,7 @@ function getCharacterProfiles(card: any): CharacterChatProfile[] {
       speakingStyle: asString(character?.speakingStyle),
       relationship: asString(character?.relationship),
       notes: asString(character?.notes),
+      avatarUrl: typeof character?.avatarUrl === "string" ? character.avatarUrl : null,
     }))
     .filter((character) => character.name);
 
@@ -117,6 +118,7 @@ function getCharacterProfiles(card: any): CharacterChatProfile[] {
       speakingStyle: asString(card?.speakingStyle),
       relationship: asString(card?.relationship),
       notes: asString(card?.notes),
+      avatarUrl: typeof card?.avatarUrl === "string" ? card.avatarUrl : null,
     },
   ];
 }
@@ -230,7 +232,7 @@ function UserStoryPlay() {
 
   function openChapter(chapter: ReaderChapter, options?: { chat?: boolean }) {
     setSelectedChapterId(chapter.id);
-    setOpenChatOnReader(options?.chat ?? true);
+    setOpenChatOnReader(options?.chat ?? false);
     setStage("reader");
     window.requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "smooth" }));
   }
@@ -268,8 +270,8 @@ function UserStoryPlay() {
   }
 
   return (
-    <div className="min-h-dvh bg-background">
-      <header className="sticky top-0 z-40 border-b border-border/40 bg-background/75 backdrop-blur-xl">
+    <div className="min-h-dvh bg-[#0f0f0f]">
+      <header className="hidden">
         <div className="mx-auto flex h-12 max-w-5xl items-center justify-between gap-3 px-4">
           <button
             type="button"
@@ -304,6 +306,10 @@ function UserStoryPlay() {
           initialChatOpen={openChatOnReader}
           nextChapterTitle={nextChapter?.title ?? null}
           onNextChapter={nextChapter ? () => openChapter(nextChapter, { chat: false }) : undefined}
+          onBackToChapters={() => {
+            setOpenChatOnReader(false);
+            setStage("chapters");
+          }}
         />
       ) : (
         <main className="mx-auto max-w-5xl px-4 py-4">

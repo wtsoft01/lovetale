@@ -1,14 +1,16 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   ArrowLeft,
   BookOpen,
+  Coins,
   Image as ImageIcon,
   Layers3,
   Loader2,
   Plus,
   Search,
+  Sparkles,
   Upload,
   Video,
   Wand2,
@@ -22,25 +24,55 @@ import { supabase } from "@/integrations/supabase/client";
 import { useServerFn } from "@/lib/_mock/runtime";
 import { createDraftStory, listAdminStories } from "@/lib/admin-stories.functions";
 import { ensureStoryMediaBucket } from "@/lib/storage.functions";
+import { normalizeProseLineBreaks } from "@/lib/text-normalization";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_authenticated/admin/import")({
-  head: () => ({ meta: [{ title: "새 콘텐츠 등록 - Lovetale Studio" }] }),
+  head: () => ({ meta: [{ title: "새 콘텐츠 등록 | Lovetale Studio" }] }),
   component: NewContentPage,
 });
 
-const TYPES = [
+const CONTENT_TYPES = [
   { key: "web_novel", label: "웹소설", desc: "텍스트 중심" },
-  { key: "romance_sim", label: "연애 시뮬", desc: "호감도/선택지" },
+  { key: "romance_sim", label: "연애 시뮬", desc: "캐릭터 대화 중심" },
   { key: "webtoon", label: "웹툰", desc: "이미지 중심" },
-  { key: "short_story", label: "단편", desc: "짧은 완결" },
+  { key: "short_story", label: "단편", desc: "짧은 완결형" },
   { key: "other", label: "기타", desc: "자유 형식" },
+] as const;
+
+const HEAT_PRESETS = [
+  { key: "soft", label: "Soft" },
+  { key: "warm", label: "Warm" },
+  { key: "spicy", label: "Spicy" },
+  { key: "steamy", label: "Steamy" },
+] as const;
+
+const AUDIENCES = [
+  { key: "all", label: "전체" },
+  { key: "female", label: "여성향" },
+  { key: "male", label: "남성향" },
 ] as const;
 
 const MAX_EPISODE_BODY_CHARS = 100_000;
 
 type CreationMode = "new_story" | "append_episode";
 type PreviewType = "image" | "video";
+type ContentType = (typeof CONTENT_TYPES)[number]["key"];
+type HeatPreset = (typeof HEAT_PRESETS)[number]["key"];
+type Audience = (typeof AUDIENCES)[number]["key"];
+
+type AiMetadataResult = {
+  title?: string;
+  logline?: string;
+  storyOverview?: string;
+  episodeTitle?: string;
+  episodeSummary?: string;
+  characterName?: string;
+  characterRole?: string;
+  characterPersona?: string;
+  characterSpeakingStyle?: string;
+  tags?: string[];
+};
 
 async function getAccessToken() {
   const { data, error } = await supabase.auth.getSession();
@@ -50,7 +82,12 @@ async function getAccessToken() {
   return token;
 }
 
-async function requestEpisodeSummary(title: string, text: string) {
+async function requestImportAi(input: {
+  mode: "episode_summary" | "story_metadata";
+  title: string;
+  text: string;
+  storyOverview?: string;
+}) {
   const token = await getAccessToken();
   const response = await fetch("/api/admin/import-summary", {
     method: "POST",
@@ -58,25 +95,36 @@ async function requestEpisodeSummary(title: string, text: string) {
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify({ title, text }),
+    body: JSON.stringify(input),
   });
   const payload = await response.json().catch(() => null);
   if (!response.ok || !payload?.ok) {
-    throw new Error(payload?.message || payload?.reason || "회차 요약 생성에 실패했습니다.");
+    throw new Error(payload?.message || payload?.reason || "AI 자동생성에 실패했습니다.");
   }
-  return { summary: String(payload.summary ?? "") };
+  return payload as { ok: true; summary?: string; metadata?: AiMetadataResult };
 }
 
 function NewContentPage() {
   const createDraft = useServerFn(createDraftStory);
   const fetchStories = useServerFn(listAdminStories);
+
   const [mode, setMode] = useState<CreationMode>("new_story");
   const [title, setTitle] = useState("");
+  const [logline, setLogline] = useState("");
   const [storyOverview, setStoryOverview] = useState("");
+  const [episodeTitle, setEpisodeTitle] = useState("");
   const [episodeBody, setEpisodeBody] = useState("");
   const [episodeSummary, setEpisodeSummary] = useState("");
   const [authorName, setAuthorName] = useState("");
-  const [contentType, setContentType] = useState<(typeof TYPES)[number]["key"]>("web_novel");
+  const [contentType, setContentType] = useState<ContentType>("web_novel");
+  const [audience, setAudience] = useState<Audience>("all");
+  const [maxHeat, setMaxHeat] = useState<HeatPreset>("warm");
+  const [priceCredits, setPriceCredits] = useState(0);
+  const [tagsText, setTagsText] = useState("");
+  const [characterName, setCharacterName] = useState("");
+  const [characterRole, setCharacterRole] = useState("상대 주인공");
+  const [characterPersona, setCharacterPersona] = useState("");
+  const [characterSpeakingStyle, setCharacterSpeakingStyle] = useState("");
   const [targetStoryId, setTargetStoryId] = useState("");
   const [search, setSearch] = useState("");
   const [coverUrl, setCoverUrl] = useState<string | null>(null);
@@ -100,8 +148,8 @@ function NewContentPage() {
   const stories = useMemo(() => {
     const rows = storiesQ.data ?? [];
     if (!search.trim()) return rows;
-    const q = search.trim().toLowerCase();
-    return rows.filter((row: any) => `${row.title} ${row.logline ?? ""}`.toLowerCase().includes(q));
+    const needle = search.trim().toLowerCase();
+    return rows.filter((row: any) => `${row.title} ${row.logline ?? ""}`.toLowerCase().includes(needle));
   }, [storiesQ.data, search]);
 
   const selectedStory = useMemo(
@@ -110,12 +158,47 @@ function NewContentPage() {
   );
   const nextEpisodeNumber = Number(selectedStory?.chapters_count ?? 0) + 1;
   const episodeBodyLimitReached = episodeBody.length >= MAX_EPISODE_BODY_CHARS;
+  const tags = tagsText
+    .split(",")
+    .map((tag) => tag.trim())
+    .filter(Boolean)
+    .slice(0, 12);
 
   const summaryMut = useMutation({
-    mutationFn: () => requestEpisodeSummary(title.trim(), episodeBody),
+    mutationFn: () =>
+      requestImportAi({
+        mode: "episode_summary",
+        title: episodeTitle.trim() || title.trim(),
+        text: episodeBody,
+      }),
     onSuccess: (result) => {
-      setEpisodeSummary(result.summary);
-      toast.success("회차 요약을 생성했어요.");
+      setEpisodeSummary(String(result.summary ?? ""));
+      toast.success("회원 노출용 회차 소개문을 생성했습니다.");
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const metadataMut = useMutation({
+    mutationFn: () =>
+      requestImportAi({
+        mode: "story_metadata",
+        title: title.trim() || episodeTitle.trim(),
+        text: episodeBody || storyOverview,
+        storyOverview,
+      }),
+    onSuccess: (result) => {
+      const meta = result.metadata ?? {};
+      if (meta.title) setTitle(meta.title);
+      if (meta.logline) setLogline(meta.logline);
+      if (meta.storyOverview) setStoryOverview(meta.storyOverview);
+      if (meta.episodeTitle && !episodeTitle.trim()) setEpisodeTitle(meta.episodeTitle);
+      if (meta.episodeSummary) setEpisodeSummary(meta.episodeSummary);
+      if (meta.characterName) setCharacterName(meta.characterName);
+      if (meta.characterRole) setCharacterRole(meta.characterRole);
+      if (meta.characterPersona) setCharacterPersona(meta.characterPersona);
+      if (meta.characterSpeakingStyle) setCharacterSpeakingStyle(meta.characterSpeakingStyle);
+      if (meta.tags?.length) setTagsText(meta.tags.join(", "));
+      toast.success("회원 노출용 상품 소개와 태그를 채웠습니다.");
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -123,42 +206,54 @@ function NewContentPage() {
   function updateEpisodeBody(value: string) {
     if (value.length > MAX_EPISODE_BODY_CHARS) {
       setEpisodeBody(value.slice(0, MAX_EPISODE_BODY_CHARS));
-      toast.warning("회차 본문은 최대 10만자까지 입력할 수 있어요.");
+      toast.warning("회차 본문은 최대 10만자까지 입력할 수 있습니다.");
       return;
     }
     setEpisodeBody(value);
   }
-
   async function handleSubmit() {
     if (submitting) return;
     const isEpisode = mode === "append_episode";
     if (isEpisode && !targetStoryId) {
-      toast.error("회차를 추가할 기존 상품을 선택해주세요.");
+      toast.error("회차를 추가할 기존 상품을 선택하세요.");
       return;
     }
 
     setSubmitting(true);
     try {
+      const fallbackTitle =
+        mode === "new_story" ? title.trim() || episodeTitle.trim() || "Untitled story" : episodeTitle.trim();
       const { id } = await createDraft({
         data: {
-          title: title.trim(),
+          title: fallbackTitle,
           contentType,
-          sourceText: isEpisode ? episodeBody.trim() : "",
+          sourceText: normalizeProseLineBreaks(episodeBody).trim(),
           storyOverview: isEpisode ? "" : storyOverview.trim(),
-          episodeSummary: isEpisode ? episodeSummary.trim() : "",
+          logline: isEpisode ? null : logline.trim(),
+          episodeTitle: episodeTitle.trim(),
+          episodeSummary: episodeSummary.trim(),
           authorName: isEpisode ? "" : authorName.trim(),
           targetStoryId: isEpisode ? targetStoryId || undefined : undefined,
           coverUrl: isEpisode ? null : coverUrl,
           previewUrl: isEpisode ? null : previewUrl,
           previewType: !isEpisode && previewUrl ? previewType : null,
+          tags: isEpisode ? [] : tags,
+          audience: isEpisode ? undefined : audience,
+          maxHeat: isEpisode ? undefined : maxHeat,
+          priceCredits: isEpisode ? undefined : priceCredits,
+          characterName: isEpisode ? "" : characterName.trim(),
+          characterRole: isEpisode ? "" : characterRole.trim(),
+          characterPersona: isEpisode ? "" : characterPersona.trim(),
+          characterSpeakingStyle: isEpisode ? "" : characterSpeakingStyle.trim(),
         },
       });
 
-      toast.success(mode === "append_episode" ? "회차를 추가했어요." : "새 스토리를 만들었어요.");
-      window.location.assign(`/admin/stories/${encodeURIComponent(id)}/compose?mode=append_episode`);
+      toast.success(mode === "append_episode" ? "회차를 추가했습니다." : "새 스토리를 만들었습니다.");
+      const tab = mode === "append_episode" ? "chapter" : "info";
+      window.location.assign(`/admin/stories?workspace=${encodeURIComponent(id)}&tab=${tab}`);
     } catch (error: any) {
       setSubmitting(false);
-      toast.error(error?.message ?? "콘텐츠 저장에 실패했어요.");
+      toast.error(error?.message ?? "콘텐츠 저장에 실패했습니다.");
     }
   }
 
@@ -184,9 +279,9 @@ function NewContentPage() {
         setPreviewPreview(localPreview);
         setPreviewType(file.type.startsWith("video/") ? "video" : "image");
       }
-      toast.success(kind === "cover" ? "표지 이미지를 등록했어요." : "미리보기 파일을 등록했어요.");
+      toast.success(kind === "cover" ? "표지 이미지를 등록했습니다." : "미리보기 파일을 등록했습니다.");
     } catch (error: any) {
-      toast.error(error?.message ?? "업로드에 실패했어요.");
+      toast.error(error?.message ?? "업로드에 실패했습니다.");
     } finally {
       setUploading(false);
     }
@@ -199,7 +294,7 @@ function NewContentPage() {
     (mode === "append_episode" && !targetStoryId);
 
   return (
-    <div className="mx-auto max-w-4xl space-y-5">
+    <div className="mx-auto max-w-5xl space-y-5">
       <Link
         to="/admin/stories"
         className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
@@ -208,348 +303,689 @@ function NewContentPage() {
         콘텐츠 관리로 돌아가기
       </Link>
 
-      <header className="space-y-1">
-        <span className="text-[10px] font-semibold uppercase tracking-[0.28em] text-primary">
-          Content CMS
-        </span>
-        <h1 className="font-display text-3xl font-semibold">새 콘텐츠 등록</h1>
-        <p className="text-sm text-muted-foreground">
-          새 스토리는 상품 정보를 먼저 만들고, 회차 추가는 기존 상품에 간단한 회차 정보만 붙입니다.
-        </p>
+      <header className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <span className="text-[10px] font-semibold uppercase tracking-[0.28em] text-primary">
+            Content CMS
+          </span>
+          <h1 className="mt-1 font-display text-3xl font-semibold">새 콘텐츠 등록</h1>
+          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+            사용자 홈, 탐색 카드, 스토리 시작 화면, 회차 선택 화면에서 바로 쓰이는 정보를 한 번에 등록합니다.
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => metadataMut.mutate()}
+          disabled={metadataMut.isPending || (episodeBody.trim().length < 80 && storyOverview.trim().length < 40)}
+        >
+          {metadataMut.isPending ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+          회원용 상품소개 자동생성
+        </Button>
       </header>
 
       <section className="space-y-4 rounded-2xl border border-border bg-card p-4 shadow-sm">
         <div className="grid gap-2 sm:grid-cols-2">
-          <button
-            type="button"
+          <ModeButton
+            active={mode === "new_story"}
+            icon={BookOpen}
+            title="새 스토리 생성"
+            desc="상품 정보와 첫 회차를 함께 등록"
             onClick={() => setMode("new_story")}
-            className={cn(
-              "flex min-h-16 items-center gap-3 rounded-xl border px-3 text-left text-sm",
-              mode === "new_story"
-                ? "border-primary bg-primary/10 text-primary"
-                : "border-border bg-background hover:border-primary/40",
-            )}
-          >
-            <BookOpen className="size-4 shrink-0" />
-            <span>
-              <span className="block font-medium">새 스토리 생성</span>
-              <span className="block text-xs text-muted-foreground">상품 제목, 표지, 유형, 줄거리 입력</span>
-            </span>
-          </button>
-          <button
-            type="button"
+          />
+          <ModeButton
+            active={mode === "append_episode"}
+            icon={Layers3}
+            title="회차 추가"
+            desc="기존 상품에 다음 회차만 추가"
             onClick={() => setMode("append_episode")}
-            className={cn(
-              "flex min-h-16 items-center gap-3 rounded-xl border px-3 text-left text-sm",
-              mode === "append_episode"
-                ? "border-primary bg-primary/10 text-primary"
-                : "border-border bg-background hover:border-primary/40",
-            )}
-          >
-            <Layers3 className="size-4 shrink-0" />
-            <span>
-              <span className="block font-medium">회차 추가</span>
-              <span className="block text-xs text-muted-foreground">기존 상품 선택 후 회차 제목/요약 입력</span>
-            </span>
-          </button>
+          />
         </div>
 
         {mode === "append_episode" ? (
-          <div className="space-y-4">
-            <div className="space-y-2 rounded-xl border border-border bg-background p-3">
-              <label className="text-xs font-medium text-muted-foreground">기존 상품 선택</label>
-              <div className="relative">
-                <Search className="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
-                <Input
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder="스토리 제목으로 검색"
-                  className="pl-9"
-                />
-              </div>
-              {selectedStory && (
-                <div className="rounded-lg border border-primary/30 bg-primary/10 px-3 py-2 text-sm">
-                  <div className="text-xs text-muted-foreground">선택한 상품</div>
-                  <div className="font-medium">{selectedStory.title}</div>
-                  <div className="mt-1 text-xs text-muted-foreground">
-                    기존 {selectedStory.chapters_count ?? 0}회차, 다음 회차 번호 {nextEpisodeNumber}
-                  </div>
-                </div>
-              )}
-              <div className="max-h-60 space-y-1 overflow-y-auto pr-1">
-                {(stories as any[]).map((story) => (
-                  <button
-                    key={story.id}
-                    type="button"
-                    onClick={() => setTargetStoryId(story.id)}
-                    className={cn(
-                      "w-full rounded-lg border px-3 py-2 text-left text-sm",
-                      targetStoryId === story.id
-                        ? "border-primary bg-primary/10"
-                        : "border-border bg-card hover:border-primary/40",
-                    )}
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="font-medium">{story.title}</span>
-                      <span className="text-xs text-muted-foreground">{story.chapters_count ?? 0}회차</span>
-                    </div>
-                    <div className="mt-0.5 truncate text-xs text-muted-foreground">
-                      {story.logline || "줄거리 없음"}
-                    </div>
-                  </button>
-                ))}
-                {!stories.length && (
-                  <div className="rounded-lg border border-dashed border-border p-3 text-center text-sm text-muted-foreground">
-                    선택할 상품이 없어요.
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-xs font-medium text-muted-foreground">
-                회차 제목
-                {selectedStory ? ` (자동 번호: ${nextEpisodeNumber}회차)` : ""}
-              </label>
-              <Input
-                value={title}
-                onChange={(event) => setTitle(event.target.value)}
-                placeholder={selectedStory ? `비워두면 Episode ${nextEpisodeNumber}` : "기존 상품을 먼저 선택하세요"}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <div className="flex items-center justify-between gap-3">
-                <label className="text-xs font-medium text-muted-foreground">회차 요약</label>
-                <span className="text-[11px] text-muted-foreground">{episodeSummary.length.toLocaleString()}자</span>
-              </div>
-              <Textarea
-                value={episodeSummary}
-                onChange={(event) => setEpisodeSummary(event.target.value)}
-                placeholder="이번 회차에서 벌어지는 핵심 사건이나 관리 메모를 간단히 입력하세요. 비워도 저장됩니다."
-                className="min-h-28 resize-none"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <label className="text-xs font-medium text-muted-foreground">회차 본문 콘텐츠</label>
-                <span
-                  className={cn(
-                    "text-[11px]",
-                    episodeBodyLimitReached ? "font-medium text-destructive" : "text-muted-foreground",
-                  )}
-                >
-                  {episodeBody.length.toLocaleString()} / {MAX_EPISODE_BODY_CHARS.toLocaleString()}자
-                </span>
-              </div>
-              <Textarea
-                value={episodeBody}
-                onChange={(event) => updateEpisodeBody(event.target.value)}
-                placeholder="해당 회차의 본문 텍스트를 입력하세요. 최대 10만자까지 저장할 수 있으며, 줄바꿈은 편집/미리보기 화면에 유지됩니다."
-                className="min-h-[440px] resize-y whitespace-pre-wrap font-mono text-[13px] leading-[1.75]"
-                spellCheck={false}
-              />
-              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-                <span>본문을 먼저 붙여넣은 뒤 AI 요약을 생성할 수 있습니다.</span>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => summaryMut.mutate()}
-                  disabled={summaryMut.isPending || episodeBody.trim().length < 80}
-                >
-                  {summaryMut.isPending ? (
-                    <Loader2 className="mr-1 size-3 animate-spin" />
-                  ) : (
-                    <Wand2 className="mr-1 size-3" />
-                  )}
-                  AI로 회차 요약
-                </Button>
-              </div>
-            </div>
-          </div>
+          <EpisodeAppendForm
+            stories={stories as any[]}
+            selectedStory={selectedStory}
+            targetStoryId={targetStoryId}
+            search={search}
+            nextEpisodeNumber={nextEpisodeNumber}
+            episodeTitle={episodeTitle}
+            episodeSummary={episodeSummary}
+            episodeBody={episodeBody}
+            episodeBodyLimitReached={episodeBodyLimitReached}
+            summaryPending={summaryMut.isPending}
+            onSearch={setSearch}
+            onSelectStory={setTargetStoryId}
+            onEpisodeTitle={setEpisodeTitle}
+            onEpisodeSummary={setEpisodeSummary}
+            onEpisodeBody={updateEpisodeBody}
+            onSummarize={() => summaryMut.mutate()}
+          />
         ) : (
-          <div className="space-y-5">
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="space-y-2">
-                <label className="text-xs font-medium text-muted-foreground">스토리 제목</label>
-                <Input
-                  value={title}
-                  onChange={(event) => setTitle(event.target.value)}
-                  placeholder="비워두면 Untitled story"
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-xs font-medium text-muted-foreground">작가명</label>
-                <Input
-                  value={authorName}
-                  onChange={(event) => setAuthorName(event.target.value)}
-                  placeholder="작가명 선택 입력"
-                />
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-xs font-medium text-muted-foreground">스토리 유형</label>
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-                {TYPES.map((type) => (
-                  <button
-                    key={type.key}
-                    type="button"
-                    onClick={() => setContentType(type.key)}
-                    className={cn(
-                      "rounded-xl border px-3 py-2 text-left",
-                      contentType === type.key
-                        ? "border-primary bg-primary/10"
-                        : "border-border bg-background hover:border-primary/40",
-                    )}
-                  >
-                    <div className="text-sm font-medium">{type.label}</div>
-                    <div className="text-[11px] text-muted-foreground">{type.desc}</div>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="space-y-3">
-              <label className="text-xs font-medium text-muted-foreground">표지 이미지</label>
-              <div className="grid gap-3 sm:grid-cols-[132px_minmax(0,1fr)]">
-                <div className="aspect-[4/5] overflow-hidden rounded-xl border border-border bg-background">
-                  {coverPreview || coverUrl ? (
-                    <img src={coverPreview ?? coverUrl ?? ""} alt="" className="size-full object-cover" />
-                  ) : (
-                    <div className="grid size-full place-items-center">
-                      <ImageIcon className="size-7 text-muted-foreground/60" />
-                    </div>
-                  )}
-                </div>
-                <div className="space-y-2">
-                  <label
-                    className={cn(
-                      "inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-md border border-border px-3 py-2 text-sm hover:border-primary/50",
-                      uploadingCover && "pointer-events-none opacity-60",
-                    )}
-                  >
-                    {uploadingCover ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
-                    이미지 업로드
-                    <input
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      onChange={(event) => {
-                        const file = event.target.files?.[0];
-                        if (file) uploadMedia(file, "cover");
-                        event.target.value = "";
-                      }}
-                    />
-                  </label>
-                  <Input
-                    value={coverUrl ?? ""}
-                    onChange={(event) => {
-                      setCoverUrl(event.target.value || null);
-                      setCoverPreview(null);
-                    }}
-                    placeholder="이미지 URL 또는 storage path"
-                    className="text-xs"
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-3">
-              <label className="text-xs font-medium text-muted-foreground">미리보기 이미지/영상</label>
-              <div className="grid gap-3 sm:grid-cols-[180px_minmax(0,1fr)]">
-                <div className="aspect-video overflow-hidden rounded-xl border border-border bg-background">
-                  {previewPreview || previewUrl ? (
-                    previewType === "video" ? (
-                      <video src={previewPreview ?? previewUrl ?? ""} className="size-full object-cover" muted controls />
-                    ) : (
-                      <img src={previewPreview ?? previewUrl ?? ""} alt="" className="size-full object-cover" />
-                    )
-                  ) : (
-                    <div className="grid size-full place-items-center">
-                      <Video className="size-7 text-muted-foreground/60" />
-                    </div>
-                  )}
-                </div>
-                <div className="space-y-2">
-                  <div className="grid grid-cols-2 gap-2">
-                    <Button
-                      type="button"
-                      variant={previewType === "image" ? "default" : "outline"}
-                      size="sm"
-                      onClick={() => setPreviewType("image")}
-                    >
-                      이미지
-                    </Button>
-                    <Button
-                      type="button"
-                      variant={previewType === "video" ? "default" : "outline"}
-                      size="sm"
-                      onClick={() => setPreviewType("video")}
-                    >
-                      영상
-                    </Button>
-                  </div>
-                  <label
-                    className={cn(
-                      "inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-md border border-border px-3 py-2 text-sm hover:border-primary/50",
-                      uploadingPreview && "pointer-events-none opacity-60",
-                    )}
-                  >
-                    {uploadingPreview ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
-                    파일 업로드
-                    <input
-                      type="file"
-                      accept="image/*,video/*"
-                      className="hidden"
-                      onChange={(event) => {
-                        const file = event.target.files?.[0];
-                        if (file) uploadMedia(file, "preview");
-                        event.target.value = "";
-                      }}
-                    />
-                  </label>
-                  <Input
-                    value={previewUrl ?? ""}
-                    onChange={(event) => {
-                      setPreviewUrl(event.target.value || null);
-                      setPreviewPreview(null);
-                    }}
-                    placeholder="미리보기 URL 또는 storage path"
-                    className="text-xs"
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <div className="flex items-center justify-between gap-3">
-                <label className="text-xs font-medium text-muted-foreground">스토리 줄거리</label>
-                <span className="text-[11px] text-muted-foreground">{storyOverview.length.toLocaleString()}자</span>
-              </div>
-              <Textarea
-                value={storyOverview}
-                onChange={(event) => setStoryOverview(event.target.value)}
-                placeholder="스토리 줄거리, 주요 설정, 상품 소개 문구 등을 입력하세요. 비워도 저장됩니다."
-                className="min-h-40 resize-none"
-              />
-            </div>
-          </div>
+          <NewStoryForm
+            title={title}
+            logline={logline}
+            storyOverview={storyOverview}
+            authorName={authorName}
+            contentType={contentType}
+            audience={audience}
+            maxHeat={maxHeat}
+            priceCredits={priceCredits}
+            tagsText={tagsText}
+            characterName={characterName}
+            characterRole={characterRole}
+            characterPersona={characterPersona}
+            characterSpeakingStyle={characterSpeakingStyle}
+            coverUrl={coverUrl}
+            coverPreview={coverPreview}
+            previewUrl={previewUrl}
+            previewPreview={previewPreview}
+            previewType={previewType}
+            uploadingCover={uploadingCover}
+            uploadingPreview={uploadingPreview}
+            episodeTitle={episodeTitle}
+            episodeSummary={episodeSummary}
+            episodeBody={episodeBody}
+            episodeBodyLimitReached={episodeBodyLimitReached}
+            summaryPending={summaryMut.isPending}
+            onTitle={setTitle}
+            onLogline={setLogline}
+            onStoryOverview={setStoryOverview}
+            onAuthorName={setAuthorName}
+            onContentType={setContentType}
+            onAudience={setAudience}
+            onMaxHeat={setMaxHeat}
+            onPriceCredits={setPriceCredits}
+            onTagsText={setTagsText}
+            onCharacterName={setCharacterName}
+            onCharacterRole={setCharacterRole}
+            onCharacterPersona={setCharacterPersona}
+            onCharacterSpeakingStyle={setCharacterSpeakingStyle}
+            onCoverUrl={(value) => {
+              setCoverUrl(value || null);
+              setCoverPreview(null);
+            }}
+            onPreviewUrl={(value) => {
+              setPreviewUrl(value || null);
+              setPreviewPreview(null);
+            }}
+            onPreviewType={setPreviewType}
+            onUploadMedia={uploadMedia}
+            onEpisodeTitle={setEpisodeTitle}
+            onEpisodeSummary={setEpisodeSummary}
+            onEpisodeBody={updateEpisodeBody}
+            onSummarize={() => summaryMut.mutate()}
+          />
         )}
 
         <div className="rounded-xl border border-border bg-background px-3 py-2 text-xs text-muted-foreground">
           {mode === "append_episode"
-            ? "회차 추가는 기존 상품 선택만 필수입니다. 제목을 비우면 다음 회차 번호로 자동 저장됩니다."
-            : "새 스토리는 미입력 정보가 있어도 먼저 저장할 수 있고, 편집 화면에서 상품/회차/에셋 정보를 이어서 보완할 수 있습니다."}
+            ? "회차 추가는 기존 상품 선택만 필수입니다. 회차 제목을 비우면 다음 회차 번호로 자동 저장됩니다."
+            : "새 스토리는 미입력 정보가 있어도 저장됩니다. 저장 후 콘텐츠 작업공간에서 정보수정, 회차편집, 에셋편집을 이어갈 수 있습니다."}
         </div>
 
         <Button onClick={handleSubmit} disabled={submitDisabled} className="h-11 w-full">
           {submitting ? <Loader2 className="mr-1 size-3.5 animate-spin" /> : <Plus className="mr-1 size-3.5" />}
-          {mode === "append_episode" ? "회차 추가하고 편집 열기" : "새 스토리 만들고 회차 입력하기"}
+          {mode === "append_episode" ? "회차 추가하고 편집 열기" : "새 스토리 만들고 편집 열기"}
         </Button>
       </section>
+    </div>
+  );
+}
+
+function ModeButton({
+  active,
+  icon: Icon,
+  title,
+  desc,
+  onClick,
+}: {
+  active: boolean;
+  icon: typeof BookOpen;
+  title: string;
+  desc: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "flex min-h-16 items-center gap-3 rounded-xl border px-3 text-left text-sm",
+        active ? "border-primary bg-primary/10 text-primary" : "border-border bg-background hover:border-primary/40",
+      )}
+    >
+      <Icon className="size-4 shrink-0" />
+      <span>
+        <span className="block font-medium">{title}</span>
+        <span className="block text-xs text-muted-foreground">{desc}</span>
+      </span>
+    </button>
+  );
+}
+
+function EpisodeAppendForm(props: {
+  stories: any[];
+  selectedStory: any;
+  targetStoryId: string;
+  search: string;
+  nextEpisodeNumber: number;
+  episodeTitle: string;
+  episodeSummary: string;
+  episodeBody: string;
+  episodeBodyLimitReached: boolean;
+  summaryPending: boolean;
+  onSearch: (value: string) => void;
+  onSelectStory: (id: string) => void;
+  onEpisodeTitle: (value: string) => void;
+  onEpisodeSummary: (value: string) => void;
+  onEpisodeBody: (value: string) => void;
+  onSummarize: () => void;
+}) {
+  return (
+    <div className="space-y-4">
+      <div className="space-y-2 rounded-xl border border-border bg-background p-3">
+        <label className="text-xs font-medium text-muted-foreground">기존 상품 선택</label>
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
+          <Input
+            value={props.search}
+            onChange={(event) => props.onSearch(event.target.value)}
+            placeholder="스토리 제목으로 검색"
+            className="pl-9"
+          />
+        </div>
+        {props.selectedStory && (
+          <div className="rounded-lg border border-primary/30 bg-primary/10 px-3 py-2 text-sm">
+            <div className="text-xs text-muted-foreground">선택한 상품</div>
+            <div className="font-medium">{props.selectedStory.title}</div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              기존 {props.selectedStory.chapters_count ?? 0}회차, 다음 회차 번호 {props.nextEpisodeNumber}
+            </div>
+          </div>
+        )}
+        <div className="max-h-60 space-y-1 overflow-y-auto pr-1">
+          {props.stories.map((story) => (
+            <button
+              key={story.id}
+              type="button"
+              onClick={() => props.onSelectStory(story.id)}
+              className={cn(
+                "w-full rounded-lg border px-3 py-2 text-left text-sm",
+                props.targetStoryId === story.id
+                  ? "border-primary bg-primary/10"
+                  : "border-border bg-card hover:border-primary/40",
+              )}
+            >
+              <div className="flex items-center justify-between gap-3">
+                <span className="font-medium">{story.title}</span>
+                <span className="text-xs text-muted-foreground">{story.chapters_count ?? 0}회차</span>
+              </div>
+              <div className="mt-0.5 truncate text-xs text-muted-foreground">{story.logline || "줄거리 없음"}</div>
+            </button>
+          ))}
+          {!props.stories.length && (
+            <div className="rounded-lg border border-dashed border-border p-3 text-center text-sm text-muted-foreground">
+              선택할 상품이 없습니다.
+            </div>
+          )}
+        </div>
+      </div>
+
+      <EpisodeFields
+        episodeTitle={props.episodeTitle}
+        episodeSummary={props.episodeSummary}
+        episodeBody={props.episodeBody}
+        episodeBodyLimitReached={props.episodeBodyLimitReached}
+        summaryPending={props.summaryPending}
+        titlePlaceholder={props.selectedStory ? `비우면 ${props.nextEpisodeNumber}화` : "기존 상품을 먼저 선택하세요"}
+        onEpisodeTitle={props.onEpisodeTitle}
+        onEpisodeSummary={props.onEpisodeSummary}
+        onEpisodeBody={props.onEpisodeBody}
+        onSummarize={props.onSummarize}
+      />
+    </div>
+  );
+}
+
+function NewStoryForm(props: {
+  title: string;
+  logline: string;
+  storyOverview: string;
+  authorName: string;
+  contentType: ContentType;
+  audience: Audience;
+  maxHeat: HeatPreset;
+  priceCredits: number;
+  tagsText: string;
+  characterName: string;
+  characterRole: string;
+  characterPersona: string;
+  characterSpeakingStyle: string;
+  coverUrl: string | null;
+  coverPreview: string | null;
+  previewUrl: string | null;
+  previewPreview: string | null;
+  previewType: PreviewType;
+  uploadingCover: boolean;
+  uploadingPreview: boolean;
+  episodeTitle: string;
+  episodeSummary: string;
+  episodeBody: string;
+  episodeBodyLimitReached: boolean;
+  summaryPending: boolean;
+  onTitle: (value: string) => void;
+  onLogline: (value: string) => void;
+  onStoryOverview: (value: string) => void;
+  onAuthorName: (value: string) => void;
+  onContentType: (value: ContentType) => void;
+  onAudience: (value: Audience) => void;
+  onMaxHeat: (value: HeatPreset) => void;
+  onPriceCredits: (value: number) => void;
+  onTagsText: (value: string) => void;
+  onCharacterName: (value: string) => void;
+  onCharacterRole: (value: string) => void;
+  onCharacterPersona: (value: string) => void;
+  onCharacterSpeakingStyle: (value: string) => void;
+  onCoverUrl: (value: string) => void;
+  onPreviewUrl: (value: string) => void;
+  onPreviewType: (value: PreviewType) => void;
+  onUploadMedia: (file: File, kind: "cover" | "preview") => void;
+  onEpisodeTitle: (value: string) => void;
+  onEpisodeSummary: (value: string) => void;
+  onEpisodeBody: (value: string) => void;
+  onSummarize: () => void;
+}) {
+  return (
+    <div className="space-y-5">
+      <section className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_220px]">
+        <div className="space-y-3">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="스토리 제목">
+              <Input value={props.title} onChange={(event) => props.onTitle(event.target.value)} placeholder="비우면 Untitled story" />
+            </Field>
+            <Field label="작가명">
+              <Input value={props.authorName} onChange={(event) => props.onAuthorName(event.target.value)} placeholder="선택 입력" />
+            </Field>
+          </div>
+          <Field label="로그라인">
+            <Input
+              value={props.logline}
+              onChange={(event) => props.onLogline(event.target.value)}
+              placeholder="회원이 클릭하고 싶게 만드는 한 줄 후킹 문장"
+              maxLength={180}
+            />
+          </Field>
+          <Field label="스토리 줄거리">
+            <Textarea
+              value={props.storyOverview}
+              onChange={(event) => props.onStoryOverview(event.target.value)}
+              placeholder="관계, 갈등, 비밀, 감정 변화를 담은 프론트 노출용 소개문"
+              className="min-h-32 resize-y"
+            />
+          </Field>
+        </div>
+        <CoverUploader
+          coverUrl={props.coverUrl}
+          coverPreview={props.coverPreview}
+          uploadingCover={props.uploadingCover}
+          onCoverUrl={props.onCoverUrl}
+          onUpload={(file) => props.onUploadMedia(file, "cover")}
+        />
+      </section>
+
+      <section className="grid gap-3 md:grid-cols-2">
+        <Field label="스토리 유형">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            {CONTENT_TYPES.map((type) => (
+              <ChoiceButton
+                key={type.key}
+                active={props.contentType === type.key}
+                title={type.label}
+                desc={type.desc}
+                onClick={() => props.onContentType(type.key)}
+              />
+            ))}
+          </div>
+        </Field>
+        <Field label="노출/과금 기준">
+          <div className="grid gap-2 sm:grid-cols-3">
+            <select
+              value={props.audience}
+              onChange={(event) => props.onAudience(event.target.value as Audience)}
+              className="h-10 rounded-md border border-border bg-background px-3 text-sm"
+            >
+              {AUDIENCES.map((item) => (
+                <option key={item.key} value={item.key}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+            <select
+              value={props.maxHeat}
+              onChange={(event) => props.onMaxHeat(event.target.value as HeatPreset)}
+              className="h-10 rounded-md border border-border bg-background px-3 text-sm"
+            >
+              {HEAT_PRESETS.map((item) => (
+                <option key={item.key} value={item.key}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+            <div className="relative">
+              <Coins className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                type="number"
+                min={0}
+                value={props.priceCredits}
+                onChange={(event) => props.onPriceCredits(Math.max(0, Number(event.target.value) || 0))}
+                className="pl-8"
+              />
+            </div>
+          </div>
+        </Field>
+      </section>
+
+      <Field label="태그">
+        <Input
+          value={props.tagsText}
+          onChange={(event) => props.onTagsText(event.target.value)}
+          placeholder="쉼표로 구분: 계약연애, 긴장감, 로맨스"
+        />
+      </Field>
+
+      <section className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_260px]">
+        <div className="space-y-3 rounded-xl border border-border bg-background p-3">
+          <div className="text-sm font-semibold">대표 캐릭터 / 채팅 상대</div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="이름">
+              <Input value={props.characterName} onChange={(event) => props.onCharacterName(event.target.value)} placeholder="상대 주인공 이름" />
+            </Field>
+            <Field label="역할">
+              <Input value={props.characterRole} onChange={(event) => props.onCharacterRole(event.target.value)} placeholder="CEO, 소꿉친구, 계약 상대 등" />
+            </Field>
+          </div>
+          <Field label="성격/관계 설정">
+            <Textarea
+              value={props.characterPersona}
+              onChange={(event) => props.onCharacterPersona(event.target.value)}
+              placeholder="사용자와의 관계, 성격, 비밀, 갈등, 감정선"
+              className="min-h-24"
+            />
+          </Field>
+          <Field label="말투">
+            <Textarea
+              value={props.characterSpeakingStyle}
+              onChange={(event) => props.onCharacterSpeakingStyle(event.target.value)}
+              placeholder="짧게 말함, 반말/존댓말, 감정 표현 방식 등"
+              className="min-h-20"
+            />
+          </Field>
+        </div>
+        <PreviewUploader
+          previewUrl={props.previewUrl}
+          previewPreview={props.previewPreview}
+          previewType={props.previewType}
+          uploadingPreview={props.uploadingPreview}
+          onPreviewUrl={props.onPreviewUrl}
+          onPreviewType={props.onPreviewType}
+          onUpload={(file) => props.onUploadMedia(file, "preview")}
+        />
+      </section>
+
+      <section className="rounded-xl border border-border bg-background p-3">
+        <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
+          <Layers3 className="size-4 text-primary" />
+          첫 회차 정보
+        </div>
+        <EpisodeFields
+          episodeTitle={props.episodeTitle}
+          episodeSummary={props.episodeSummary}
+          episodeBody={props.episodeBody}
+          episodeBodyLimitReached={props.episodeBodyLimitReached}
+          summaryPending={props.summaryPending}
+          titlePlaceholder="비우면 1화"
+          onEpisodeTitle={props.onEpisodeTitle}
+          onEpisodeSummary={props.onEpisodeSummary}
+          onEpisodeBody={props.onEpisodeBody}
+          onSummarize={props.onSummarize}
+        />
+      </section>
+    </div>
+  );
+}
+
+function EpisodeFields(props: {
+  episodeTitle: string;
+  episodeSummary: string;
+  episodeBody: string;
+  episodeBodyLimitReached: boolean;
+  summaryPending: boolean;
+  titlePlaceholder: string;
+  onEpisodeTitle: (value: string) => void;
+  onEpisodeSummary: (value: string) => void;
+  onEpisodeBody: (value: string) => void;
+  onSummarize: () => void;
+}) {
+  return (
+    <div className="space-y-3">
+      <Field label="회차 제목">
+        <Input value={props.episodeTitle} onChange={(event) => props.onEpisodeTitle(event.target.value)} placeholder={props.titlePlaceholder} />
+      </Field>
+      <Field label="회차 요약">
+        <Textarea
+          value={props.episodeSummary}
+          onChange={(event) => props.onEpisodeSummary(event.target.value)}
+          placeholder="회원이 다음 장면을 궁금해하도록 핵심 사건과 감정 변화를 적어주세요."
+          className="min-h-24 resize-y"
+        />
+      </Field>
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <label className="text-xs font-medium text-muted-foreground">회차 본문 콘텐츠</label>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => props.onEpisodeBody(normalizeProseLineBreaks(props.episodeBody))}
+            >
+              PDF 줄바꿈 정리
+            </Button>
+            <span
+              className={cn(
+                "text-[11px]",
+                props.episodeBodyLimitReached ? "font-medium text-destructive" : "text-muted-foreground",
+              )}
+            >
+              {props.episodeBody.length.toLocaleString()} / {MAX_EPISODE_BODY_CHARS.toLocaleString()}자
+            </span>
+          </div>
+        </div>
+        <Textarea
+          value={props.episodeBody}
+          onChange={(event) => props.onEpisodeBody(event.target.value)}
+          onBlur={() => props.onEpisodeBody(normalizeProseLineBreaks(props.episodeBody))}
+          onPaste={(event) => {
+            const target = event.currentTarget;
+            window.setTimeout(() => props.onEpisodeBody(normalizeProseLineBreaks(target.value)), 0);
+          }}
+          placeholder="회차 본문을 입력하세요. 최대 10만자까지 저장할 수 있습니다."
+          className="min-h-[420px] resize-y whitespace-pre-line font-mono text-[13px] leading-[1.75]"
+          spellCheck={false}
+        />
+        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+          <span>본문을 붙여넣으면 회원 노출용 줄거리, 태그, 회차 소개문 생성에 활용됩니다.</span>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={props.onSummarize}
+            disabled={props.summaryPending || props.episodeBody.trim().length < 80}
+          >
+            {props.summaryPending ? <Loader2 className="mr-1 size-3 animate-spin" /> : <Wand2 className="mr-1 size-3" />}
+            회원용 회차소개 생성
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CoverUploader(props: {
+  coverUrl: string | null;
+  coverPreview: string | null;
+  uploadingCover: boolean;
+  onCoverUrl: (value: string) => void;
+  onUpload: (file: File) => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <label className="text-xs font-medium text-muted-foreground">표지 이미지</label>
+      <div className="aspect-[4/5] overflow-hidden rounded-xl border border-border bg-background">
+        {props.coverPreview || props.coverUrl ? (
+          <img src={props.coverPreview ?? props.coverUrl ?? ""} alt="" className="size-full object-cover" />
+        ) : (
+          <div className="grid size-full place-items-center">
+            <ImageIcon className="size-7 text-muted-foreground/60" />
+          </div>
+        )}
+      </div>
+      <UploadLabel disabled={props.uploadingCover} accept="image/*" onUpload={props.onUpload}>
+        {props.uploadingCover ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
+        이미지 업로드
+      </UploadLabel>
+      <Input
+        value={props.coverUrl ?? ""}
+        onChange={(event) => props.onCoverUrl(event.target.value)}
+        placeholder="이미지 URL 또는 storage path"
+        className="text-xs"
+      />
+    </div>
+  );
+}
+
+function PreviewUploader(props: {
+  previewUrl: string | null;
+  previewPreview: string | null;
+  previewType: PreviewType;
+  uploadingPreview: boolean;
+  onPreviewUrl: (value: string) => void;
+  onPreviewType: (value: PreviewType) => void;
+  onUpload: (file: File) => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <label className="text-xs font-medium text-muted-foreground">미리보기 이미지/영상</label>
+      <div className="aspect-video overflow-hidden rounded-xl border border-border bg-background">
+        {props.previewPreview || props.previewUrl ? (
+          props.previewType === "video" ? (
+            <video src={props.previewPreview ?? props.previewUrl ?? ""} className="size-full object-cover" muted controls />
+          ) : (
+            <img src={props.previewPreview ?? props.previewUrl ?? ""} alt="" className="size-full object-cover" />
+          )
+        ) : (
+          <div className="grid size-full place-items-center">
+            <Video className="size-7 text-muted-foreground/60" />
+          </div>
+        )}
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <Button
+          type="button"
+          variant={props.previewType === "image" ? "default" : "outline"}
+          size="sm"
+          onClick={() => props.onPreviewType("image")}
+        >
+          이미지
+        </Button>
+        <Button
+          type="button"
+          variant={props.previewType === "video" ? "default" : "outline"}
+          size="sm"
+          onClick={() => props.onPreviewType("video")}
+        >
+          영상
+        </Button>
+      </div>
+      <UploadLabel disabled={props.uploadingPreview} accept="image/*,video/*" onUpload={props.onUpload}>
+        {props.uploadingPreview ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
+        파일 업로드
+      </UploadLabel>
+      <Input
+        value={props.previewUrl ?? ""}
+        onChange={(event) => props.onPreviewUrl(event.target.value)}
+        placeholder="미리보기 URL 또는 storage path"
+        className="text-xs"
+      />
+    </div>
+  );
+}
+
+function UploadLabel({
+  disabled,
+  accept,
+  children,
+  onUpload,
+}: {
+  disabled: boolean;
+  accept: string;
+  children: ReactNode;
+  onUpload: (file: File) => void;
+}) {
+  return (
+    <label
+      className={cn(
+        "inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-md border border-border px-3 py-2 text-sm hover:border-primary/50",
+        disabled && "pointer-events-none opacity-60",
+      )}
+    >
+      {children}
+      <input
+        type="file"
+        accept={accept}
+        className="hidden"
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          if (file) onUpload(file);
+          event.target.value = "";
+        }}
+      />
+    </label>
+  );
+}
+
+function ChoiceButton({
+  active,
+  title,
+  desc,
+  onClick,
+}: {
+  active: boolean;
+  title: string;
+  desc: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "rounded-xl border px-3 py-2 text-left",
+        active ? "border-primary bg-primary/10" : "border-border bg-background hover:border-primary/40",
+      )}
+    >
+      <div className="text-sm font-medium">{title}</div>
+      <div className="text-[11px] text-muted-foreground">{desc}</div>
+    </button>
+  );
+}
+
+function Field({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="space-y-2">
+      <label className="text-xs font-medium text-muted-foreground">{label}</label>
+      {children}
     </div>
   );
 }

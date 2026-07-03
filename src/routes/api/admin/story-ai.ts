@@ -77,6 +77,7 @@ function buildChaptersFromRow(row: any) {
         summary: "",
         body: topBody,
         assetSlots: topSlots,
+        characterAnalysis: [],
       },
     ];
   }
@@ -96,6 +97,7 @@ function buildChaptersFromRow(row: any) {
         : index === 0
           ? topSlots
           : [],
+    characterAnalysis: Array.isArray(chapter.characterAnalysis) ? chapter.characterAnalysis : [],
   }));
 }
 
@@ -181,6 +183,222 @@ function parseJsonArray(text: string): Array<Record<string, any>> {
   const trimmed = text.trim().replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim();
   const match = trimmed.match(/\[[\s\S]*\]/);
   return JSON.parse(match ? match[0] : trimmed);
+}
+
+function parseJsonObject(text: string): Record<string, any> {
+  const trimmed = text.trim().replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim();
+  const match = trimmed.match(/\{[\s\S]*\}/);
+  return JSON.parse(match ? match[0] : trimmed);
+}
+
+function compactText(value: unknown, maxChars = 500) {
+  return String(value ?? "").replace(/\s+/g, " ").trim().slice(0, maxChars);
+}
+
+function safeArray(value: unknown) {
+  return Array.isArray(value) ? value : [];
+}
+
+function normalizeCharacterResult(item: Record<string, any>, index: number) {
+  const name = compactText(item.name, 80);
+  if (!name) return null;
+  const traits = safeArray(item.traits)
+    .map((trait) => compactText(trait, 40))
+    .filter(Boolean)
+    .slice(0, 8);
+  return {
+    id: compactText(item.id, 120) || `char_${name.replace(/\s+/g, "_")}_${index + 1}`,
+    name,
+    role: compactText(item.role, 120) || (index === 0 ? "주요 대화 상대" : "등장 인물"),
+    persona: compactText(item.persona ?? item.description ?? item.chatGuidance, 900),
+    personality: compactText(item.personality, 500) || traits.join(", "),
+    relationship: compactText(item.relationship, 500),
+    speakingStyle: compactText(item.speakingStyle ?? item.speaking_style, 500),
+    visualPrompt: compactText(item.visualPrompt ?? item.visual_prompt ?? item.appearance, 800),
+    avatarUrl: typeof item.avatarUrl === "string" ? item.avatarUrl : null,
+    tags: safeArray(item.tags)
+      .map((tag) => compactText(tag, 32))
+      .filter(Boolean)
+      .slice(0, 8),
+    isPrimary: Boolean(item.isPrimary ?? index === 0),
+    chatEnabled: item.chatEnabled !== false,
+    reusable: item.reusable !== false,
+    emotion: compactText(item.emotion, 160),
+    attitude: compactText(item.attitude, 240),
+    traits,
+    evidence: compactText(item.evidence, 280),
+    chatGuidance: compactText(item.chatGuidance, 900),
+  };
+}
+
+function normalizeNameKey(name: string) {
+  return String(name || "").replace(/\s+/g, "").trim().toLowerCase();
+}
+
+function mergeAnalyzedCharactersIntoCard(card: Record<string, any>, chapter: any, result: Awaited<ReturnType<typeof analyzeCharactersWithLlm>>) {
+  const existing = Array.isArray(card.characters) ? card.characters : [];
+  const byName = new Map<string, any>();
+  for (const character of existing) {
+    const name = compactText(character?.name ?? character?.title, 80);
+    if (name) byName.set(normalizeNameKey(name), { ...character, name });
+  }
+
+  for (const analyzed of result.characters) {
+    const name = compactText(analyzed.name, 80);
+    if (!name) continue;
+    const key = normalizeNameKey(name);
+    const current = byName.get(key) ?? {};
+    const matchingInsight =
+      result.characterAnalysis.find((item) => normalizeNameKey(String(item.name ?? "")) === key) ?? analyzed;
+    const chapterInsights = Array.isArray(current.chapterInsights) ? current.chapterInsights : [];
+    const nextInsights = [
+      ...chapterInsights.filter((item: any) => item.chapterId !== chapter.id),
+      {
+        chapterId: chapter.id,
+        chapterTitle: chapter.title,
+        episodeNumber: chapter.episodeNumber,
+        emotion: matchingInsight.emotion,
+        attitude: matchingInsight.attitude,
+        traits: matchingInsight.traits,
+        relationship: matchingInsight.relationship,
+        evidence: matchingInsight.evidence,
+        chatGuidance: matchingInsight.chatGuidance,
+      },
+    ].slice(-20);
+
+    byName.set(key, {
+      ...current,
+      ...analyzed,
+      id: current.id || analyzed.id || `char_${name.replace(/\s+/g, "_")}`,
+      name,
+      role: current.role || analyzed.role,
+      persona: current.persona || analyzed.persona || analyzed.chatGuidance,
+      personality: current.personality || analyzed.personality || safeArray(analyzed.traits).join(", "),
+      relationship: current.relationship || analyzed.relationship,
+      speakingStyle: current.speakingStyle || analyzed.speakingStyle,
+      visualPrompt: current.visualPrompt || analyzed.visualPrompt,
+      appearance: current.appearance || current.visualPrompt || analyzed.visualPrompt,
+      avatarUrl: current.avatarUrl || analyzed.avatarUrl || null,
+      chatEnabled: current.chatEnabled ?? true,
+      reusable: current.reusable ?? true,
+      chapterInsights: nextInsights,
+    });
+  }
+
+  const characters = [...byName.values()];
+  const primary = characters.find((character) => character.isPrimary) ?? characters[0];
+  return {
+    ...card,
+    characters,
+    ...(primary
+      ? {
+          name: primary.name,
+          role: primary.role,
+          persona: primary.persona,
+          notes: primary.persona || primary.notes,
+          personality: primary.personality,
+          relationship: primary.relationship,
+          speakingStyle: primary.speakingStyle,
+          visualPrompt: primary.visualPrompt,
+          appearance: primary.appearance || primary.visualPrompt,
+          avatarUrl: primary.avatarUrl ?? null,
+        }
+      : {}),
+  };
+}
+
+async function analyzeCharactersWithLlm(row: any, chapter: ReturnType<typeof buildChaptersFromRow>[number]) {
+  const body = String(chapter.body ?? "").trim();
+  if (body.length < 80) return { characterAnalysis: [], characters: [] };
+  const card = recordOf(row?.character_card);
+  const existingCharacters = Array.isArray(card.characters) ? card.characters : [];
+  const { chatWithRotation } = await import("@/lib/llm-router.server");
+  const result = await chatWithRotation({
+    purpose: "summary",
+    temperature: 0.15,
+    maxTokens: 2400,
+    messages: [
+      {
+        role: "system",
+        content: [
+          "You are Lovetale's character continuity analyst.",
+          "Read Korean web-novel chapters and extract only important recurring or scene-driving characters.",
+          "Return ONLY valid JSON. No markdown. No commentary.",
+          "Do not invent characters. If a name is ambiguous, use the most likely in-story character name and explain evidence.",
+          "Each character must be usable as an AI chat persona.",
+        ].join("\n"),
+      },
+      {
+        role: "user",
+        content: [
+          "Return JSON object with fields:",
+          "characters: array of objects {id,name,role,persona,personality,relationship,speakingStyle,visualPrompt,tags,isPrimary,chatEnabled,reusable,emotion,attitude,traits,evidence,chatGuidance}",
+          "characterAnalysis: array of objects {id,name,role,emotion,attitude,traits,relationship,evidence,chatGuidance}",
+          "",
+          "Rules:",
+          "- Analyze the actual chapter text, dialogue labels, honorifics, actions, and relationships.",
+          "- persona: stable backstory, desire, emotional wound, relationship to the reader/protagonist.",
+          "- speakingStyle: concrete Korean speaking rules, tone, sentence length, honorific/plain speech tendency.",
+          "- visualPrompt: concise image generation prompt for an adult manga/webtoon-style portrait; include hair, face, mood, clothes if grounded.",
+          "- chatGuidance: how the character should answer the user in this exact episode context.",
+          "- Keep output Korean except technical ids.",
+          "- Maximum 6 characters. Put the main chat partner first.",
+          "",
+          `STORY_TITLE: ${row.title ?? ""}`,
+          `STORY_LOGLINE: ${row.logline ?? ""}`,
+          `STORY_OVERVIEW: ${card.storyOverview ?? ""}`,
+          `EXISTING_CHARACTERS_JSON: ${JSON.stringify(existingCharacters).slice(0, 5000)}`,
+          `CHAPTER: ${chapter.episodeNumber}화 ${chapter.title}`,
+          `CHAPTER_SUMMARY: ${chapter.summary ?? ""}`,
+          "",
+          "CHAPTER_TEXT:",
+          body.slice(0, 26000),
+        ].join("\n"),
+      },
+    ],
+  });
+
+  const parsed = parseJsonObject(result.text);
+  const characters = safeArray(parsed.characters)
+    .map((item, index) => normalizeCharacterResult(recordOf(item), index))
+    .filter(Boolean) as Array<Record<string, any>>;
+  const characterAnalysis = safeArray(parsed.characterAnalysis)
+    .map((item, index) => {
+      const source = normalizeCharacterResult(recordOf(item), index);
+      if (!source) return null;
+      return {
+        id: source.id || `char_insight_${chapter.id}_${index}`,
+        name: source.name,
+        role: source.role,
+        emotion: source.emotion,
+        attitude: source.attitude,
+        traits: source.traits,
+        relationship: source.relationship,
+        evidence: source.evidence,
+        chatGuidance: source.chatGuidance,
+      };
+    })
+    .filter(Boolean) as Array<Record<string, any>>;
+
+  return {
+    characterAnalysis: characterAnalysis.length
+      ? characterAnalysis
+      : characters.map((character, index) => ({
+          id: `char_insight_${chapter.id}_${index}`,
+          name: character.name,
+          role: character.role,
+          emotion: character.emotion,
+          attitude: character.attitude,
+          traits: character.traits,
+          relationship: character.relationship,
+          evidence: character.evidence,
+          chatGuidance: character.chatGuidance,
+        })),
+    characters,
+    providerLabel: result.providerLabel,
+    model: result.model,
+    tokensUsed: result.tokensUsed,
+  };
 }
 
 async function suggestSlots(row: any, body: string, desiredCount: number) {
@@ -490,6 +708,37 @@ async function handlePost(request: Request) {
 
   if (action === "generate_asset") {
     const result = await generateAsset(request, staff.userId, body);
+    return Response.json({ ok: true, ...result });
+  }
+
+  if (action === "analyze_characters") {
+    const { row, chapter, chapters } = await getStoryAndChapter(storyId, chapterId);
+    const result = await analyzeCharactersWithLlm(row, chapter);
+    const card = recordOf(row.character_card);
+    const nextChapters = chapters.map((item) =>
+      item.id === chapter.id
+        ? {
+            ...item,
+            characterAnalysis: result.characterAnalysis,
+          }
+        : item,
+    );
+    const nextCard = mergeAnalyzedCharactersIntoCard(
+      {
+        ...card,
+        chapters: nextChapters,
+      },
+      chapter,
+      result,
+    );
+    const { error } = await supabaseAdmin
+      .from("user_stories")
+      .update({
+        character_card: nextCard,
+        updated_at: new Date().toISOString(),
+      } as any)
+      .eq("id", storyId);
+    if (error) throw new Error(error.message);
     return Response.json({ ok: true, ...result });
   }
 

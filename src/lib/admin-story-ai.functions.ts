@@ -91,3 +91,21 @@ export const generateStoryAsset = createServerFn({ method: "POST" })
       heatTier: data.heatTier,
     });
   });
+
+export const analyzeStoryCharacters = createServerFn({ method: "POST" })
+  .inputValidator((i: unknown) => i as { storyId: string; chapterId: string })
+  .handler(async ({ data }) => {
+    return storyAiApi<
+      ApiOk<{
+        characterAnalysis: Array<Record<string, unknown>>;
+        characters: Array<Record<string, unknown>>;
+        providerLabel?: string;
+        model?: string;
+        tokensUsed?: number;
+      }>
+    >({
+      action: "analyze_characters",
+      storyId: data.storyId,
+      chapterId: data.chapterId,
+    });
+  });

@@ -42,6 +42,14 @@ export type ReusableCharacterRow = StoryCharacter & {
   updatedAt: string;
 };
 
+export type PublicChatCharacterRow = StoryCharacter & {
+  storyId: string;
+  storyTitle: string;
+  logline: string;
+  coverUrl: string | null;
+  updatedAt: string;
+};
+
 export type SaveStoryCharactersInput = {
   storyId: string;
   storyOverview?: string;
@@ -224,6 +232,34 @@ export const listReusableCharacters = createServerFn({ method: "GET" }).handler(
           updatedAt: story.updatedAt,
         })),
     );
+  },
+);
+
+export const listPublicChatCharacters = createServerFn({ method: "GET" }).handler(
+  async (): Promise<PublicChatCharacterRow[]> => {
+    const { data, error } = await supabase
+      .from("user_stories")
+      .select("id,title,logline,cover_url,character_card,updated_at,is_public,is_listed")
+      .eq("is_public", true)
+      .eq("is_listed", true)
+      .order("updated_at", { ascending: false })
+      .limit(500);
+
+    if (error) throw new Error(error.message);
+
+    return (data ?? []).flatMap((story) => {
+      const row = toStoryRow(story as UserStory);
+      return row.characters
+        .filter((character) => character.chatEnabled)
+        .map((character) => ({
+          ...character,
+          storyId: row.storyId,
+          storyTitle: row.storyTitle,
+          logline: row.logline,
+          coverUrl: row.coverUrl,
+          updatedAt: row.updatedAt,
+        }));
+    });
   },
 );
 

@@ -1,4 +1,4 @@
-import { createFileRoute, Link, notFound } from "@tanstack/react-router";
+﻿import { createFileRoute, Link, notFound } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
@@ -64,6 +64,7 @@ import {
 } from "@/lib/sessions.functions";
 import { getMyProfile, verifyAge } from "@/lib/profile.functions";
 import { BeatBackdrop } from "@/components/beat-backdrop";
+import { CreditShortageDialog } from "@/components/credit-shortage-dialog";
 import { InlineBeatMedia } from "@/components/inline-beat-media";
 import { AffectionMeter } from "@/components/affection-meter";
 import { ThresholdEditor } from "@/components/threshold-editor";
@@ -83,7 +84,7 @@ export const Route = createFileRoute("/play/$sessionId")({
   },
   head: ({ loaderData }) => ({
     meta: [
-      { title: `${loaderData?.story.title ?? "플레이"} — Lovetale` },
+      { title: `${loaderData?.story.title ?? "플레이"} · Lovetale` },
       {
         name: "description",
         content: loaderData?.story.synopsis ?? "비주얼 노벨 세션.",
@@ -110,16 +111,16 @@ export const Route = createFileRoute("/play/$sessionId")({
 
 function detectEmotion(text: string): Emotion {
   const t = text.toLowerCase();
-  if (/(사랑|love|키스|안아|숨|뜨거)/.test(t)) return "passion";
-  if (/(미안|sorry|싫|울|아파)/.test(t)) return "sad";
-  if (/(ㅋ|ㅎ|하하|웃|좋아)/.test(t)) return "happy";
-  if (/(긴장|두근|떨|위험)/.test(t)) return "tense";
-  if (/(부끄|얼굴|붉)/.test(t)) return "shy";
+  if (["사랑", "좋아", "끌려", "love", "kiss"].some((keyword) => t.includes(keyword))) return "passion";
+  if (["미안", "슬퍼", "아파", "후회", "sorry"].some((keyword) => t.includes(keyword))) return "sad";
+  if (["행복", "기뻐", "웃", "좋네", "happy"].some((keyword) => t.includes(keyword))) return "happy";
+  if (["긴장", "불안", "위험", "떨려", "tense"].some((keyword) => t.includes(keyword))) return "tense";
+  if (["부끄", "수줍", "설레", "shy"].some((keyword) => t.includes(keyword))) return "shy";
   return "calm";
 }
 
 // How the AI character's response shifts the player's affection.
-// Drives "chat → story branching" by unlocking hidden choices at thresholds.
+// Drives "chat ??story branching" by unlocking hidden choices at thresholds.
 function emotionToAffection(e: Emotion): number {
   switch (e) {
     case "passion": return 5;
@@ -172,20 +173,19 @@ function AgeGateDialog({
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 font-display">
-            <ShieldAlert className="h-5 w-5 text-amber-400" /> 성인 인증이 필요해요
+            <ShieldAlert className="h-5 w-5 text-amber-400" /> ?깆씤 ?몄쬆???꾩슂?댁슂
           </DialogTitle>
           <DialogDescription>
-            이 스토리는 19세 이상 이용가 콘텐츠를 포함합니다. 본인의 책임 하에
-            아래 항목에 동의해 주세요.
+            ???ㅽ넗由щ뒗 19???댁긽 ?댁슜媛 肄섑뀗痢좊? ?ы븿?⑸땲?? 蹂몄씤??梨낆엫 ?섏뿉
+            ?꾨옒 ??ぉ???숈쓽??二쇱꽭??
           </DialogDescription>
         </DialogHeader>
         {!isAuthed ? (
           <p className="text-sm text-muted-foreground">
-            성인 인증을 진행하려면 먼저{" "}
+            ?깆씤 ?몄쬆??吏꾪뻾?섎젮硫?癒쇱?{" "}
             <Link to="/auth" className="text-primary underline">
-              로그인
-            </Link>
-            해 주세요.
+              濡쒓렇??            </Link>
+            ??二쇱꽭??
           </p>
         ) : (
           <label className="flex items-start gap-3 rounded-xl border border-border bg-background/60 p-3 text-sm">
@@ -195,21 +195,20 @@ function AgeGateDialog({
               className="mt-0.5"
             />
             <span>
-              저는 만 19세 이상이며, 본 콘텐츠가 성적/폭력적 묘사를 포함할 수
-              있음을 이해합니다. 허위 신고 시 모든 책임은 본인에게 있습니다.
+              ???留?19???댁긽?대ŉ, 蹂?肄섑뀗痢좉? ?깆쟻/??젰??臾섏궗瑜??ы븿????              ?덉쓬???댄빐?⑸땲?? ?덉쐞 ?좉퀬 ??紐⑤뱺 梨낆엫? 蹂몄씤?먭쾶 ?덉뒿?덈떎.
             </span>
           </label>
         )}
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)}>
-            취소
+            痍⑥냼
           </Button>
           <Button
             disabled={!isAuthed || !consent}
             onClick={onConfirm}
             className="bg-gradient-aurora text-primary-foreground shadow-glow"
           >
-            <ShieldCheck className="mr-1.5 h-4 w-4" /> 인증하고 시작
+            <ShieldCheck className="mr-1.5 h-4 w-4" /> ?몄쬆?섍퀬 ?쒖옉
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -243,7 +242,7 @@ function Play() {
   const [isFullscreen, setIsFullscreen] = useState(true);
   const [hideUi, setHideUi] = useState(false);
 
-  // Content-type derived UX mode: 19+ hard → cinematic video; else → novel/text
+  // Content-type derived UX mode: 19+ hard ??cinematic video; else ??novel/text
   const contentMode: "cinematic" | "novel" = story.heat >= 3 ? "cinematic" : "novel";
 
   // --- Visual Novel state ---
@@ -276,7 +275,7 @@ function Play() {
   const thresholds = useChoiceThresholds(story.id);
 
   // Ref to scroll the inline chat panel into view when user clicks
-  // "대화로 친밀도 올리기" on the AffectionMeter.
+  // "??붾줈 移쒕????щ━湲? on the AffectionMeter.
   const chatPanelRef = useRef<HTMLDetailsElement>(null);
   const openInlineChat = () => {
     const el = chatPanelRef.current;
@@ -295,6 +294,19 @@ function Play() {
   const [isSubscribed, setIsSubscribed] = useState(false);
   const [unlockedBeats, setUnlockedBeats] = useState<Set<string>>(new Set());
   const [unlockingBeat, setUnlockingBeat] = useState<string | null>(null);
+  const [creditShortage, setCreditShortage] = useState<{
+    open: boolean;
+    requiredCredits?: number;
+    currentCredits?: number;
+  }>({ open: false });
+
+  const openCreditShortage = (requiredCredits?: number, currentCredits = credits) => {
+    setCreditShortage({
+      open: true,
+      requiredCredits,
+      currentCredits,
+    });
+  };
 
   async function refreshProfile() {
     try {
@@ -339,7 +351,7 @@ function Play() {
 
   async function handleUnlock(beatId: string, tier: HeatTier) {
     if (!isAuthed) {
-      toast.info("로그인 후 잠금 해제할 수 있어요.");
+      toast.info("濡쒓렇?????좉툑 ?댁젣?????덉뼱??");
       return;
     }
     setUnlockingBeat(beatId);
@@ -352,15 +364,15 @@ function Play() {
         setCredits((c) => Math.max(0, c - res.creditsSpent));
         toast.success(`${tier.label} 해금 완료 · -${res.creditsSpent} 크레딧`);
       } else if (res?.unlockedVia === "subscription") {
-        toast.success(`${tier.label} 해금 (구독자 무료)`);
+        toast.success(`${tier.label} 해금 완료 (구독자 무료)`);
       } else {
         toast.success(`${tier.label} 해금 완료`);
       }
     } catch (e: any) {
       if (e?.message === "INSUFFICIENT_CREDITS") {
-        toast.error("크레딧이 부족해요. 충전 후 다시 시도해주세요.");
+        openCreditShortage(TIER_COST[tier.key] ?? 0);
       } else {
-        toast.error(e?.message ?? "잠금 해제 실패");
+        toast.error(e?.message ?? "해금 실패");
       }
     } finally {
       setUnlockingBeat(null);
@@ -429,7 +441,7 @@ function Play() {
               return next;
             });
             toast(
-              `${character.name}와의 대화로 호감도 ${delta > 0 ? "+" : ""}${delta}`,
+              `${character.name}?????붾줈 ?멸컧??${delta > 0 ? "+" : ""}${delta}`,
               { duration: 2200 },
             );
           }
@@ -443,7 +455,7 @@ function Play() {
     }
   }, [messages, isStreaming, sessionId, fnAppendMsg, fnUpdate, character.name]);
 
-  // --- Heat tier change → celebratory toast (preview unlocked content) ---
+  // --- Heat tier change ??celebratory toast (preview unlocked content) ---
   useEffect(() => {
     const t = tierFor(affection);
     if (lastTierRef.current === null) {
@@ -452,8 +464,8 @@ function Play() {
     }
     if (lastTierRef.current !== t.key) {
       lastTierRef.current = t.key;
-      toast(`${t.badge}  ${t.label} 단계 도달!`, {
-        description: `🔓 ${t.preview}`,
+      toast(`${t.badge}  ${t.label} ?④퀎 ?꾨떖!`, {
+        description: `?뵑 ${t.preview}`,
         duration: 3600,
       });
     }
@@ -580,7 +592,7 @@ function Play() {
       return;
     }
     if (story.mature && !isAuthed) {
-      toast.info("19+ 스토리는 로그인 후 성인 인증이 필요합니다.");
+      toast.info("19+ ?ㅽ넗由щ뒗 濡쒓렇?????깆씤 ?몄쬆???꾩슂?⑸땲??");
     }
     setStage("prologue");
   }
@@ -596,16 +608,16 @@ function Play() {
       await fnVerifyAge({ data: { confirm: true } });
       setAgeVerified(true);
       setAgeGateOpen(false);
-      toast.success("성인 인증이 완료되었어요.");
+      toast.success("?깆씤 ?몄쬆???꾨즺?섏뿀?댁슂.");
       setStage("prologue");
     } catch (e: any) {
-      toast.error(e?.message ?? "인증에 실패했어요.");
+      toast.error(e?.message ?? "?몄쬆???ㅽ뙣?덉뼱??");
     }
   }
 
   async function handleBookmark() {
     if (!sessionId) {
-      toast.info("북마크하려면 로그인해주세요.");
+      toast.info("遺곷쭏?ы븯?ㅻ㈃ 濡쒓렇?명빐二쇱꽭??");
       return;
     }
     const next = !bookmarked;
@@ -638,13 +650,12 @@ function Play() {
             to="/"
             className="mb-6 inline-flex w-fit items-center gap-1.5 rounded-full border border-border bg-background/60 px-3 py-1.5 text-xs backdrop-blur-md transition hover:border-primary/40"
           >
-            <ArrowLeft className="h-3.5 w-3.5" /> 스토리 목록
+            <ArrowLeft className="h-3.5 w-3.5" /> ?ㅽ넗由?紐⑸줉
           </Link>
 
           <div className="flex items-center gap-2 text-xs uppercase tracking-[0.3em] text-primary">
             <Flame className="h-3.5 w-3.5" />
-            오늘 밤의 스토리
-          </div>
+            ?ㅻ뒛 諛ㅼ쓽 ?ㅽ넗由?          </div>
           <h1 className="mt-3 font-display text-4xl font-semibold leading-tight md:text-6xl">
             {story.title}
           </h1>
@@ -671,7 +682,7 @@ function Play() {
               <Clock className="h-3 w-3" />
               {story.length}
             </span>
-            <span>· 출연 {character.name}</span>
+            <span>쨌 異쒖뿰 {character.name}</span>
             <span className="rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-primary">
               {contentMode === "cinematic" ? "Cinematic 19+" : "Text Novel"}
             </span>
@@ -684,10 +695,9 @@ function Play() {
           {!isAuthed && (
             <div className="mt-4 inline-flex items-center gap-2 rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-[11px] text-amber-200">
               <ShieldAlert className="h-3 w-3" />
-              로그인 시 진행 상황과 엔딩이 저장됩니다.
+              濡쒓렇????吏꾪뻾 ?곹솴怨??붾뵫????λ맗?덈떎.
               <Link to="/auth" className="underline">
-                로그인
-              </Link>
+                濡쒓렇??              </Link>
             </div>
           )}
 
@@ -699,7 +709,7 @@ function Play() {
               className="shadow-glow"
             >
               <PlayIcon className="mr-2 h-4 w-4" />
-              스토리 시작하기
+              ?ㅽ넗由??쒖옉?섍린
             </Button>
           </div>
         </div>
@@ -744,7 +754,7 @@ function Play() {
           {/* Greeting */}
           <div className="flex flex-col justify-center">
             <div className="text-[11px] uppercase tracking-[0.3em] text-primary">
-              Prologue · 등장인물 인사
+              Prologue 쨌 ?깆옣?몃Ъ ?몄궗
             </div>
             <h2 className="mt-3 font-display text-3xl font-semibold md:text-5xl">
               {character.name}
@@ -754,7 +764,7 @@ function Play() {
             </div>
             <div className="glass-panel mt-5 max-w-md rounded-2xl p-5 shadow-elevated">
               <p className="whitespace-pre-line text-base leading-relaxed md:text-lg">
-                “{character.intro}”
+                {character.intro}
               </p>
               <div className="mt-3 flex flex-wrap gap-1.5">
                 {character.tags?.slice(0, 4).map((t: string) => (
@@ -773,10 +783,10 @@ function Play() {
           {/* Chapter picker */}
           <div className="flex flex-col justify-center">
             <div className="text-[11px] uppercase tracking-[0.3em] text-primary">
-              챕터 선택
+              梨뺥꽣 ?좏깮
             </div>
             <h3 className="mt-2 font-display text-2xl md:text-3xl">
-              어디서부터 시작할까요?
+              ?대뵒?쒕????쒖옉?좉퉴??
             </h3>
             <p className="mt-1 text-sm text-muted-foreground">
               {story.synopsis}
@@ -800,7 +810,7 @@ function Play() {
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-medium">{c.title}</div>
                     <div className="text-[11px] text-muted-foreground">
-                      {c.subtitle ?? (c.locked ? "이전 챕터 완료 시 해금" : "예상 15~25분 · 분기 ×3")}
+                      {c.subtitle ?? (c.locked ? "?댁쟾 梨뺥꽣 ?꾨즺 ???닿툑" : "?덉긽 15~25遺?쨌 遺꾧린 횞3")}
                     </div>
                   </div>
                   {!c.locked && (
@@ -815,14 +825,14 @@ function Play() {
                 onClick={() => enterPlay(false)}
                 className="shadow-glow"
               >
-                <PlayIcon className="mr-2 h-4 w-4" /> 처음부터 몰입 시작
+                <PlayIcon className="mr-2 h-4 w-4" /> 泥섏쓬遺??紐곗엯 ?쒖옉
               </Button>
               <Button
                 variant="outline"
                 onClick={() => enterPlay(true)}
                 className="border-border bg-background/40 backdrop-blur"
               >
-                <MessagesSquare className="mr-2 h-4 w-4" /> 자유 채팅으로
+                <MessagesSquare className="mr-2 h-4 w-4" /> ?먯쑀 梨꾪똿?쇰줈
               </Button>
             </div>
           </div>
@@ -849,7 +859,7 @@ function Play() {
       className={shellClass}
       onMouseMove={() => hideUi && setHideUi(false)}
     >
-      {/* Ambient backdrop — soft, blurred; the reader is text-first */}
+      {/* Ambient backdrop ??soft, blurred; the reader is text-first */}
       <div className="pointer-events-none absolute inset-0 -z-0">
         <BeatBackdrop
           key={`${currentBeat.id}-${activeEmotion}`}
@@ -873,7 +883,7 @@ function Play() {
             onClick={() => setStage("prologue")}
             className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background/70 px-3 py-1.5 text-xs backdrop-blur-md transition hover:border-primary/40"
           >
-            <ArrowLeft className="h-3.5 w-3.5" /> 챕터
+            <ArrowLeft className="h-3.5 w-3.5" /> 梨뺥꽣
           </button>
 
           <div className="hidden min-w-0 flex-1 items-center justify-center gap-2 md:flex">
@@ -888,7 +898,7 @@ function Play() {
           </div>
 
           <div className="flex items-center gap-2">
-            <div className="hidden items-center gap-2 rounded-full border border-border bg-background/70 px-2.5 py-1 text-[11px] backdrop-blur-md md:flex" title={`${tierFor(affection).label} · ${nextTier(affection) ? `다음: ${nextTier(affection)!.label} (+${nextTier(affection)!.min - affection}♥)` : "최고 단계"}`}>
+            <div className="hidden items-center gap-2 rounded-full border border-border bg-background/70 px-2.5 py-1 text-[11px] backdrop-blur-md md:flex" title={`${tierFor(affection).label} 쨌 ${nextTier(affection) ? `?ㅼ쓬: ${nextTier(affection)!.label} (+${nextTier(affection)!.min - affection}??` : "理쒓퀬 ?④퀎"}`}>
               <span className="text-sm">{tierFor(affection).badge.split(" ")[0]}</span>
               <span className="text-muted-foreground">{tierFor(affection).label}</span>
               <Progress value={affection} className="h-1 w-16" />
@@ -897,15 +907,15 @@ function Play() {
             {isAuthed && (
               <div
                 className="hidden items-center gap-1.5 rounded-full border border-border bg-background/70 px-2.5 py-1 text-[11px] backdrop-blur-md md:flex"
-                title={isSubscribed ? "구독자: 모든 Premium 미디어 무료" : "Premium(Spicy/Steamy) 미디어 해금에 사용됩니다"}
+                title={isSubscribed ? "구독 중: 모든 프리미엄 미디어 무료" : "프리미엄 미디어 해금에 사용합니다"}
               >
                 {isSubscribed ? (
                   <span className="inline-flex items-center gap-1 text-rose-300">
-                    <Sparkles className="h-3 w-3" /> 구독
+                    <Sparkles className="h-3 w-3" /> 援щ룆
                   </span>
                 ) : (
                   <>
-                    <span className="text-amber-300">◆</span>
+                    <span className="text-amber-300">●</span>
                     <span className="tabular-nums">{credits}</span>
                     <span className="text-muted-foreground">크레딧</span>
                   </>
@@ -932,7 +942,7 @@ function Play() {
             )}
             <button
               onClick={() => setIsFullscreen((v) => !v)}
-              title={isFullscreen ? "축소" : "전체화면"}
+              title={isFullscreen ? "異뺤냼" : "?꾩껜?붾㈃"}
               className="grid h-8 w-8 place-items-center rounded-full border border-border bg-background/70 backdrop-blur-md transition hover:border-primary/40"
             >
               {isFullscreen ? (
@@ -947,7 +957,7 @@ function Play() {
               ) : (
                 <BookOpen className="h-3.5 w-3.5 text-primary" />
               )}
-              <span className="hidden sm:inline">{chatMode ? "채팅" : "리더"}</span>
+              <span className="hidden sm:inline">{chatMode ? "梨꾪똿" : "由щ뜑"}</span>
               <Switch checked={chatMode} onCheckedChange={setChatMode} />
             </div>
           </div>
@@ -965,13 +975,13 @@ function Play() {
       </div>
 
       {chatMode ? (
-        // ── Chat mode: free-form conversation with the character ───────────
+        // ?? Chat mode: free-form conversation with the character ???????????
         <div className="relative z-10 mx-auto flex h-full max-w-5xl flex-col px-4 pt-20 pb-4 md:px-8 xl:px-10">
           <div className="glass-panel flex min-h-0 flex-1 flex-col rounded-2xl p-3 shadow-elevated">
             <div ref={scrollRef} className="mb-3 flex-1 space-y-3 overflow-y-auto px-2 py-2">
               {messages.length === 0 && (
                 <div className="rounded-xl border border-dashed border-border bg-background/30 p-4 text-center text-xs text-muted-foreground">
-                  «{story.title}» 의 세계관 안에서 {character.name}와(과) 직접 대화해 보세요. 메시지에 따라 표정이 바뀝니다.
+                  짬{story.title}쨩 ???멸퀎愿 ?덉뿉??{character.name}?(怨? 吏곸젒 ??뷀빐 蹂댁꽭?? 硫붿떆吏???곕씪 ?쒖젙??諛붾앸땲??
                 </div>
               )}
               {messages.map((m, i) => {
@@ -990,7 +1000,7 @@ function Play() {
                           </span>
                         </div>
                         <div className="prose prose-sm prose-invert max-w-none text-sm leading-relaxed [&_p]:my-1">
-                          <ReactMarkdown>{text || "…"}</ReactMarkdown>
+                          <ReactMarkdown>{text || "..."}</ReactMarkdown>
                         </div>
                       </div>
                     </div>
@@ -1010,8 +1020,7 @@ function Play() {
               {isStreaming && messages[messages.length - 1]?.role === "user" && (
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   <Loader2 className="h-3 w-3 animate-spin" />
-                  {character.name}이(가) 응답 중…
-                </div>
+                  {character.name}??媛) ?묐떟 以묅?                </div>
               )}
             </div>
             <div className="flex items-end gap-2 border-t border-border pt-2">
@@ -1028,7 +1037,7 @@ function Play() {
                   }
                 }}
                 rows={1}
-                placeholder={`${character.name}에게 메시지…`}
+                placeholder={character.name + "에게 메시지 보내기"}
                 className="flex-1 resize-none bg-transparent px-2 py-1.5 text-sm outline-none placeholder:text-muted-foreground"
               />
               <Button
@@ -1043,13 +1052,13 @@ function Play() {
           </div>
         </div>
       ) : (
-        // ── Reader mode: full-screen vertical scroll feed of beats ────────
+        // ?? Reader mode: full-screen vertical scroll feed of beats ????????
         <div className="relative z-10 h-full overflow-y-auto">
           <article className="mx-auto w-full max-w-screen-xl px-5 pt-24 pb-32 md:px-8 xl:px-10">
             {/* Header */}
             <header className="mb-10 border-b border-border/60 pb-6">
               <div className="text-[10px] uppercase tracking-[0.3em] text-primary">
-                {story.mature ? "19+ · " : ""}Chapter 1
+                {story.mature ? "19+ 쨌 " : ""}Chapter 1
               </div>
               <h1 className="mt-2 font-display text-3xl font-semibold leading-tight md:text-4xl">
                 {story.title}
@@ -1063,11 +1072,13 @@ function Play() {
             <div className="space-y-12 lg:grid lg:grid-cols-[minmax(0,1fr)_360px] lg:gap-x-10 lg:space-y-0 xl:grid-cols-[minmax(0,1fr)_440px]">
               {feedBeats.map((b, idx) => {
                 const isCurrent = idx === feedBeats.length - 1;
-                const paragraphs = (b.text + (b.narration ? `\n${b.narration}` : ""))
-                  .split("\n")
+                const paragraphs = [b.text, b.narration]
+                  .filter(Boolean)
+                  .join(String.fromCharCode(10))
+                  .split(String.fromCharCode(10))
                   .filter(Boolean);
                 return (
-                  <section key={`${b.id}-${idx}`} className="animate-fade-in lg:col-start-1 lg:mb-12">
+                  <section key={b.id + "-" + idx} className="animate-fade-in lg:col-start-1 lg:mb-12">
                     {/* Speaker chip */}
                     <div className="mb-3 flex items-center gap-2 text-[11px] uppercase tracking-[0.25em] text-primary">
                       <img
@@ -1090,7 +1101,7 @@ function Play() {
                       </p>
                     )}
 
-                    {/* Inline media — image + (placeholder) clip slot */}
+                    {/* Inline media ??image + (placeholder) clip slot */}
                     <div className="lg:hidden">
                       <InlineBeatMedia
                         storyId={story.id}
@@ -1104,11 +1115,8 @@ function Play() {
                         hasSubscription={isSubscribed}
                         userCredits={credits}
                         onUnlock={() => handleUnlock(b.id, tierFor(affection))}
-                        onPreviewUpgrade={() => {
-                          toast.info(
-                            "크레딧 충전 또는 구독 가입 페이지로 이동합니다 (준비 중)",
-                            { duration: 2400 },
-                          );
+                        onPreviewUpgrade={({ requiredCredits, currentCredits }) => {
+                          openCreditShortage(requiredCredits, currentCredits);
                         }}
                       />
                     </div>
@@ -1126,11 +1134,8 @@ function Play() {
                           hasSubscription={isSubscribed}
                           userCredits={credits}
                           onUnlock={() => handleUnlock(b.id, tierFor(affection))}
-                          onPreviewUpgrade={() => {
-                            toast.info(
-                              "크레딧 충전 또는 구독 가입 페이지로 이동합니다 (준비 중)",
-                              { duration: 2400 },
-                            );
+                          onPreviewUpgrade={({ requiredCredits, currentCredits }) => {
+                            openCreditShortage(requiredCredits, currentCredits);
                           }}
                         />
                       </aside>
@@ -1146,14 +1151,14 @@ function Play() {
                       </p>
                     ))}
 
-                    {/* Inline choices — only on the latest non-ending beat */}
+                    {/* Inline choices ??only on the latest non-ending beat */}
                     {isCurrent && !b.end && (b.choices ?? []).length > 0 && (
                       <div className="mt-8 space-y-3 border-l-2 border-primary/40 pl-4">
-                        {/* Heat meter — visible incentive to keep climbing */}
+                        {/* Heat meter ??visible incentive to keep climbing */}
                         <AffectionMeter affection={affection} onOpenChat={openInlineChat} />
 
                         <div className="text-[10px] uppercase tracking-[0.3em] text-primary/80">
-                          ▸ 당신의 선택
+                          ???뱀떊???좏깮
                         </div>
                         {(b.choices ?? []).map((c: StoryChoice, i: number) => {
                           const need = thresholds.get(b.id, i, c.requireAffection ?? 0);
@@ -1174,14 +1179,36 @@ function Play() {
                           const nextCost = TIER_COST[nextTierForChoice.key] ?? 0;
                           const nextBeatId = c.next;
                           const nextAlreadyUnlocked = unlockedBeats.has(nextBeatId);
+                          const choiceClass =
+                            "group flex w-full items-start gap-3 rounded-xl border p-3.5 text-left backdrop-blur-md transition " +
+                            (locked
+                              ? "cursor-not-allowed border-dashed border-primary/20 bg-card/30 opacity-70"
+                              : recommended
+                                ? "border-primary/60 bg-primary/10 shadow-glow hover:-translate-y-0.5"
+                                : "border-border bg-card/60 hover:-translate-y-0.5 hover:border-primary/60 hover:bg-card/90 hover:shadow-glow");
+                          const choiceIconClass =
+                            "mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-full border text-[11px] font-bold " +
+                            (locked
+                              ? "border-primary/20 bg-primary/5 text-primary/40"
+                              : "border-primary/30 bg-primary/10 text-primary");
+                          const nextTierBadgeClass =
+                            "inline-flex items-center gap-1 rounded-full bg-gradient-to-r " +
+                            nextTierForChoice.gradient +
+                            " px-1.5 py-0.5 ring-1 " +
+                            nextTierForChoice.ring;
+                          const affectionBadgeClass =
+                            "shrink-0 rounded-full px-2 py-0.5 text-[10px] " +
+                            (c.affection > 0
+                              ? "bg-rose-500/15 text-rose-300"
+                              : "bg-muted text-muted-foreground");
                           return (
                             <button
-                              key={`${b.id}-${i}`}
+                              key={b.id + "-" + i}
                               onClick={() => !locked && choose(c)}
                               disabled={locked}
-                              className={`group flex w-full items-start gap-3 rounded-xl border p-3.5 text-left backdrop-blur-md transition ${locked ? "cursor-not-allowed border-dashed border-primary/20 bg-card/30 opacity-70" : recommended ? "border-primary/60 bg-primary/10 shadow-glow hover:-translate-y-0.5" : "border-border bg-card/60 hover:-translate-y-0.5 hover:border-primary/60 hover:bg-card/90 hover:shadow-glow"}`}
+                              className={choiceClass}
                             >
-                              <span className={`mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-full border text-[11px] font-bold ${locked ? "border-primary/20 bg-primary/5 text-primary/40" : "border-primary/30 bg-primary/10 text-primary"}`}>
+                              <span className={choiceIconClass}>
                                 {locked ? <Lock className="h-3 w-3" /> : i + 1}
                               </span>
                               <span className="flex-1 text-[15px] leading-relaxed">
@@ -1195,13 +1222,13 @@ function Play() {
                                 )}
                                 {locked && (
                                   <span className="mt-1 block text-[11px] text-primary/70">
-                                    🔒 호감도 {need}+ 필요 · {c.lockedHint ?? "주인공과 더 대화해 보세요"}
+                                    팁: 호감도 {need}+ 필요 · {c.lockedHint ?? "주인공과 더 대화해 보세요"}
                                   </span>
                                 )}
                                 {!locked && (
                                   <span className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[10px]">
                                     <span
-                                      className={`inline-flex items-center gap-1 rounded-full bg-gradient-to-r ${nextTierForChoice.gradient} px-1.5 py-0.5 ring-1 ${nextTierForChoice.ring}`}
+                                      className={nextTierBadgeClass}
                                       title={nextTierForChoice.preview}
                                     >
                                       <Flame className="h-2.5 w-2.5" />
@@ -1210,12 +1237,12 @@ function Play() {
                                     {nextCost > 0 && !nextAlreadyUnlocked && (
                                       <span className="inline-flex items-center gap-1 rounded-full border border-rose-500/40 bg-rose-500/10 px-1.5 py-0.5 text-rose-300">
                                         <Lock className="h-2.5 w-2.5" />
-                                        {isSubscribed ? "구독자 무료" : `${nextCost} 크레딧`}
+                                        {isSubscribed ? "구독자 무료" : nextCost + " 크레딧"}
                                       </span>
                                     )}
                                     {nextCost > 0 && nextAlreadyUnlocked && (
                                       <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-emerald-300">
-                                        ✓ 해금됨
+                                        해금됨
                                       </span>
                                     )}
                                   </span>
@@ -1223,16 +1250,16 @@ function Play() {
                               </span>
                               {!locked && typeof c.affection === "number" && c.affection !== 0 && (
                                 <span
-                                  className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] ${c.affection > 0 ? "bg-rose-500/15 text-rose-300" : "bg-muted text-muted-foreground"}`}
+                                  className={affectionBadgeClass}
                                 >
-                                  {c.affection > 0 ? `+${c.affection}` : c.affection}♥
+                                  {c.affection > 0 ? "+" + c.affection : c.affection} 호감도
                                 </span>
                               )}
                             </button>
                           );
                         })}
 
-                        {/* Inline chat — talk with the character inside the story */}
+                        {/* Inline chat ??talk with the character inside the story */}
                         <details ref={chatPanelRef} className="mt-4 rounded-xl border border-border bg-card/40 backdrop-blur-md open:bg-card/60">
 
                           <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm">
@@ -1249,7 +1276,7 @@ function Play() {
                             <div className="mb-3 max-h-64 space-y-3 overflow-y-auto px-1">
                               {messages.length === 0 && (
                                 <div className="rounded-lg border border-dashed border-border bg-background/30 p-3 text-center text-xs text-muted-foreground">
-                                  지금 장면에 대해 {character.name}에게 물어보거나, 마음을 전해보세요.
+                                  지금 장면에 대해 {character.name}에게 물어보거나 마음을 전해보세요.
                                 </div>
                               )}
                               {messages.map((m, mi) => {
@@ -1268,7 +1295,7 @@ function Play() {
                                           </span>
                                         </div>
                                         <div className="prose prose-sm prose-invert max-w-none text-[13px] leading-relaxed [&_p]:my-1">
-                                          <ReactMarkdown>{text || "…"}</ReactMarkdown>
+                                          <ReactMarkdown>{text || "..."}</ReactMarkdown>
                                         </div>
                                       </div>
                                     </div>
@@ -1288,8 +1315,7 @@ function Play() {
                               {isStreaming && messages[messages.length - 1]?.role === "user" && (
                                 <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
                                   <Loader2 className="h-3 w-3 animate-spin" />
-                                  {character.name}이(가) 응답 중…
-                                </div>
+                                  {character.name}??媛) ?묐떟 以묅?                                </div>
                               )}
                             </div>
                             <div className="flex items-end gap-2 border-t border-border pt-2">
@@ -1303,7 +1329,7 @@ function Play() {
                                   }
                                 }}
                                 rows={1}
-                                placeholder={`${character.name}에게…`}
+                                placeholder={character.name + "에게 메시지 보내기"}
                                 className="flex-1 resize-none bg-transparent px-2 py-1.5 text-[13px] outline-none placeholder:text-muted-foreground"
                               />
                               <Button
@@ -1327,17 +1353,17 @@ function Play() {
                           Ending Reached
                         </div>
                         <p className="mt-2 text-sm text-muted-foreground">
-                          호감도 <span className="font-semibold text-foreground">{affection}</span> / 100
+                          ?멸컧??<span className="font-semibold text-foreground">{affection}</span> / 100
                         </p>
                         <div className="mt-4 flex flex-wrap justify-center gap-2">
                           <Button onClick={reset} variant="outline" className="rounded-full">
-                            <RotateCcw className="mr-1.5 h-3.5 w-3.5" /> 다시 시작
+                            <RotateCcw className="mr-1.5 h-3.5 w-3.5" /> ?ㅼ떆 ?쒖옉
                           </Button>
                           <Button
                             onClick={() => setChatMode(true)}
                             className="rounded-full bg-gradient-aurora text-primary-foreground shadow-glow"
                           >
-                            <MessagesSquare className="mr-1.5 h-3.5 w-3.5" /> {character.name}와 채팅
+                            <MessagesSquare className="mr-1.5 h-3.5 w-3.5" /> {character.name}? 梨꾪똿
                           </Button>
                         </div>
                       </div>
@@ -1347,25 +1373,31 @@ function Play() {
               })}
             </div>
 
-            {/* Scroll anchor — used after choosing a branch */}
+            {/* Scroll anchor ??used after choosing a branch */}
             <div ref={feedEndRef} className="h-1" />
 
             {/* Subtle bottom hint */}
             {!isAtEnding && (
               <div className="mt-16 text-center text-[10px] uppercase tracking-[0.3em] text-muted-foreground/60">
-                ⌄ 계속 읽으려면 선택지를 골라주세요
-              </div>
+                ??怨꾩냽 ?쎌쑝?ㅻ㈃ ?좏깮吏瑜?怨⑤씪二쇱꽭??              </div>
             )}
           </article>
         </div>
       )}
+
+      <CreditShortageDialog
+        open={creditShortage.open}
+        onOpenChange={(open) => setCreditShortage((state) => ({ ...state, open }))}
+        requiredCredits={creditShortage.requiredCredits}
+        currentCredits={creditShortage.currentCredits}
+      />
 
       {/* Reading-mode helpers */}
       {hideUi && (
         <button
           onClick={() => setHideUi(false)}
           className="fixed right-3 top-3 z-40 grid h-9 w-9 place-items-center rounded-full border border-border bg-background/70 backdrop-blur-md"
-          title="UI 표시"
+          title="UI ?쒖떆"
         >
           <Maximize2 className="h-4 w-4" />
         </button>
@@ -1375,4 +1407,3 @@ function Play() {
     </div>
   );
 }
-
