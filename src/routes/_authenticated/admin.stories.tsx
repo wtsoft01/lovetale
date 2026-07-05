@@ -14,6 +14,7 @@ import {
   Square,
   UploadCloud,
   Image as ImageIcon,
+  Gamepad2,
   Layers3,
   UserCircle2,
   FileText,
@@ -88,13 +89,14 @@ import { cn } from "@/lib/utils";
 import { UnifiedStoryReader } from "@/components/unified-story-reader";
 
 export const Route = createFileRoute("/_authenticated/admin/stories")({
-  head: () => ({ meta: [{ title: "콘텐츠 관리 | Lovetale Studio" }] }),
+  head: () => ({ meta: [{ title: "스토리관리 | Lovetale Studio" }] }),
   component: StoriesPage,
 });
 
 const CONTENT_TYPE_LABEL: Record<string, string> = {
   web_novel: "Web Novel",
   romance_sim: "Romance Sim",
+  story_rpg: "스토리게임",
   webtoon: "Webtoon",
   short_story: "Short Story",
   other: "Other",
@@ -115,6 +117,34 @@ type StoryChapterSummary = {
   bodyChars: number;
   assetSlotsCount: number;
 };
+
+function makeChapterSummaryFromConfig(
+  chapter: Pick<ChapterConfig, "id" | "title" | "episodeNumber" | "summary" | "isFree" | "priceCredits"> & {
+    body?: string | null;
+    assetSlots?: ChapterConfig["assetSlots"];
+  },
+  fallback?: Partial<StoryChapterSummary>,
+): StoryChapterSummary {
+  return {
+    id: chapter.id,
+    title: chapter.title || fallback?.title || "새 회차",
+    episodeNumber: Number(chapter.episodeNumber || fallback?.episodeNumber || 1),
+    summary: chapter.summary ?? fallback?.summary ?? "",
+    isFree: Boolean(chapter.isFree ?? fallback?.isFree ?? true),
+    priceCredits: Number(chapter.priceCredits ?? fallback?.priceCredits ?? 0),
+    bodyChars: String(chapter.body ?? "").length,
+    assetSlotsCount: Array.isArray(chapter.assetSlots)
+      ? chapter.assetSlots.length
+      : Number(fallback?.assetSlotsCount ?? 0),
+  };
+}
+
+function upsertChapterSummary(list: StoryChapterSummary[], summary: StoryChapterSummary) {
+  const next = list.some((chapter) => chapter.id === summary.id)
+    ? list.map((chapter) => (chapter.id === summary.id ? { ...chapter, ...summary } : chapter))
+    : [...list, summary];
+  return next.sort((a, b) => a.episodeNumber - b.episodeNumber);
+}
 
 type ImportAutomationMetadata = {
   title?: string;
@@ -208,8 +238,23 @@ function StoriesPage() {
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const rows = query.data ?? [];
+  const rows = (query.data ?? []).filter((row) => row.content_type !== "story_rpg");
   const allChecked = rows.length > 0 && rows.every((r) => selected.has(r.id));
+  const publishedCount = rows.filter((row) => row.is_public && row.is_listed).length;
+  const draftCount = rows.length - publishedCount;
+  const hasActiveFilter = Boolean(q.trim()) || status !== "all" || contentType !== "all";
+  const readinessSummary = useMemo(() => {
+    return rows.reduce(
+      (acc, row) => {
+        const issues = getStoryReadinessIssues(row, Array.isArray(row.chapters) ? row.chapters : []);
+        if (issues.blocking.length) acc.blocked += 1;
+        else if (issues.warning.length) acc.warning += 1;
+        else acc.ready += 1;
+        return acc;
+      },
+      { ready: 0, warning: 0, blocked: 0 },
+    );
+  }, [rows]);
 
   useEffect(() => {
     if (pathname !== "/admin/stories" || query.isLoading || workspaceFor) return;
@@ -242,29 +287,58 @@ function StoriesPage() {
     next.has(id) ? next.delete(id) : next.add(id);
     setExpandedStories(next);
   }
+  function clearFilters() {
+    setQ("");
+    setStatus("all");
+    setContentType("all");
+  }
 
   return (
     <div className="space-y-4">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <span className="text-[10px] font-semibold uppercase tracking-[0.32em] text-primary">Content CMS</span>
-          <h1 className="mt-1 font-display text-3xl font-semibold">콘텐츠 관리</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            표지, 제목, 가격, 노출 위치를 한 화면에서 관리하고 회차별 본문과 에셋까지 빠르게 확인합니다.
-          </p>
+          <h1 className="mt-1 font-display text-3xl font-semibold">스토리관리</h1>
+          <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
+            <span className="rounded-full border border-border bg-card px-2.5 py-1">전체 {rows.length}</span>
+            <span className="rounded-full border border-emerald-400/30 bg-emerald-400/10 px-2.5 py-1 text-emerald-300">
+              공개 {publishedCount}
+            </span>
+            <span className="rounded-full border border-border bg-card px-2.5 py-1">초안 {draftCount}</span>
+            <span className="rounded-full border border-emerald-400/30 bg-emerald-400/10 px-2.5 py-1 text-emerald-300">
+              준비 {readinessSummary.ready}
+            </span>
+            <span className="rounded-full border border-amber-400/30 bg-amber-400/10 px-2.5 py-1 text-amber-300">
+              주의 {readinessSummary.warning}
+            </span>
+            <span className="rounded-full border border-destructive/30 bg-destructive/10 px-2.5 py-1 text-destructive">
+              차단 {readinessSummary.blocked}
+            </span>
+            {selected.size ? (
+              <span className="rounded-full border border-primary/30 bg-primary/10 px-2.5 py-1 text-primary">
+                선택 {selected.size}
+              </span>
+            ) : null}
+          </div>
         </div>
         <div className="flex flex-wrap gap-2">
           <Link
             to="/admin/import"
-            className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
+            className="inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
           >
-            <UploadCloud className="h-4 w-4" /> 새 콘텐츠 등록
+            <UploadCloud className="h-4 w-4" /> 등록
+          </Link>
+          <Link
+            to="/admin/story-rpg"
+            className="inline-flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/10 px-3 py-2 text-sm text-primary hover:border-primary/60"
+          >
+            <Gamepad2 className="h-4 w-4" /> 게임
           </Link>
           <Link
             to="/admin/media"
-            className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-4 py-2 text-sm hover:border-primary/40"
+            className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm hover:border-primary/40"
           >
-            <ImageIcon className="h-4 w-4" /> 미디어 라이브러리
+            <ImageIcon className="h-4 w-4" /> 미디어
           </Link>
         </div>
       </header>
@@ -304,6 +378,11 @@ function StoriesPage() {
           <option value="short_story">단편</option>
           <option value="other">기타</option>
         </select>
+        {hasActiveFilter ? (
+          <Button size="sm" variant="ghost" onClick={clearFilters}>
+            <X className="mr-1 h-3 w-3" /> 초기화
+          </Button>
+        ) : null}
         {selected.size > 0 && (
           <Button
             size="sm"
@@ -505,6 +584,7 @@ function StoryRow({
   const isPublished = story.is_public && story.is_listed;
   const firstFree = (story.free_chapters_count ?? 0) > 0;
   const chapters = (Array.isArray(story.chapters) ? story.chapters : []) as StoryChapterSummary[];
+  const storyIssues = getStoryReadinessIssues(story, chapters);
 
   async function uploadCover(file: File) {
     try {
@@ -569,6 +649,7 @@ function StoryRow({
               <Pencil className="size-3 opacity-0 transition-opacity group-hover:opacity-60" />
             </button>
             <div className="line-clamp-1 text-xs text-muted-foreground">{story.logline ?? ''}</div>
+            <ReadinessBadges issues={storyIssues} />
           </div>
         </div>
       </td>
@@ -619,6 +700,10 @@ function StoryRow({
           <Switch
             checked={isPublished}
             onCheckedChange={(checked) => {
+              if (checked && storyIssues.blocking.length) {
+                toast.error(`공개 전 확인 필요: ${storyIssues.blocking[0]}`);
+                return;
+              }
               patchMut.mutate({ is_public: checked, is_listed: checked });
               if (checked) onPlacement();
             }}
@@ -652,14 +737,14 @@ function StoryRow({
             onClick={onEdit}
             className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
           >
-            편집 <ExternalLink className="h-3 w-3" />
+            작업공간 <ExternalLink className="h-3 w-3" />
           </button>
           <button
             type="button"
             onClick={onAssetEdit}
             className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
           >
-            에셋 편집 <FileText className="h-3 w-3" />
+            에셋 <FileText className="h-3 w-3" />
           </button>
           <button
             type="button"
@@ -685,7 +770,7 @@ function StoryRow({
                   <Plus className="mr-1 size-3" /> 회차 추가
                 </Button>
                 <Button size="sm" variant="outline" onClick={onEdit}>
-                  콘텐츠 수정
+                  작업공간
                 </Button>
               </div>
             </div>
@@ -735,6 +820,56 @@ function StoryRow({
   );
 }
 
+function getStoryReadinessIssues(story: any, chapters: StoryChapterSummary[]) {
+  const blocking: string[] = [];
+  const warning: string[] = [];
+  const hasBody = (story.body_chars ?? 0) > 0 || chapters.some((chapter) => chapter.bodyChars > 0);
+
+  if (!String(story.title ?? "").trim()) blocking.push("제목 없음");
+  if (!chapters.length) blocking.push("회차 없음");
+  if (!hasBody) blocking.push("본문 없음");
+  if (!story.cover_url) warning.push("표지 없음");
+  if (!String(story.logline ?? "").trim()) warning.push("소개문 없음");
+  if ((story.characters_count ?? 0) <= 0) warning.push("캐릭터 없음");
+  if ((story.asset_slots_count ?? 0) <= 0) warning.push("에셋 없음");
+  if ((story.free_chapters_count ?? 0) <= 0) warning.push("무료 회차 없음");
+
+  return { blocking, warning };
+}
+
+function ReadinessBadges({ issues }: { issues: { blocking: string[]; warning: string[] } }) {
+  const rows = [...issues.blocking.map((label) => ({ label, tone: "danger" })), ...issues.warning.map((label) => ({ label, tone: "warn" }))].slice(0, 4);
+  if (!rows.length) {
+    return (
+      <div className="mt-2 inline-flex items-center rounded-full border border-emerald-400/30 bg-emerald-400/10 px-2 py-0.5 text-[10px] text-emerald-300">
+        운영준비 완료
+      </div>
+    );
+  }
+  return (
+    <div className="mt-2 flex flex-wrap gap-1">
+      {rows.map((item) => (
+        <span
+          key={`${item.tone}-${item.label}`}
+          className={cn(
+            "rounded-full border px-2 py-0.5 text-[10px]",
+            item.tone === "danger"
+              ? "border-destructive/40 bg-destructive/10 text-destructive"
+              : "border-amber-400/30 bg-amber-400/10 text-amber-300",
+          )}
+        >
+          {item.label}
+        </span>
+      ))}
+      {issues.blocking.length + issues.warning.length > rows.length && (
+        <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">
+          +{issues.blocking.length + issues.warning.length - rows.length}
+        </span>
+      )}
+    </div>
+  );
+}
+
 type CharacterEditDraft = {
   id: string;
   name: string;
@@ -749,6 +884,162 @@ type CharacterEditDraft = {
   chatEnabled?: boolean;
   reusable?: boolean;
 };
+
+type StoryRpgRouteDraft = {
+  name: string;
+  status: string;
+  condition: string;
+  progress: number;
+};
+
+type StoryRpgChoiceDraft = {
+  label: string;
+  effect: string;
+  tone: string;
+  result: string;
+  routeHint: string;
+  nextSceneId?: string;
+  affectionDelta: number;
+  tensionDelta: number;
+  trustDelta: number;
+};
+
+type StoryRpgSceneDraft = {
+  id: string;
+  title: string;
+  text: string;
+  partnerLine: string;
+  goal: string;
+  mood: string;
+  choices: StoryRpgChoiceDraft[];
+};
+
+function clampStoryRpgPercent(value: unknown, fallback = 0) {
+  const n = Number(value);
+  return Math.max(0, Math.min(100, Number.isFinite(n) ? n : fallback));
+}
+
+function defaultStoryRpgRoutes(routeName = "Main Route"): StoryRpgRouteDraft[] {
+  return [
+    { name: routeName || "Main Route", status: "진행 중", condition: "첫 선택을 시작하세요", progress: 0 },
+    { name: "Hidden Route", status: "잠김", condition: "호감도와 신뢰도 조건 필요", progress: 0 },
+  ];
+}
+
+function defaultStoryRpgChoices(routeName = "Main Route"): StoryRpgChoiceDraft[] {
+  return [
+    {
+      label: "조심스럽게 다가간다",
+      effect: "+2 호감도",
+      tone: "다정",
+      result: "상대의 경계가 조금 낮아지고, 다음 대화가 부드럽게 이어집니다.",
+      routeHint: routeName || "Main Route",
+      affectionDelta: 2,
+      tensionDelta: -1,
+      trustDelta: 1,
+    },
+    {
+      label: "상황을 먼저 확인한다",
+      effect: "+2 신뢰도",
+      tone: "침착",
+      result: "감정보다 단서를 먼저 보는 선택이 새로운 분기를 엽니다.",
+      routeHint: "Trust Route",
+      affectionDelta: 0,
+      tensionDelta: -1,
+      trustDelta: 2,
+    },
+    {
+      label: "일부러 거리를 둔다",
+      effect: "+3 긴장도",
+      tone: "도발",
+      result: "짧은 침묵이 흐르고, 관계의 긴장감이 높아집니다.",
+      routeHint: "Tension Route",
+      affectionDelta: 0,
+      tensionDelta: 3,
+      trustDelta: -1,
+    },
+  ];
+}
+
+function makeStoryRpgSceneId(index: number) {
+  return `scene-${index + 1}`;
+}
+
+function normalizeStoryRpgChoiceDraft(raw: any, index = 0, fallbackRoute = "Main Route"): StoryRpgChoiceDraft {
+  return {
+    label: String(raw?.label || "").trim() || `${index + 1}번 선택지`,
+    effect: String(raw?.effect || "").trim() || "관계 변화",
+    tone: String(raw?.tone || "").trim() || "선택",
+    result: String(raw?.result || "").trim() || "선택에 따라 다음 장면의 분위기가 달라집니다.",
+    routeHint: String(raw?.routeHint || raw?.route || "").trim() || fallbackRoute || "Main Route",
+    nextSceneId: String(raw?.nextSceneId || "").trim() || undefined,
+    affectionDelta: Number.isFinite(Number(raw?.affectionDelta)) ? Number(raw.affectionDelta) : 1,
+    tensionDelta: Number.isFinite(Number(raw?.tensionDelta)) ? Number(raw.tensionDelta) : 0,
+    trustDelta: Number.isFinite(Number(raw?.trustDelta)) ? Number(raw.trustDelta) : 1,
+  };
+}
+
+function normalizeStoryRpgRoutes(raw: unknown, fallbackRoute = "Main Route"): StoryRpgRouteDraft[] {
+  if (!Array.isArray(raw) || raw.length === 0) return defaultStoryRpgRoutes(fallbackRoute);
+  return raw
+    .map((route: any) => ({
+      name: String(route?.name || "").trim() || fallbackRoute || "Main Route",
+      status: String(route?.status || "").trim() || "진행 중",
+      condition: String(route?.condition || "").trim() || "선택에 따라 진행",
+      progress: clampStoryRpgPercent(route?.progress, 0),
+    }))
+    .filter((route) => route.name)
+    .slice(0, 8);
+}
+
+function normalizeStoryRpgChoices(raw: unknown, fallbackRoute = "Main Route"): StoryRpgChoiceDraft[] {
+  if (!Array.isArray(raw) || raw.length === 0) return defaultStoryRpgChoices(fallbackRoute);
+  return raw
+    .map((choice: any, index) => normalizeStoryRpgChoiceDraft(choice, index, fallbackRoute))
+    .filter((choice) => choice.label)
+    .slice(0, 12);
+}
+
+function defaultStoryRpgScenes(
+  fallbackRoute = "Main Route",
+  fallbackChoices: StoryRpgChoiceDraft[] = defaultStoryRpgChoices(fallbackRoute),
+): StoryRpgSceneDraft[] {
+  return [
+    {
+      id: "scene-1",
+      title: "첫 선택",
+      text: "",
+      partnerLine: "",
+      goal: "플레이어가 첫 장면의 분위기와 관계 방향을 이해합니다.",
+      mood: "도입",
+      choices: fallbackChoices.slice(0, 3),
+    },
+  ];
+}
+
+function normalizeStoryRpgScenes(
+  raw: unknown,
+  fallbackChoices: StoryRpgChoiceDraft[] = [],
+  fallbackRoute = "Main Route",
+): StoryRpgSceneDraft[] {
+  if (!Array.isArray(raw) || raw.length === 0) return defaultStoryRpgScenes(fallbackRoute, fallbackChoices.length ? fallbackChoices : defaultStoryRpgChoices(fallbackRoute));
+  return raw
+    .map((scene: any, index) => {
+      const id = String(scene?.id || "").trim() || makeStoryRpgSceneId(index);
+      const sceneChoices = normalizeStoryRpgChoices(scene?.choices, fallbackRoute).slice(0, 4);
+      return {
+        id,
+        title: String(scene?.title || "").trim() || `장면 ${index + 1}`,
+        text: String(scene?.text || scene?.body || "").trim(),
+        partnerLine: String(scene?.partnerLine || scene?.line || "").trim(),
+        goal: String(scene?.goal || "").trim(),
+        mood: String(scene?.mood || "").trim() || "분기",
+        choices: sceneChoices.length ? sceneChoices : fallbackChoices.slice(0, 3),
+      };
+    })
+    .filter((scene) => scene.id && scene.title)
+    .slice(0, 30);
+}
 
 function makeCharacterId(name?: string) {
   const safe = String(name || "character").trim().replace(/\s+/g, "_").replace(/[^\w가-힣-]/g, "");
@@ -905,6 +1196,7 @@ function StoryWorkspaceDialog({
   });
   const [draft, setDraft] = useState({
     title: '',
+    contentType: 'web_novel',
     logline: '',
     cover_url: '',
     price_credits: 0,
@@ -914,6 +1206,20 @@ function StoryWorkspaceDialog({
     max_heat: 'warm',
     tags: '',
   });
+  const [storyRpgDraft, setStoryRpgDraft] = useState({
+    enabled: false,
+    startSceneTitle: '첫 선택',
+    startSceneText: '',
+    partnerLine: '',
+    currentRoute: 'Main Route',
+    initialAffection: 0,
+    initialTension: 35,
+    initialTrust: 20,
+    endingsTotal: 5,
+    routes: defaultStoryRpgRoutes(),
+    choices: defaultStoryRpgChoices(),
+  });
+  const [storyRpgScenesDraft, setStoryRpgScenesDraft] = useState<StoryRpgSceneDraft[]>(defaultStoryRpgScenes());
 
   const storyQ = useQuery({
     queryKey: ['admin_story_detail', storyId],
@@ -1028,6 +1334,7 @@ function StoryWorkspaceDialog({
     if (!row) return;
     setDraft({
       title: String(row.title ?? ''),
+      contentType: String((row.character_card as any)?.contentType ?? 'web_novel'),
       logline: String(row.logline ?? ''),
       cover_url: String(row.cover_url ?? ''),
       price_credits: Number(row.price_credits ?? 0),
@@ -1037,6 +1344,25 @@ function StoryWorkspaceDialog({
       max_heat: String(row.max_heat ?? 'warm'),
       tags: Array.isArray(row.tags) ? row.tags.join(', ') : '',
     });
+    const card = (row.character_card ?? {}) as any;
+    const rpg = card.storyRpg ?? {};
+    const normalizedRoute = String(rpg.currentRoute ?? 'Main Route');
+    const normalizedRoutes = normalizeStoryRpgRoutes(rpg.routes, normalizedRoute);
+    const normalizedChoices = normalizeStoryRpgChoices(rpg.choices, normalizedRoute);
+    setStoryRpgDraft({
+      enabled: Boolean(rpg.enabled ?? card.contentType === 'story_rpg'),
+      startSceneTitle: String(rpg.startSceneTitle ?? '첫 선택'),
+      startSceneText: String(rpg.startSceneText ?? ''),
+      partnerLine: String(rpg.partnerLine ?? ''),
+      currentRoute: normalizedRoute,
+      initialAffection: Math.max(0, Math.min(100, Number(rpg.initialAffection ?? 0))),
+      initialTension: Math.max(0, Math.min(100, Number(rpg.initialTension ?? 35))),
+      initialTrust: Math.max(0, Math.min(100, Number(rpg.initialTrust ?? 20))),
+      endingsTotal: Math.max(1, Math.floor(Number(rpg.endingsTotal ?? 5))),
+      routes: normalizedRoutes,
+      choices: normalizedChoices,
+    });
+    setStoryRpgScenesDraft(normalizeStoryRpgScenes(rpg.scenes, normalizedChoices, normalizedRoute));
   }, [storyQ.data]);
 
   useEffect(() => {
@@ -1068,6 +1394,90 @@ function StoryWorkspaceDialog({
     setCharacterDrafts((prev) => prev.filter((character) => character.id !== id));
   }
 
+  function updateStoryRpgScene(index: number, patch: Partial<StoryRpgSceneDraft>) {
+    setStoryRpgScenesDraft((prev) => prev.map((scene, sceneIndex) => (sceneIndex === index ? { ...scene, ...patch } : scene)));
+  }
+
+  function addStoryRpgScene() {
+    setStoryRpgScenesDraft((prev) => [
+      ...prev,
+      {
+        id: makeStoryRpgSceneId(prev.length),
+        title: `장면 ${prev.length + 1}`,
+        text: "",
+        partnerLine: "",
+        goal: "",
+        mood: "분기",
+        choices: defaultStoryRpgChoices(storyRpgDraft.currentRoute).slice(0, 2),
+      },
+    ]);
+  }
+
+  function removeStoryRpgScene(index: number) {
+    const removedId = storyRpgScenesDraft[index]?.id;
+    setStoryRpgScenesDraft((prev) =>
+      prev
+        .filter((_, sceneIndex) => sceneIndex !== index)
+        .map((scene) => ({
+          ...scene,
+          choices: scene.choices.map((choice) =>
+            choice.nextSceneId === removedId ? { ...choice, nextSceneId: undefined } : choice,
+          ),
+        })),
+    );
+  }
+
+  function updateStoryRpgSceneChoice(sceneIndex: number, choiceIndex: number, patch: Partial<StoryRpgChoiceDraft>) {
+    setStoryRpgScenesDraft((prev) =>
+      prev.map((scene, currentSceneIndex) =>
+        currentSceneIndex === sceneIndex
+          ? {
+              ...scene,
+              choices: scene.choices.map((choice, currentChoiceIndex) =>
+                currentChoiceIndex === choiceIndex ? { ...choice, ...patch } : choice,
+              ),
+            }
+          : scene,
+      ),
+    );
+  }
+
+  function addStoryRpgSceneChoice(sceneIndex: number) {
+    setStoryRpgScenesDraft((prev) =>
+      prev.map((scene, currentSceneIndex) =>
+        currentSceneIndex === sceneIndex
+          ? {
+              ...scene,
+              choices: [
+                ...scene.choices,
+                {
+                  label: "새 선택지",
+                  effect: "관계 변화",
+                  tone: "선택",
+                  result: "선택 결과를 입력하세요.",
+                  routeHint: storyRpgDraft.currentRoute || "Main Route",
+                  nextSceneId: storyRpgScenesDraft[sceneIndex + 1]?.id,
+                  affectionDelta: 1,
+                  tensionDelta: 0,
+                  trustDelta: 1,
+                },
+              ],
+            }
+          : scene,
+      ),
+    );
+  }
+
+  function removeStoryRpgSceneChoice(sceneIndex: number, choiceIndex: number) {
+    setStoryRpgScenesDraft((prev) =>
+      prev.map((scene, currentSceneIndex) =>
+        currentSceneIndex === sceneIndex
+          ? { ...scene, choices: scene.choices.filter((_, currentChoiceIndex) => currentChoiceIndex !== choiceIndex) }
+          : scene,
+      ),
+    );
+  }
+
   async function uploadCharacterAvatar(id: string, file: File) {
     setCharacterUploadingId(id);
     try {
@@ -1091,6 +1501,7 @@ function StoryWorkspaceDialog({
     setSaving(true);
     try {
       const baseCard = (composeQ.data?.character_card ?? (storyQ.data as any)?.character_card ?? {}) as any;
+      const safeContentType = draft.contentType === "story_rpg" ? "web_novel" : draft.contentType;
       const characters = characterDrafts
         .map((character) => ({
           ...character,
@@ -1124,6 +1535,11 @@ function StoryWorkspaceDialog({
           tags: draft.tags.split(',').map((tag) => tag.trim()).filter(Boolean),
           character_card: {
             ...baseCard,
+            contentType: safeContentType,
+            storyRpg: {
+              ...(baseCard.storyRpg ?? {}),
+              enabled: false,
+            },
             characters,
             name: main?.name ?? baseCard.name,
             role: main?.role ?? baseCard.role,
@@ -1168,8 +1584,23 @@ function StoryWorkspaceDialog({
         },
       });
       const nextCharacterAnalysis = result.characterAnalysis ?? [];
+      const previousSummary = localChapters.find((chapter) => chapter.id === current);
+      const nextChapterSummary = makeChapterSummaryFromConfig(
+        {
+          id: current,
+          title: chapterDraft.title.trim(),
+          episodeNumber: chapterDraft.episodeNumber,
+          isFree: chapterDraft.isFree,
+          priceCredits: chapterDraft.priceCredits,
+          summary: chapterDraft.summary,
+          body: normalizedBody,
+          assetSlots: assetDraft?.id === current ? assetDraft.assetSlots : undefined,
+        },
+        previousSummary,
+      );
       toast.success('회차가 저장되었습니다.');
       setChapterDraft((prev) => ({ ...prev, body: normalizedBody, characterAnalysis: nextCharacterAnalysis }));
+      setLocalChapters((prev) => upsertChapterSummary(prev, nextChapterSummary));
       setAssetDraft((prev) =>
         prev && prev.id === current
           ? {
@@ -1182,12 +1613,14 @@ function StoryWorkspaceDialog({
               body: normalizedBody,
               characterAnalysis: nextCharacterAnalysis,
               assetSlots: normalizeAssetSlots(prev.assetSlots, normalizedBody.length),
-            }
+          }
           : prev,
       );
-      qc.invalidateQueries({ queryKey: ['admin_stories'] });
-      qc.invalidateQueries({ queryKey: ['admin_story_workspace', storyId] });
-      qc.invalidateQueries({ queryKey: ['admin_story_chapter_text', storyId, activeChapterId] });
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['admin_stories'] }),
+        qc.invalidateQueries({ queryKey: ['admin_story_workspace', storyId] }),
+        qc.invalidateQueries({ queryKey: ['admin_story_chapter_text', storyId, current] }),
+      ]);
       if (normalizedBody.trim().length >= 80) {
         try {
           const analyzed = await analyzeCharacters({ data: { storyId, chapterId: current } });
@@ -1244,7 +1677,11 @@ function StoryWorkspaceDialog({
           chapter: normalizedDraft,
         },
       });
+      const previousSummary = localChapters.find((chapter) => chapter.id === normalizedDraft.id);
       setAssetDraft(normalizedDraft);
+      setLocalChapters((prev) =>
+        upsertChapterSummary(prev, makeChapterSummaryFromConfig(normalizedDraft, previousSummary)),
+      );
       toast.success('에셋 구성이 저장되었습니다.');
       setChapterDraft((prev) =>
         activeChapterId === normalizedDraft.id
@@ -1259,9 +1696,11 @@ function StoryWorkspaceDialog({
             }
           : prev,
       );
-      qc.invalidateQueries({ queryKey: ['admin_stories'] });
-      qc.invalidateQueries({ queryKey: ['admin_story_workspace', storyId] });
-      qc.invalidateQueries({ queryKey: ['admin_story_chapter_text', storyId, normalizedDraft.id] });
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['admin_stories'] }),
+        qc.invalidateQueries({ queryKey: ['admin_story_workspace', storyId] }),
+        qc.invalidateQueries({ queryKey: ['admin_story_chapter_text', storyId, normalizedDraft.id] }),
+      ]);
     } catch (e: any) {
       toast.error(e?.message ?? '에셋 저장에 실패했습니다.');
     } finally {
@@ -1300,6 +1739,12 @@ function StoryWorkspaceDialog({
   }
 
   const chapterList = localChapters;
+  const workspaceStats = {
+    chapters: chapterList.length,
+    bodyChars: chapterList.reduce((sum, chapter) => sum + (chapter.bodyChars ?? 0), 0),
+    assets: chapterList.reduce((sum, chapter) => sum + (chapter.assetSlotsCount ?? 0), 0),
+    characters: characterDrafts.filter((character) => character.name.trim()).length,
+  };
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -1309,6 +1754,17 @@ function StoryWorkspaceDialog({
           <div>
             <DialogTitle>콘텐츠 작업공간 - {title}</DialogTitle>
             <div className="text-xs text-muted-foreground">정보수정, 회차현황, 에셋편집, 프리뷰를 한 화면에서 빠르게 확인합니다.</div>
+            <div className="mt-2 flex flex-wrap gap-1.5 text-[11px]">
+              <span className="rounded-full border border-border bg-background px-2 py-0.5">회차 {workspaceStats.chapters}</span>
+              <span className="rounded-full border border-border bg-background px-2 py-0.5">본문 {workspaceStats.bodyChars.toLocaleString()}자</span>
+              <span className="rounded-full border border-border bg-background px-2 py-0.5">에셋 {workspaceStats.assets}</span>
+              <span className="rounded-full border border-border bg-background px-2 py-0.5">캐릭터 {workspaceStats.characters}</span>
+              {storyQ.isLoading || composeQ.isLoading || chapterQ.isLoading ? (
+                <span className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-primary">
+                  <Loader2 className="size-3 animate-spin" /> 불러오는 중
+                </span>
+              ) : null}
+            </div>
           </div>
           </div>
         </div>
@@ -1353,6 +1809,20 @@ function StoryWorkspaceDialog({
                     <label className="text-xs text-muted-foreground">표지 이미지 URL</label>
                     <Input className="mt-1" value={draft.cover_url} onChange={(e) => setDraft((prev) => ({ ...prev, cover_url: e.target.value }))} placeholder="표지 이미지 URL" />
                   </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground">콘텐츠 유형</label>
+                    <select
+                      className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                      value={draft.contentType}
+                      onChange={(e) => setDraft((prev) => ({ ...prev, contentType: e.target.value }))}
+                    >
+                      <option value="web_novel">웹소설</option>
+                      <option value="romance_sim">연애 시뮬레이션</option>
+                      <option value="webtoon">웹툰</option>
+                      <option value="short_story">단편</option>
+                      <option value="other">기타</option>
+                    </select>
+                  </div>
                   <div className="grid gap-3 sm:grid-cols-2">
                     <div>
                       <label className="text-xs text-muted-foreground">대상 독자</label>
@@ -1377,6 +1847,550 @@ function StoryWorkspaceDialog({
                     <Input className="mt-1" value={draft.tags} onChange={(e) => setDraft((prev) => ({ ...prev, tags: e.target.value }))} placeholder="태그1, 태그2, 태그3" />
                   </div>
                 </div>
+              </section>
+
+              <section className="rounded-lg border border-border bg-card p-4">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <div className="text-sm font-semibold">스토리게임 작업본</div>
+                    <div className="text-xs text-muted-foreground">
+                      원본 회차와 에셋은 이곳에 유지하고, 게임용 시나리오는 별도 작업본으로 생성합니다.
+                    </div>
+                  </div>
+                  <Button asChild type="button" size="sm" variant="outline">
+                    <Link to="/admin/story-rpg">
+                      <Gamepad2 className="size-3" /> 스토리게임관리
+                    </Link>
+                  </Button>
+                </div>
+                <div className="rounded-md border border-dashed border-border bg-background/60 px-3 py-2 text-xs text-muted-foreground">
+                  이 화면에서는 원본 스토리만 관리합니다. RPG 전환은 원본을 복사한 별도 작업본에 저장됩니다.
+                </div>
+                {false && (
+                <div className="space-y-3">
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div>
+                      <label className="text-xs text-muted-foreground">시작 장면 제목</label>
+                      <Input
+                        className="mt-1"
+                        value={storyRpgDraft.startSceneTitle}
+                        onChange={(e) => setStoryRpgDraft((prev) => ({ ...prev, startSceneTitle: e.target.value }))}
+                        placeholder="예: 무너지는 밤"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted-foreground">기본 루트명</label>
+                      <Input
+                        className="mt-1"
+                        value={storyRpgDraft.currentRoute}
+                        onChange={(e) => setStoryRpgDraft((prev) => ({ ...prev, currentRoute: e.target.value }))}
+                        placeholder="예: Warm Touch"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground">시작 장면 본문</label>
+                    <Textarea
+                      className="mt-1 min-h-24"
+                      value={storyRpgDraft.startSceneText}
+                      onChange={(e) => setStoryRpgDraft((prev) => ({ ...prev, startSceneText: e.target.value }))}
+                      placeholder="게임 시작 직후 보여줄 첫 장면을 입력하세요."
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground">상대 주인공 첫 대사</label>
+                    <Input
+                      className="mt-1"
+                      value={storyRpgDraft.partnerLine}
+                      onChange={(e) => setStoryRpgDraft((prev) => ({ ...prev, partnerLine: e.target.value }))}
+                      placeholder="예: 도망칠 생각이라면 지금 말해."
+                    />
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-4">
+                    <div>
+                      <label className="text-xs text-muted-foreground">시작 호감도</label>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={100}
+                        className="mt-1"
+                        value={storyRpgDraft.initialAffection}
+                        onChange={(e) => setStoryRpgDraft((prev) => ({ ...prev, initialAffection: Math.max(0, Math.min(100, Number(e.target.value) || 0)) }))}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted-foreground">시작 긴장도</label>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={100}
+                        className="mt-1"
+                        value={storyRpgDraft.initialTension}
+                        onChange={(e) => setStoryRpgDraft((prev) => ({ ...prev, initialTension: Math.max(0, Math.min(100, Number(e.target.value) || 0)) }))}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted-foreground">시작 신뢰도</label>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={100}
+                        className="mt-1"
+                        value={storyRpgDraft.initialTrust}
+                        onChange={(e) => setStoryRpgDraft((prev) => ({ ...prev, initialTrust: Math.max(0, Math.min(100, Number(e.target.value) || 0)) }))}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted-foreground">예상 엔딩 수</label>
+                      <Input
+                        type="number"
+                        min={1}
+                        className="mt-1"
+                        value={storyRpgDraft.endingsTotal}
+                        onChange={(e) => setStoryRpgDraft((prev) => ({ ...prev, endingsTotal: Math.max(1, Math.floor(Number(e.target.value) || 1)) }))}
+                      />
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-border bg-background/60 p-3">
+                    <div className="mb-3 flex items-center justify-between gap-2">
+                      <div>
+                        <div className="text-sm font-semibold">루트 설정</div>
+                        <div className="text-xs text-muted-foreground">플레이 화면의 루트 현황과 해금 조건으로 표시됩니다.</div>
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() =>
+                          setStoryRpgDraft((prev) => ({
+                            ...prev,
+                            routes: [
+                              ...prev.routes,
+                              { name: "New Route", status: "잠김", condition: "해금 조건을 입력하세요", progress: 0 },
+                            ],
+                          }))
+                        }
+                      >
+                        <Plus className="size-3" /> 루트 추가
+                      </Button>
+                    </div>
+                    <div className="space-y-2">
+                      {storyRpgDraft.routes.map((route, index) => (
+                        <div key={`${route.name}-${index}`} className="grid gap-2 rounded-md border border-border bg-card p-3 md:grid-cols-[1fr_120px_1.4fr_90px_36px]">
+                          <Input
+                            value={route.name}
+                            onChange={(event) =>
+                              setStoryRpgDraft((prev) => ({
+                                ...prev,
+                                routes: prev.routes.map((item, itemIndex) =>
+                                  itemIndex === index ? { ...item, name: event.target.value } : item,
+                                ),
+                              }))
+                            }
+                            placeholder="루트명"
+                          />
+                          <select
+                            className="rounded-md border border-border bg-background px-3 py-2 text-sm"
+                            value={route.status}
+                            onChange={(event) =>
+                              setStoryRpgDraft((prev) => ({
+                                ...prev,
+                                routes: prev.routes.map((item, itemIndex) =>
+                                  itemIndex === index ? { ...item, status: event.target.value } : item,
+                                ),
+                              }))
+                            }
+                          >
+                            <option value="진행 중">진행 중</option>
+                            <option value="잠김">잠김</option>
+                            <option value="분기 대기">분기 대기</option>
+                            <option value="완료">완료</option>
+                          </select>
+                          <Input
+                            value={route.condition}
+                            onChange={(event) =>
+                              setStoryRpgDraft((prev) => ({
+                                ...prev,
+                                routes: prev.routes.map((item, itemIndex) =>
+                                  itemIndex === index ? { ...item, condition: event.target.value } : item,
+                                ),
+                              }))
+                            }
+                            placeholder="예: 호감도 60 이상"
+                          />
+                          <Input
+                            type="number"
+                            min={0}
+                            max={100}
+                            value={route.progress}
+                            onChange={(event) =>
+                              setStoryRpgDraft((prev) => ({
+                                ...prev,
+                                routes: prev.routes.map((item, itemIndex) =>
+                                  itemIndex === index ? { ...item, progress: clampStoryRpgPercent(event.target.value, 0) } : item,
+                                ),
+                              }))
+                            }
+                            placeholder="진행률"
+                          />
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="ghost"
+                            className="text-muted-foreground hover:text-destructive"
+                            onClick={() =>
+                              setStoryRpgDraft((prev) => ({
+                                ...prev,
+                                routes: prev.routes.filter((_, itemIndex) => itemIndex !== index),
+                              }))
+                            }
+                            disabled={storyRpgDraft.routes.length <= 1}
+                          >
+                            <Trash2 className="size-4" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-border bg-background/60 p-3">
+                    <div className="mb-3 flex items-center justify-between gap-2">
+                      <div>
+                        <div className="text-sm font-semibold">선택지 설정</div>
+                        <div className="text-xs text-muted-foreground">사용자가 선택했을 때 바뀌는 결과, 루트, 호감도/긴장도/신뢰도를 입력합니다.</div>
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() =>
+                          setStoryRpgDraft((prev) => ({
+                            ...prev,
+                            choices: [
+                              ...prev.choices,
+                              {
+                                label: "새 선택지",
+                                effect: "관계 변화",
+                                tone: "선택",
+                                result: "선택 결과를 입력하세요.",
+                                routeHint: prev.currentRoute || "Main Route",
+                                affectionDelta: 1,
+                                tensionDelta: 0,
+                                trustDelta: 1,
+                              },
+                            ],
+                          }))
+                        }
+                      >
+                        <Plus className="size-3" /> 선택지 추가
+                      </Button>
+                    </div>
+                    <div className="space-y-3">
+                      {storyRpgDraft.choices.map((choice, index) => (
+                        <div key={`${choice.label}-${index}`} className="space-y-2 rounded-md border border-border bg-card p-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="text-xs font-semibold text-muted-foreground">선택지 {index + 1}</div>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 text-muted-foreground hover:text-destructive"
+                              onClick={() =>
+                                setStoryRpgDraft((prev) => ({
+                                  ...prev,
+                                  choices: prev.choices.filter((_, itemIndex) => itemIndex !== index),
+                                }))
+                              }
+                              disabled={storyRpgDraft.choices.length <= 1}
+                            >
+                              삭제
+                            </Button>
+                          </div>
+                          <div className="grid gap-2 md:grid-cols-[1.4fr_1fr_1fr]">
+                            <Input
+                              value={choice.label}
+                              onChange={(event) =>
+                                setStoryRpgDraft((prev) => ({
+                                  ...prev,
+                                  choices: prev.choices.map((item, itemIndex) =>
+                                    itemIndex === index ? { ...item, label: event.target.value } : item,
+                                  ),
+                                }))
+                              }
+                              placeholder="선택지 문구"
+                            />
+                            <Input
+                              value={choice.tone}
+                              onChange={(event) =>
+                                setStoryRpgDraft((prev) => ({
+                                  ...prev,
+                                  choices: prev.choices.map((item, itemIndex) =>
+                                    itemIndex === index ? { ...item, tone: event.target.value } : item,
+                                  ),
+                                }))
+                              }
+                              placeholder="톤: 다정, 침착, 도발"
+                            />
+                            <Input
+                              value={choice.effect}
+                              onChange={(event) =>
+                                setStoryRpgDraft((prev) => ({
+                                  ...prev,
+                                  choices: prev.choices.map((item, itemIndex) =>
+                                    itemIndex === index ? { ...item, effect: event.target.value } : item,
+                                  ),
+                                }))
+                              }
+                              placeholder="효과: +2 호감도"
+                            />
+                          </div>
+                          <Textarea
+                            className="min-h-20"
+                            value={choice.result}
+                            onChange={(event) =>
+                              setStoryRpgDraft((prev) => ({
+                                ...prev,
+                                choices: prev.choices.map((item, itemIndex) =>
+                                  itemIndex === index ? { ...item, result: event.target.value } : item,
+                                ),
+                              }))
+                            }
+                            placeholder="선택 후 사용자에게 보여줄 결과 문장"
+                          />
+                          <div className="grid gap-2 md:grid-cols-[1.4fr_1fr_1fr_1fr]">
+                            <Input
+                              value={choice.routeHint}
+                              onChange={(event) =>
+                                setStoryRpgDraft((prev) => ({
+                                  ...prev,
+                                  choices: prev.choices.map((item, itemIndex) =>
+                                    itemIndex === index ? { ...item, routeHint: event.target.value } : item,
+                                  ),
+                                }))
+                              }
+                              placeholder="연결 루트"
+                            />
+                            <Input
+                              type="number"
+                              value={choice.affectionDelta}
+                              onChange={(event) =>
+                                setStoryRpgDraft((prev) => ({
+                                  ...prev,
+                                  choices: prev.choices.map((item, itemIndex) =>
+                                    itemIndex === index ? { ...item, affectionDelta: Number(event.target.value) || 0 } : item,
+                                  ),
+                                }))
+                              }
+                              placeholder="호감도"
+                            />
+                            <Input
+                              type="number"
+                              value={choice.tensionDelta}
+                              onChange={(event) =>
+                                setStoryRpgDraft((prev) => ({
+                                  ...prev,
+                                  choices: prev.choices.map((item, itemIndex) =>
+                                    itemIndex === index ? { ...item, tensionDelta: Number(event.target.value) || 0 } : item,
+                                  ),
+                                }))
+                              }
+                              placeholder="긴장도"
+                            />
+                            <Input
+                              type="number"
+                              value={choice.trustDelta}
+                              onChange={(event) =>
+                                setStoryRpgDraft((prev) => ({
+                                  ...prev,
+                                  choices: prev.choices.map((item, itemIndex) =>
+                                    itemIndex === index ? { ...item, trustDelta: Number(event.target.value) || 0 } : item,
+                                  ),
+                                }))
+                              }
+                              placeholder="신뢰도"
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-border bg-background/60 p-3">
+                    <div className="mb-3 flex items-center justify-between gap-2">
+                      <div>
+                        <div className="text-sm font-semibold">장면 편집</div>
+                        <div className="text-xs text-muted-foreground">생성된 StoryRPG 본문, 대사, 선택지 연결을 장면 단위로 다듬습니다.</div>
+                      </div>
+                      <Button type="button" size="sm" variant="outline" onClick={addStoryRpgScene}>
+                        <Plus className="size-3" /> 장면 추가
+                      </Button>
+                    </div>
+                    <div className="space-y-3">
+                      {storyRpgScenesDraft.map((scene, sceneIndex) => (
+                        <details
+                          key={`${scene.id}-${sceneIndex}`}
+                          className="rounded-md border border-border bg-card p-3"
+                          open={sceneIndex === 0}
+                        >
+                          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-semibold">
+                            <span className="min-w-0 truncate">
+                              {sceneIndex + 1}. {scene.title || scene.id}
+                            </span>
+                            <span className="shrink-0 text-xs font-normal text-muted-foreground">{scene.choices.length}개 선택지</span>
+                          </summary>
+                          <div className="mt-3 space-y-3">
+                            <div className="grid gap-2 md:grid-cols-[1fr_1.2fr_120px]">
+                              <Input
+                                value={scene.id}
+                                onChange={(event) => updateStoryRpgScene(sceneIndex, { id: event.target.value })}
+                                placeholder="scene-id"
+                              />
+                              <Input
+                                value={scene.title}
+                                onChange={(event) => updateStoryRpgScene(sceneIndex, { title: event.target.value })}
+                                placeholder="장면 제목"
+                              />
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                className="text-muted-foreground hover:text-destructive"
+                                onClick={() => removeStoryRpgScene(sceneIndex)}
+                                disabled={storyRpgScenesDraft.length <= 1}
+                              >
+                                <Trash2 className="size-4" /> 삭제
+                              </Button>
+                            </div>
+                            <div className="grid gap-2 sm:grid-cols-2">
+                              <Input
+                                value={scene.mood}
+                                onChange={(event) => updateStoryRpgScene(sceneIndex, { mood: event.target.value })}
+                                placeholder="분위기: 도입, 위기, 유혹, 엔딩"
+                              />
+                              <Input
+                                value={scene.goal}
+                                onChange={(event) => updateStoryRpgScene(sceneIndex, { goal: event.target.value })}
+                                placeholder="장면 목표"
+                              />
+                            </div>
+                            <Textarea
+                              className="min-h-36"
+                              value={scene.text}
+                              onChange={(event) => updateStoryRpgScene(sceneIndex, { text: event.target.value })}
+                              placeholder="플레이어에게 보여줄 장면 본문"
+                            />
+                            <Input
+                              value={scene.partnerLine}
+                              onChange={(event) => updateStoryRpgScene(sceneIndex, { partnerLine: event.target.value })}
+                              placeholder="상대 주인공 대사"
+                            />
+                            <div className="rounded-md border border-border bg-background/70 p-3">
+                              <div className="mb-2 flex items-center justify-between gap-2">
+                                <div className="text-xs font-semibold text-muted-foreground">이 장면의 선택지</div>
+                                <Button type="button" size="sm" variant="outline" onClick={() => addStoryRpgSceneChoice(sceneIndex)}>
+                                  <Plus className="size-3" /> 선택지
+                                </Button>
+                              </div>
+                              <div className="space-y-3">
+                                {scene.choices.map((choice, choiceIndex) => (
+                                  <div key={`${choice.label}-${choiceIndex}`} className="space-y-2 rounded-md border border-border bg-card p-3">
+                                    <div className="flex items-center justify-between gap-2">
+                                      <div className="text-xs font-medium text-muted-foreground">선택지 {choiceIndex + 1}</div>
+                                      <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="ghost"
+                                        className="h-7 text-muted-foreground hover:text-destructive"
+                                        onClick={() => removeStoryRpgSceneChoice(sceneIndex, choiceIndex)}
+                                        disabled={scene.choices.length <= 1}
+                                      >
+                                        삭제
+                                      </Button>
+                                    </div>
+                                    <div className="grid gap-2 md:grid-cols-[1.5fr_1fr_1fr]">
+                                      <Input
+                                        value={choice.label}
+                                        onChange={(event) => updateStoryRpgSceneChoice(sceneIndex, choiceIndex, { label: event.target.value })}
+                                        placeholder="선택지 문구"
+                                      />
+                                      <Input
+                                        value={choice.tone}
+                                        onChange={(event) => updateStoryRpgSceneChoice(sceneIndex, choiceIndex, { tone: event.target.value })}
+                                        placeholder="톤"
+                                      />
+                                      <Input
+                                        value={choice.effect}
+                                        onChange={(event) => updateStoryRpgSceneChoice(sceneIndex, choiceIndex, { effect: event.target.value })}
+                                        placeholder="효과"
+                                      />
+                                    </div>
+                                    <Textarea
+                                      className="min-h-16"
+                                      value={choice.result}
+                                      onChange={(event) => updateStoryRpgSceneChoice(sceneIndex, choiceIndex, { result: event.target.value })}
+                                      placeholder="선택 결과"
+                                    />
+                                    <div className="grid gap-2 md:grid-cols-[1.2fr_1fr_90px_90px_90px]">
+                                      <Input
+                                        value={choice.routeHint}
+                                        onChange={(event) => updateStoryRpgSceneChoice(sceneIndex, choiceIndex, { routeHint: event.target.value })}
+                                        placeholder="루트"
+                                      />
+                                      <select
+                                        className="rounded-md border border-border bg-background px-3 py-2 text-sm"
+                                        value={choice.nextSceneId ?? ""}
+                                        onChange={(event) =>
+                                          updateStoryRpgSceneChoice(sceneIndex, choiceIndex, {
+                                            nextSceneId: event.target.value || undefined,
+                                          })
+                                        }
+                                      >
+                                        <option value="">종료/엔딩</option>
+                                        {storyRpgScenesDraft.map((targetScene) => (
+                                          <option key={targetScene.id} value={targetScene.id}>
+                                            {targetScene.title || targetScene.id}
+                                          </option>
+                                        ))}
+                                      </select>
+                                      <Input
+                                        type="number"
+                                        value={choice.affectionDelta}
+                                        onChange={(event) =>
+                                          updateStoryRpgSceneChoice(sceneIndex, choiceIndex, {
+                                            affectionDelta: Number(event.target.value) || 0,
+                                          })
+                                        }
+                                        placeholder="호감"
+                                      />
+                                      <Input
+                                        type="number"
+                                        value={choice.tensionDelta}
+                                        onChange={(event) =>
+                                          updateStoryRpgSceneChoice(sceneIndex, choiceIndex, {
+                                            tensionDelta: Number(event.target.value) || 0,
+                                          })
+                                        }
+                                        placeholder="긴장"
+                                      />
+                                      <Input
+                                        type="number"
+                                        value={choice.trustDelta}
+                                        onChange={(event) =>
+                                          updateStoryRpgSceneChoice(sceneIndex, choiceIndex, {
+                                            trustDelta: Number(event.target.value) || 0,
+                                          })
+                                        }
+                                        placeholder="신뢰"
+                                      />
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        </details>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                )}
               </section>
 
               <section className="rounded-lg border border-border bg-card p-4">
@@ -4333,44 +5347,73 @@ function PlacementDialog({
   });
 
   const [slots, setSlots] = useState<PlacementSlot[]>([]);
+  const [includeAllList, setIncludeAllList] = useState(false);
   const [sortOrder, setSortOrder] = useState(0);
 
   useEffect(() => {
     if (Array.isArray(placementQ.data)) {
-      setSlots(placementQ.data.map((row) => row.slot));
+      setSlots(placementQ.data.map((row) => row.slot).filter((slot) => slot !== "all"));
+      setIncludeAllList(placementQ.data.some((row) => row.slot === "all"));
       setSortOrder(placementQ.data[0]?.sort_order ?? 0);
     } else {
       setSlots([]);
+      setIncludeAllList(false);
       setSortOrder(0);
     }
   }, [placementQ.data]);
 
   const saveMut = useMutation({
-    mutationFn: () => setPlacement({ data: { id: storyId, slots, sort_order: sortOrder } }),
+    mutationFn: () =>
+      setPlacement({
+        data: {
+          id: storyId,
+          slots: [...slots, ...(includeAllList || slots.length > 0 ? (["all"] as PlacementSlot[]) : [])],
+          sort_order: sortOrder,
+        },
+      }),
     onSuccess: () => {
       toast.success("노출 위치가 저장되었습니다.");
       qc.invalidateQueries({ queryKey: ["story_placement", storyId] });
       qc.invalidateQueries({ queryKey: ["home_placements"] });
       qc.invalidateQueries({ queryKey: ["home_placement"] });
+      qc.invalidateQueries({ queryKey: ["admin_placements"] });
+      qc.invalidateQueries({ queryKey: ["admin_stories"] });
       onClose();
     },
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const SLOTS: { key: PlacementSlot; label: string; icon: React.ComponentType<{ className?: string }>; hint: string }[] = [
-    { key: "hero", label: "히어로 섹션", icon: Flame, hint: "메인 최상단 대표 노출" },
-    { key: "trending", label: "지금 뜨거운 스토리", icon: Star, hint: "인기 콘텐츠 영역" },
-    { key: "new", label: "신작", icon: Sparkles, hint: "새로 등록한 콘텐츠" },
-    { key: "all", label: "모든 스토리", icon: EyeOff, hint: "홈 하단 전체 목록" },
+  const SLOTS: {
+    key: PlacementSlot;
+    label: string;
+    icon: React.ComponentType<{ className?: string }>;
+    hint: string;
+    pages: string;
+  }[] = [
+    { key: "hero", label: "히어로 섹션", icon: Flame, hint: "홈 최상단 대표 노출", pages: "홈" },
+    {
+      key: "trending",
+      label: "지금 뜨거운 스토리",
+      icon: Star,
+      hint: "홈과 스토리탐색 추천 영역",
+      pages: "홈 · 스토리탐색",
+    },
+    { key: "new", label: "신작", icon: Sparkles, hint: "홈 신작 영역", pages: "홈" },
   ];
+  const allListEnabled = includeAllList || slots.length > 0;
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>노출 위치 - {title}</DialogTitle>
+          <DialogTitle>노출설정 - {title}</DialogTitle>
         </DialogHeader>
         <div className="space-y-3">
+          <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+            스토리관리와 메인 노출관리는 같은 노출 데이터를 사용합니다.
+          </div>
+          <div>
+            <div className="mb-2 text-xs font-semibold text-muted-foreground">직접 배치할 영역</div>
           <div className="grid grid-cols-2 gap-2">
             {SLOTS.map((s) => {
               const active = slots.includes(s.key);
@@ -4379,9 +5422,13 @@ function PlacementDialog({
                   key={String(s.key)}
                   type="button"
                   onClick={() =>
-                    setSlots((prev) =>
-                      prev.includes(s.key) ? prev.filter((item) => item !== s.key) : [...prev, s.key],
-                    )
+                    setSlots((prev) => {
+                      const next = prev.includes(s.key)
+                        ? prev.filter((item) => item !== s.key)
+                        : [...prev, s.key];
+                      if (next.length > 0) setIncludeAllList(true);
+                      return next;
+                    })
                   }
                   className={cn(
                     "flex flex-col items-start gap-1 rounded-md border p-3 text-left text-sm transition",
@@ -4392,13 +5439,37 @@ function PlacementDialog({
                     <s.icon className="size-4" /> {s.label}
                   </span>
                   <span className="text-[11px] text-muted-foreground">{s.hint}</span>
+                  <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">{s.pages}</span>
                 </button>
               );
             })}
           </div>
-          {slots.length > 0 && (
+          </div>
+          <button
+            type="button"
+            disabled={slots.length > 0}
+            onClick={() => setIncludeAllList((prev) => !prev)}
+            className={cn(
+              "w-full rounded-md border p-3 text-left text-xs text-muted-foreground transition",
+              allListEnabled ? "border-primary bg-primary/10" : "border-border bg-background/60 hover:border-primary/40",
+              slots.length > 0 && "cursor-default opacity-90",
+            )}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="inline-flex items-center gap-1 font-medium text-foreground">
+                <EyeOff className="size-4" /> 모든 스토리
+              </span>
+              <Badge variant={allListEnabled ? "default" : "outline"} className="text-[10px]">
+                {slots.length > 0 ? "자동 노출" : allListEnabled ? "노출" : "비노출"}
+              </Badge>
+            </div>
+            <p className="mt-1">
+              히어로, 지금 뜨거운 스토리, 신작 중 하나라도 선택하면 공개 상태로 전환되어 전체 목록에도 함께 표시됩니다.
+            </p>
+          </button>
+          {(slots.length > 0 || includeAllList) && (
             <div>
-              <label className="text-xs text-muted-foreground">Sort order</label>
+              <label className="text-xs text-muted-foreground">노출 순서</label>
               <Input
                 type="number"
                 min={0}
@@ -4410,9 +5481,9 @@ function PlacementDialog({
           )}
         </div>
         <DialogFooter>
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button variant="ghost" onClick={onClose}>취소</Button>
           <Button onClick={() => saveMut.mutate()} disabled={saveMut.isPending}>
-            {saveMut.isPending ? <Loader2 className="size-4 animate-spin" /> : <FileText className="size-4" />} Save
+            {saveMut.isPending ? <Loader2 className="size-4 animate-spin" /> : <FileText className="size-4" />} 저장
           </Button>
         </DialogFooter>
       </DialogContent>

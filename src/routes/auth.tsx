@@ -11,6 +11,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { lovable } from "@/integrations/lovable";
 import { useAuth } from "@/hooks/use-auth";
 import { getStaffAccess } from "@/lib/staff-access";
+import { BrandLogo } from "@/components/brand-logo";
 
 const FIRST_ADMIN_EMAIL = "admin@lovetale.org";
 
@@ -124,8 +125,8 @@ function AuthPage() {
   return (
     <div className="mx-auto flex min-h-[calc(100vh-3.5rem)] max-w-md flex-col justify-center px-6 py-10">
       <div className="mb-8 text-center">
-        <Link to="/" className="font-display text-2xl font-semibold tracking-tight">
-          Lovetale
+        <Link to="/" className="inline-flex items-center justify-center">
+          <BrandLogo className="h-11 w-[158px]" />
         </Link>
         <p className="mt-1 text-sm text-muted-foreground">계정으로 시작합니다.</p>
       </div>

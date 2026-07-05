@@ -39,14 +39,39 @@ function defaultImageModel(provider: string, configuredModel?: string | null) {
   return configuredModel || DEFAULT_MODELS[provider] || "gpt-image-1";
 }
 
-async function uploadProfileImage(userId: string, bytes: Uint8Array, mimeType: string) {
+function providerCanGenerateImages(provider: string, configuredModel?: string | null) {
+  if (provider === "google") return true;
+  if (provider === "openai") return true;
+  if (provider === "openrouter") return /image|dall|gpt-image|imagen|flux|stable|sd/i.test(configuredModel ?? "");
+  if (provider === "custom" || provider === "lovable") {
+    return /image|dall|gpt-image|imagen|flux|stable|sd/i.test(configuredModel ?? "");
+  }
+  return false;
+}
+
+async function uploadProfileImage({
+  userId,
+  bytes,
+  mimeType,
+  storyId,
+  characterId,
+}: {
+  userId: string;
+  bytes: Uint8Array;
+  mimeType: string;
+  storyId?: string;
+  characterId?: string;
+}) {
   await ensureStoryMediaBucket();
   const ext = mimeType.includes("webp")
     ? "webp"
     : mimeType.includes("jpeg") || mimeType.includes("jpg")
       ? "jpg"
       : "png";
-  const storagePath = `profiles/${userId}/ai-profile-${Date.now()}.${ext}`;
+  const safeCharacterId = (characterId || "profile").replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 80);
+  const storagePath = storyId
+    ? `characters/${storyId}/${safeCharacterId}-ai-${Date.now()}.${ext}`
+    : `profiles/${userId}/ai-profile-${Date.now()}.${ext}`;
   const { error } = await supabaseAdmin.storage
     .from("story-media")
     .upload(storagePath, bytes, { upsert: true, contentType: mimeType });
@@ -63,6 +88,8 @@ async function handlePost(request: Request) {
   const name = String(body.name ?? "Lovetale reader").trim().slice(0, 80);
   const bio = String(body.bio ?? "").trim().slice(0, 500);
   const userPrompt = String(body.prompt ?? "").trim().slice(0, 700);
+  const storyId = String(body.storyId ?? "").trim();
+  const characterId = String(body.characterId ?? "").trim();
   const prompt = [
     "Create a tasteful manga-style profile portrait for a romantic interactive story app.",
     "Portrait should be suitable as a small chat avatar.",
@@ -76,8 +103,15 @@ async function handlePost(request: Request) {
     .join("\n");
 
   const { listActiveAdminProviders, recordAdminUsage } = await import("@/lib/admin-ai-provider.server");
-  const providers = await listActiveAdminProviders("image_generation");
-  if (!providers.length) return jsonError("no_image_provider", 503);
+  const providers = (await listActiveAdminProviders("image_generation")).filter((row) =>
+    providerCanGenerateImages(row.provider, row.model),
+  );
+  if (!providers.length) {
+    return jsonError(
+      "이미지 생성용 LLM API가 없습니다. 관리자 LLM API 관리에서 Gemini Imagen 또는 OpenAI 이미지 모델을 image_generation 용도로 활성화해 주세요.",
+      503,
+    );
+  }
 
   let lastError = "";
   for (const row of providers) {
@@ -99,7 +133,13 @@ async function handlePost(request: Request) {
           providerOptions: { google: { personGeneration: "allow_adult", aspectRatio: "1:1" } },
           maxRetries: 0,
         });
-        const uploaded = await uploadProfileImage(user.id, result.image.uint8Array, result.image.mediaType || "image/png");
+        const uploaded = await uploadProfileImage({
+          userId: user.id,
+          bytes: result.image.uint8Array,
+          mimeType: result.image.mediaType || "image/png",
+          storyId,
+          characterId,
+        });
         await recordAdminUsage(row.id, 0, true, "image_generation");
         return Response.json({ ok: true, ...uploaded, providerLabel: row.label, model });
       }
@@ -117,7 +157,13 @@ async function handlePost(request: Request) {
         aspectRatio: "1:1",
         maxRetries: 0,
       });
-      const uploaded = await uploadProfileImage(user.id, result.image.uint8Array, result.image.mediaType || "image/png");
+      const uploaded = await uploadProfileImage({
+        userId: user.id,
+        bytes: result.image.uint8Array,
+        mimeType: result.image.mediaType || "image/png",
+        storyId,
+        characterId,
+      });
       await recordAdminUsage(row.id, 0, true, "image_generation");
       return Response.json({ ok: true, ...uploaded, providerLabel: row.label, model });
     } catch (error: any) {

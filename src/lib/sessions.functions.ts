@@ -14,7 +14,18 @@ function now() {
 }
 
 export const getOrCreateSession = createServerFn({ method: "POST" })
-  .inputValidator((i: unknown) => i as { storyId: string; characterId?: string; mode?: PlayMode })
+  .inputValidator(
+    (i: unknown) =>
+      i as {
+        storyId: string;
+        characterId?: string;
+        mode?: PlayMode;
+        currentNode?: string;
+        initialAffection?: number;
+        initialArousal?: number;
+        initialTrust?: number;
+      },
+  )
   .handler(async ({ data }) => {
     const userId = await requireUserId();
     const { data: existing, error: existingError } = await supabase
@@ -34,10 +45,10 @@ export const getOrCreateSession = createServerFn({ method: "POST" })
         user_id: userId,
         story_id: data.storyId,
         character_id: data.characterId ?? null,
-        current_node: "start",
-        affection: 40,
-        arousal: 0,
-        trust: 0,
+        current_node: data.currentNode ?? "start",
+        affection: data.initialAffection ?? 40,
+        arousal: data.initialArousal ?? 0,
+        trust: data.initialTrust ?? 0,
         mode: data.mode ?? "vn",
         is_completed: false,
         is_bookmarked: false,
@@ -57,6 +68,8 @@ export const updateSessionState = createServerFn({ method: "POST" })
         sessionId: string;
         currentNode?: string;
         affection?: number;
+        arousal?: number;
+        trust?: number;
         mode?: PlayMode;
         isCompleted?: boolean;
         endingId?: string | null;
@@ -70,6 +83,8 @@ export const updateSessionState = createServerFn({ method: "POST" })
     };
     if (data.currentNode !== undefined) patch.current_node = data.currentNode;
     if (data.affection !== undefined) patch.affection = data.affection;
+    if (data.arousal !== undefined) patch.arousal = data.arousal;
+    if (data.trust !== undefined) patch.trust = data.trust;
     if (data.mode !== undefined) patch.mode = data.mode;
     if (data.isCompleted !== undefined) patch.is_completed = data.isCompleted;
     if (data.endingId !== undefined) patch.ending_id = data.endingId;
@@ -86,7 +101,15 @@ export const updateSessionState = createServerFn({ method: "POST" })
 export const recordChoice = createServerFn({ method: "POST" })
   .inputValidator(
     (i: unknown) =>
-      i as { sessionId: string; nodeId: string; choiceId: string; choiceLabel: string; affectionDelta?: number },
+      i as {
+        sessionId: string;
+        nodeId: string;
+        choiceId: string;
+        choiceLabel: string;
+        affectionDelta?: number;
+        arousalDelta?: number;
+        trustDelta?: number;
+      },
   )
   .handler(async ({ data }) => {
     const userId = await requireUserId();
@@ -97,8 +120,8 @@ export const recordChoice = createServerFn({ method: "POST" })
       choice_id: data.choiceId,
       choice_label: data.choiceLabel,
       affection_delta: data.affectionDelta ?? 0,
-      arousal_delta: 0,
-      trust_delta: 0,
+      arousal_delta: data.arousalDelta ?? 0,
+      trust_delta: data.trustDelta ?? 0,
     });
     if (error) throw new Error(error.message);
     return { ok: true };
@@ -180,6 +203,58 @@ export const listMySessions = createServerFn({ method: "GET" }).handler(async ()
   if (error) throw new Error(error.message);
   return data ?? [];
 });
+
+export const getStorySessionActivity = createServerFn({ method: "POST" })
+  .inputValidator((i: unknown) => i as { storyId: string })
+  .handler(async ({ data }) => {
+    const userId = await requireUserId();
+    const { data: session, error: sessionError } = await supabase
+      .from("story_sessions")
+      .select("*")
+      .eq("user_id", userId)
+      .eq("story_id", data.storyId)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (sessionError) throw new Error(sessionError.message);
+    if (!session) return null;
+
+    const [{ data: choices, error: choicesError }, { data: messages, error: messagesError }] = await Promise.all([
+      supabase
+        .from("story_choices")
+        .select("*")
+        .eq("user_id", userId)
+        .eq("session_id", session.id)
+        .order("created_at", { ascending: true }),
+      supabase
+        .from("story_messages")
+        .select("*")
+        .eq("user_id", userId)
+        .eq("session_id", session.id)
+        .order("created_at", { ascending: true }),
+    ]);
+    if (choicesError) throw new Error(choicesError.message);
+    if (messagesError) throw new Error(messagesError.message);
+
+    return {
+      session,
+      choices: choices ?? [],
+      messages: messages ?? [],
+    };
+  });
+
+export const clearStorySessionActivity = createServerFn({ method: "POST" })
+  .inputValidator((i: unknown) => i as { sessionId: string })
+  .handler(async ({ data }) => {
+    const userId = await requireUserId();
+    const [{ error: choicesError }, { error: messagesError }] = await Promise.all([
+      supabase.from("story_choices").delete().eq("user_id", userId).eq("session_id", data.sessionId),
+      supabase.from("story_messages").delete().eq("user_id", userId).eq("session_id", data.sessionId),
+    ]);
+    if (choicesError) throw new Error(choicesError.message);
+    if (messagesError) throw new Error(messagesError.message);
+    return { ok: true };
+  });
 
 export const listSavedEndings = createServerFn({ method: "GET" }).handler(async () => {
   const userId = await requireUserId();

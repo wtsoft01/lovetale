@@ -57,8 +57,8 @@ function StudioHub() {
         <div className="rounded-2xl border border-border bg-card p-5">
           <h2 className="font-display text-lg font-semibold">추천 작업 순서</h2>
           <ol className="mt-4 space-y-3 text-sm text-muted-foreground">
-            <li>1. 새 콘텐츠 등록에서 원문과 유형을 먼저 만든다.</li>
-            <li>2. 콘텐츠 관리에서 검색, 분류, 상태를 정리한다.</li>
+            <li>1. 스토리관리에서 새 원문과 유형을 등록한다.</li>
+            <li>2. 검색, 분류, 상태를 정리한다.</li>
             <li>3. 편집 미리보기에서 장면별 에셋을 붙이고 검수한다.</li>
             <li>4. 공개 여부와 메인 노출을 조정한 뒤 게시한다.</li>
           </ol>
@@ -74,16 +74,10 @@ function StudioHub() {
           </p>
           <div className="mt-4 space-y-2">
             <Link
-              to="/admin/import"
+              to="/admin/stories"
               className="inline-flex w-full items-center justify-between rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
             >
-              새 콘텐츠 등록 <ArrowRight className="h-4 w-4" />
-            </Link>
-            <Link
-              to="/admin/stories"
-              className="inline-flex w-full items-center justify-between rounded-lg border border-border bg-background px-3 py-2 text-sm hover:border-primary/40"
-            >
-              콘텐츠 관리 열기 <ArrowRight className="h-4 w-4" />
+              스토리관리 열기 <ArrowRight className="h-4 w-4" />
             </Link>
           </div>
         </div>

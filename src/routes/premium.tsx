@@ -36,10 +36,10 @@ import { supabase } from "@/integrations/supabase/client";
 export const Route = createFileRoute("/premium")({
   head: () => ({
     meta: [
-      { title: "?꾨━誘몄뾼 쨌 ?щ젅??| Lovetale" },
+      { title: "충전,구독 | Lovetale" },
       {
         name: "description",
-        content: "Lovetale ?щ젅?㏐낵 ??援щ룆 ?곹뭹??鍮꾧탳?섍퀬, ?ㅽ넗由ъ? AI ?곗씠???ъ슜?됱쓣 ?좏깮?⑸땲??",
+        content: "Lovetale 크레딧과 월 구독 상품을 비교하고, 스토리와 AI 데이팅 사용량을 선택합니다.",
       },
     ],
   }),
@@ -115,7 +115,7 @@ const CREDIT_PACKAGES: CreditPackage[] = [
     bonusRate: 15,
     listPriceUsd: 19,
     priceUsd: 15,
-    badge: "?멸린",
+    badge: "인기",
     features: ["1,500 + 225 크레딧", "캐릭터채팅", "짧은 제작 테스트"],
   },
   {
@@ -261,13 +261,13 @@ const CRYPTO_OPTIONS: CryptoOption[] = [
   {
     currency: "USDT",
     network: "TRC20",
-    label: "USDT (Tron 쨌 TRC20)",
+    label: "USDT (Tron · TRC20)",
     address: "TJYeasdFCXxxxx-DEMO-TRC20-ADDRESS-xxxxx9aQ",
   },
   {
     currency: "USDT",
     network: "ERC20",
-    label: "USDT (Ethereum 쨌 ERC20)",
+    label: "USDT (Ethereum · ERC20)",
     address: "0xDEMO000000USDTERC20ADDRESS000000000000a1",
   },
   {
@@ -336,10 +336,10 @@ function Premium() {
       <Tabs defaultValue="credits" className="space-y-4">
         <TabsList className="grid w-full max-w-md grid-cols-2 rounded-full">
           <TabsTrigger value="credits" className="rounded-full">
-            ?щ젅??異⑹쟾
+            크레딧 충전
           </TabsTrigger>
           <TabsTrigger value="subscriptions" className="rounded-full">
-            ??援щ룆
+            월 구독
           </TabsTrigger>
         </TabsList>
 
@@ -358,9 +358,9 @@ function Premium() {
             ))}
           </section>
           <div className="grid gap-3 rounded-3xl border border-border/60 bg-card/35 p-4 text-xs text-muted-foreground md:grid-cols-3">
-            <MiniMetric icon={Bot} label="紐⑤뜽 ?좏깮" value="DeepSeek 쨌 Gemini 쨌 ChatGPT 쨌 Claude" />
-            <MiniMetric icon={Clock3} label="?ъ슜 湲곗?" value="梨꾪똿, ?ㅽ넗由??대엺, ?대?吏/?곸긽 ?앹꽦??湲곕낯 ?ъ슜?됱뿉??李④컧" />
-            <MiniMetric icon={CalendarDays} label="珥덇낵 ?ъ슜" value="??湲곕낯 ?ъ슜?됱쓣 ?섏쑝硫??щ젅??異붽? 異⑹쟾 ??怨꾩냽 ?댁슜" />
+            <MiniMetric icon={Bot} label="모델 선택" value="DeepSeek · Gemini · ChatGPT · Claude" />
+            <MiniMetric icon={Clock3} label="사용 기준" value="채팅, 스토리 열람, 이미지/영상 생성은 기본 사용량에서 차감" />
+            <MiniMetric icon={CalendarDays} label="초과 사용" value="월 기본 사용량을 넘으면 크레딧 추가 충전 후 계속 이용" />
           </div>
         </TabsContent>
       </Tabs>
@@ -387,21 +387,23 @@ function Premium() {
 
       <section className="rounded-3xl border border-border/60 bg-card/45 p-4">
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-sm font-semibold">理쒓렐 異⑹쟾 쨌 援щ룆 ?붿껌</h2>
+          <h2 className="text-sm font-semibold">최근 충전 · 구독 요청</h2>
           {!user && (
             <Link to="/auth" className="text-xs text-primary hover:underline">
-              濡쒓렇??            </Link>
+              로그인
+            </Link>
           )}
         </div>
 
         {!user ? (
-          <p className="py-6 text-center text-sm text-muted-foreground">濡쒓렇?명븯硫?異⑹쟾 諛?援щ룆 ?붿껌 ?곹깭瑜??뺤씤?????덉뒿?덈떎.</p>
+          <p className="py-6 text-center text-sm text-muted-foreground">로그인하면 충전 및 구독 요청 상태를 확인할 수 있습니다.</p>
         ) : ordersQuery.isLoading ? (
           <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
             <Loader2 className="size-4 animate-spin" />
-            遺덈윭?ㅻ뒗 以?          </div>
+            불러오는 중
+          </div>
         ) : !ordersQuery.data?.length ? (
-          <p className="py-6 text-center text-sm text-muted-foreground">?꾩쭅 ?붿껌 ?댁뿭???놁뒿?덈떎.</p>
+          <p className="py-6 text-center text-sm text-muted-foreground">아직 요청 내역이 없습니다.</p>
         ) : (
           <div className="divide-y divide-border/50">
             {ordersQuery.data.map((order) => (
@@ -412,7 +414,7 @@ function Premium() {
                     <span className="text-xs text-muted-foreground">{order.credits.toLocaleString()} cr</span>
                   </div>
                   <div className="mt-0.5 truncate text-xs text-muted-foreground">
-                    {new Date(order.created_at).toLocaleString()} 쨌 {order.currency}/{order.network} 쨌 ${order.amount_usd}
+                    {new Date(order.created_at).toLocaleString()} · {order.currency}/{order.network} · ${order.amount_usd}
                   </div>
                 </div>
                 <StatusBadge status={order.status} />
@@ -429,14 +431,14 @@ function Premium() {
         </summary>
         <div className="mt-4 space-y-3 border-t border-border/50 pt-4 text-xs leading-6 text-muted-foreground">
           <p>
-            異⑹쟾???щ젅?㏐낵 援щ룆 湲곕낯 ?ъ슜?됱? 寃곗젣 ?뺤씤 ??諛붾줈 ?ъ슜?????덉뒿?덈떎. ?붿???肄섑뀗痢??뱀꽦???ъ슜??            ?쒖옉?섎㈃ ?섎텋???대젮?곕땲 寃곗젣 ???곹뭹怨?湲덉븸????踰????뺤씤??二쇱꽭??
+            충전 크레딧과 구독 기본 사용량은 결제 확인 후 바로 사용할 수 있습니다. 결제 전 상품명과 금액을 한 번 더 확인해 주세요.
           </p>
           <ul className="space-y-2">
-            <li>泥?빟泥좏쉶??援щℓ?쇰줈遺??7???대궡, ?щ젅?㏃씠??援щ룆 ?쒗깮???꾪? ?ъ슜?섏? ?딆? 寃쎌슦?먮쭔 媛?ν빀?덈떎.</li>
-            <li>?щ젅???좏슚湲곌컙? 寃곗젣?쇰줈遺??1?꾩씠硫? 援щ룆 湲곕낯 ?ъ슜?됱? ?대떦 援щ룆 湲곌컙 ?덉뿉???곗꽑 ?ъ슜?⑸땲??</li>
-            <li>AI ?ъ슜?쒓컙? ?좏깮 紐⑤뜽, ?듬? 湲몄씠, ?대?吏/?곸긽 ?앹꽦 ?щ????곕씪 ?щ씪吏????덉뒿?덈떎.</li>
-            <li>?댁슜?쎄? ?꾨컲?쇰줈 怨꾩젙???쒗븳?섎㈃ ?⑥? ?щ젅?㏐낵 援щ룆 ?쒗깮? ?섎텋 ?놁씠 ?뚮㈇?????덉뒿?덈떎.</li>
-            <li>?섎텋 ?붿껌怨??댁슜 臾몄쓽???щ툕?뚯씪 怨좉컼?쇳꽣瑜??듯빐 ?묒닔??二쇱꽭??</li>
+            <li>청약철회는 구매일로부터 7일 이내, 미사용 상태인 경우에만 가능합니다.</li>
+            <li>크레딧 유효기간은 결제일로부터 1년이며, 기간 만료나 회원 탈퇴 시 소멸됩니다.</li>
+            <li>AI 사용량은 선택 모델, 입력 길이, 이미지/영상 생성 여부에 따라 달라질 수 있습니다.</li>
+            <li>이용약관 위반으로 계정이 제한되면 잔여 크레딧과 구독 혜택은 소멸될 수 있습니다.</li>
+            <li>환불 요청과 이용 문의는 Lovetale 고객센터를 통해 접수해 주세요.</li>
           </ul>
         </div>
       </details>
@@ -480,10 +482,10 @@ function CreditPackageCard({ pkg, onSelect }: { pkg: CreditPackage; onSelect: ()
 
       <div className="mb-4 flex flex-wrap gap-1.5">
         <Badge variant="outline" className={`text-[10px] ${tone.badge}`}>
-          {discountRate}% ?좎씤
+          {discountRate}% 할인
         </Badge>
         <Badge variant="outline" className={`text-[10px] ${tone.badge}`}>
-          蹂대꼫??{pkg.bonusRate}%
+          보너스 {pkg.bonusRate}%
         </Badge>
       </div>
 
@@ -491,7 +493,7 @@ function CreditPackageCard({ pkg, onSelect }: { pkg: CreditPackage; onSelect: ()
 
       <Button onClick={onSelect} className={`mt-5 w-full rounded-full ${tone.button}`} variant="outline">
         <Wallet className="mr-1.5 size-4" />
-        異⑹쟾?섍린
+        충전하기
       </Button>
     </article>
   );
@@ -545,7 +547,8 @@ function SubscriptionCard({ plan, onSelect }: { plan: SubscriptionPlan; onSelect
           ))}
         </div>
         <p className="mt-3 text-[11px] leading-5 text-muted-foreground">
-          梨꾪똿, ?ㅽ넗由??대엺, ?대?吏/?곸긽 ?앹꽦, 罹먮┃???쒖옉? 紐⑤몢 ??湲곕낯 ?ъ슜?됱뿉??李④컧?⑸땲?? 湲곕낯 ?ъ슜?됱쓣 ?섏쑝硫?          ?щ젅??異붽? 異⑹쟾???꾩슂?⑸땲??
+          채팅, 스토리 열람, 이미지/영상 생성, 캐릭터 제작은 모두 월 기본 사용량에서 차감됩니다. 기본 사용량을 넘으면
+          크레딧 추가 충전이 필요합니다.
         </p>
       </div>
 
@@ -553,7 +556,7 @@ function SubscriptionCard({ plan, onSelect }: { plan: SubscriptionPlan; onSelect
 
       <Button onClick={onSelect} className={`mt-5 w-full rounded-full ${tone.button}`} variant="outline">
         <CalendarDays className="mr-1.5 size-4" />
-        援щ룆 ?좎껌
+        구독 신청
       </Button>
     </article>
   );
@@ -612,6 +615,7 @@ function StatusBadge({ status }: { status: string }) {
     submitted: { label: "확인중", cls: "bg-amber-500/15 text-amber-500" },
     confirmed: { label: "완료", cls: "bg-emerald-500/15 text-emerald-500" },
     failed: { label: "실패", cls: "bg-destructive/15 text-destructive" },
+    refunded: { label: "환불", cls: "bg-blue-500/15 text-blue-500" },
   };
   const value = map[status] ?? map.pending;
   return <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-medium ${value.cls}`}>{value.label}</span>;
@@ -633,17 +637,17 @@ function CheckoutDialog({
 
   const copy = (text: string) => {
     navigator.clipboard.writeText(text);
-    toast.success("?낃툑 二쇱냼瑜?蹂듭궗?덉뒿?덈떎.");
+    toast.success("입금 주소를 복사했습니다.");
   };
 
   const submit = async () => {
     if (!item) return;
     if (!user) {
-      toast.error("濡쒓렇?몄씠 ?꾩슂?⑸땲??");
+      toast.error("로그인이 필요합니다.");
       return;
     }
     if (!txHash.trim()) {
-      toast.error("TX Hash瑜??낅젰?섏꽭??");
+      toast.error("TX Hash를 입력하세요.");
       return;
     }
 
@@ -663,11 +667,11 @@ function CheckoutDialog({
     setSubmitting(false);
 
     if (error) {
-      toast.error("?붿껌 ?앹꽦???ㅽ뙣?덉뒿?덈떎.");
+      toast.error("요청 생성에 실패했습니다.");
       return;
     }
 
-    toast.success(item.kind === "subscription" ? "援щ룆 ?좎껌???묒닔?덉뒿?덈떎." : "異⑹쟾 ?붿껌???묒닔?덉뒿?덈떎.");
+    toast.success(item.kind === "subscription" ? "구독 신청이 접수되었습니다." : "충전 요청이 접수되었습니다.");
     setTxHash("");
     onSubmitted();
     onOpenChange(false);
@@ -713,10 +717,10 @@ function CheckoutDialog({
               </TabsList>
               {CRYPTO_OPTIONS.map((candidate) => (
                 <TabsContent key={`${candidate.currency}-${candidate.network}`} value={`${candidate.currency}-${candidate.network}`} className="mt-3">
-                  <Label className="text-xs text-muted-foreground">?낃툑 二쇱냼 쨌 {candidate.label}</Label>
+                <Label className="text-xs text-muted-foreground">입금 주소 · {candidate.label}</Label>
                   <div className="mt-1 flex items-center gap-2 rounded-xl border border-border/60 bg-background/60 p-2">
                     <code className="min-w-0 flex-1 truncate text-xs">{candidate.address}</code>
-                    <Button size="sm" variant="ghost" onClick={() => copy(candidate.address)} aria-label="?낃툑 二쇱냼 蹂듭궗">
+                    <Button size="sm" variant="ghost" onClick={() => copy(candidate.address)} aria-label="입금 주소 복사">
                       <Copy className="size-3.5" />
                     </Button>
                   </div>
@@ -730,7 +734,7 @@ function CheckoutDialog({
               </Label>
               <Input
                 id="txhash"
-                placeholder="0x... ?먮뒗 ?ㅽ듃?뚰겕 TX ID"
+                placeholder="0x... 또는 네트워크 TX ID"
                 value={txHash}
                 onChange={(event) => setTxHash(event.target.value)}
                 className="mt-1 font-mono text-xs"
@@ -739,7 +743,7 @@ function CheckoutDialog({
 
             <Button onClick={submit} disabled={submitting} className="w-full rounded-full">
               {submitting && <Loader2 className="mr-2 size-4 animate-spin" />}
-              {item.kind === "subscription" ? "援щ룆 ?뺤씤 ?붿껌" : "異⑹쟾 ?붿껌"}
+              {item.kind === "subscription" ? "구독 확인 요청" : "충전 요청"}
             </Button>
           </>
         )}

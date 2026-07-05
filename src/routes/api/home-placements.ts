@@ -30,6 +30,22 @@ function validSlot(value: string | null): HomeSlot | null {
   return value && HOME_SLOTS.has(value as HomeSlot) ? (value as HomeSlot) : null;
 }
 
+function recordOf(value: unknown): Record<string, any> {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, any>) : {};
+}
+
+function contentTypeFromCard(card: Record<string, any>): "story" | "story_rpg" {
+  const storyRpg = recordOf(card.storyRpg);
+  const sourceStoryId = String(storyRpg.sourceStoryId || card.sourceStoryId || "").trim();
+  const isStoryRpg =
+    card.contentType === "story_rpg" &&
+    (Boolean(sourceStoryId) ||
+      storyRpg.enabled === true ||
+      Boolean(storyRpg.generatedFrom) ||
+      (Array.isArray(storyRpg.scenes) && storyRpg.scenes.length > 0));
+  return isStoryRpg ? "story_rpg" : "story";
+}
+
 async function authorNames(userIds: string[]) {
   const uniqueIds = [...new Set(userIds.filter(Boolean))];
   if (!uniqueIds.length) return new Map<string, string>();
@@ -44,11 +60,13 @@ async function authorNames(userIds: string[]) {
 }
 
 function toCard(row: PlacementRow, story: UserStoryRow, names: Map<string, string>) {
+  const card = recordOf(story.character_card);
   return {
     id: row.id,
     slot: row.slot,
     sort_order: row.sort_order,
     story_id: story.id,
+    content_type: contentTypeFromCard(card),
     title: story.title,
     logline: story.logline,
     cover_url: story.cover_url,

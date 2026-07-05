@@ -109,3 +109,24 @@ export const analyzeStoryCharacters = createServerFn({ method: "POST" })
       chapterId: data.chapterId,
     });
   });
+
+export const generateStoryRpgScenario = createServerFn({ method: "POST" })
+  .inputValidator((i: unknown) => i as { storyId: string; maxScenes?: number })
+  .handler(async ({ data }) => {
+    return storyAiApi<
+      ApiOk<{
+        storyId: string;
+        title: string;
+        chapters: number;
+        scenes: number;
+        endingsTotal: number;
+        providerLabel: string;
+        model: string;
+        tokensUsed: number;
+      }>
+    >({
+      action: "story_rpg_generate",
+      storyId: data.storyId,
+      maxScenes: data.maxScenes ?? 24,
+    });
+  });

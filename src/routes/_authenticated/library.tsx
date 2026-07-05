@@ -25,8 +25,8 @@ import { getMyCreatorRevenueRule } from "@/lib/revenue-rules.functions";
 export const Route = createFileRoute("/_authenticated/library")({
   head: () => ({
     meta: [
-      { title: "?쇱씠釉뚮윭由?| Lovetale" },
-      { name: "description", content: "援щℓ???ㅽ넗由? ?먯옉?ㅽ넗由? ?먮ℓ 以묒씤 ?묓뭹??愿由ы빀?덈떎." },
+      { title: "라이브러리 | Lovetale" },
+      { name: "description", content: "구매한 스토리, 자작스토리, 판매 중인 작품을 관리합니다." },
     ],
   }),
   component: LibraryPage,
@@ -67,7 +67,7 @@ function LibraryPage() {
   const delMut = useMutation({
     mutationFn: (id: string) => del({ data: { id } }),
     onSuccess: () => {
-      toast.success("??젣?덉뒿?덈떎.");
+      toast.success("삭제되었습니다.");
       qc.invalidateQueries({ queryKey: ["my_user_stories"] });
     },
     onError: (error: Error) => toast.error(error.message),
@@ -91,7 +91,7 @@ function LibraryPage() {
         },
       }),
     onSuccess: () => {
-      toast.success("留덉폆???깅줉?덉뒿?덈떎.");
+      toast.success("스토리마켓에 등록되었습니다.");
       setPublishTarget(null);
       qc.invalidateQueries({ queryKey: ["my_user_stories"] });
     },
@@ -101,7 +101,7 @@ function LibraryPage() {
   const unpublishMut = useMutation({
     mutationFn: (id: string) => unpublish({ data: { id } }),
     onSuccess: () => {
-      toast.success("留덉폆?먯꽌 ?대졇?듬땲??");
+      toast.success("스토리마켓에서 내렸습니다.");
       qc.invalidateQueries({ queryKey: ["my_user_stories"] });
     },
     onError: (error: Error) => toast.error(error.message),
@@ -122,10 +122,12 @@ function LibraryPage() {
           <div className="flex items-center gap-3">
             <Link to="/builder" className="inline-flex items-center gap-1 text-sm text-primary hover:text-primary/80">
               <Plus className="size-4" />
-              자작스토리`n            </Link>
+              자작스토리
+            </Link>
             <Link to="/marketplace" className="hidden items-center gap-1 text-sm text-muted-foreground hover:text-foreground sm:inline-flex">
               <Store className="size-4" />
-              스토리마켓`n            </Link>
+              스토리마켓
+            </Link>
           </div>
         </div>
       </header>
@@ -142,7 +144,7 @@ function LibraryPage() {
           {purchasedLoading ? (
             <LoadingRow />
           ) : (purchased?.length ?? 0) === 0 ? (
-            <EmptyState icon={BookOpen} text="援щℓ???ㅽ넗由ш? ?놁뒿?덈떎." actionLabel="留덉폆 蹂닿린" href="/marketplace" />
+            <EmptyState icon={BookOpen} text="구매한 스토리가 없습니다." actionLabel="마켓 보기" href="/marketplace" />
           ) : (
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {purchased!.map((story) => (
@@ -184,11 +186,13 @@ function LibraryPage() {
                         {story.is_listed ? (
                           <Badge className="gap-1 text-[10px]">
                             <Store className="size-3" />
-                            {story.price_credits} ?щ젅??                          </Badge>
+                            {story.price_credits} 크레딧
+                          </Badge>
                         ) : (
                           <Badge variant="outline" className="gap-1 text-[10px]">
                             <Lock className="size-3" />
-                            鍮꾧났媛?                          </Badge>
+                            비공개
+                          </Badge>
                         )}
                         <Badge variant="secondary" className="text-[10px] capitalize">
                           {story.status}
@@ -204,13 +208,13 @@ function LibraryPage() {
                       <Button asChild size="sm" variant="outline">
                         <Link to="/play/user/$id" params={{ id: story.id }}>
                           <Play className="mr-1 size-3.5" />
-                          蹂닿린
+                          보기
                         </Link>
                       </Button>
                       <Button asChild size="sm" variant="outline">
                         <Link to="/builder/$id" params={{ id: story.id }}>
                           <Pencil className="mr-1 size-3.5" />
-                          ?몄쭛
+                          편집
                         </Link>
                       </Button>
                       {story.is_listed ? (
@@ -219,10 +223,11 @@ function LibraryPage() {
                           variant="ghost"
                           disabled={unpublishMut.isPending}
                           onClick={() => {
-                            if (confirm("留덉폆?먯꽌 ?대┫源뚯슂?")) unpublishMut.mutate(story.id);
+                            if (confirm("스토리마켓에서 내릴까요?")) unpublishMut.mutate(story.id);
                           }}
                         >
-                          ?대━湲?                        </Button>
+                          내리기
+                        </Button>
                       ) : (
                         <Button
                           size="sm"
@@ -233,7 +238,7 @@ function LibraryPage() {
                           }}
                         >
                           <Store className="mr-1 size-3.5" />
-                          ?먮ℓ
+                          판매
                         </Button>
                       )}
                       <Button
@@ -241,9 +246,9 @@ function LibraryPage() {
                         variant="ghost"
                         disabled={delMut.isPending}
                         onClick={() => {
-                          if (confirm("???ㅽ넗由щ? ??젣?좉퉴??")) delMut.mutate(story.id);
+                          if (confirm("이 스토리를 삭제할까요?")) delMut.mutate(story.id);
                         }}
-                        aria-label="?ㅽ넗由???젣"
+                        aria-label="스토리 삭제"
                       >
                         <Trash2 className="size-3.5" />
                       </Button>
@@ -259,9 +264,9 @@ function LibraryPage() {
       <Dialog open={!!publishTarget} onOpenChange={(open) => !open && setPublishTarget(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>留덉폆???먮ℓ</DialogTitle>
+            <DialogTitle>스토리마켓에 판매</DialogTitle>
             <DialogDescription>
-              ?먮ℓ ?섏씡??{creatorRule?.sharePercent ?? 70}%媛 ?묎??먭쾶 遺꾨같?⑸땲??
+              판매 수익의 {creatorRule?.sharePercent ?? 70}%가 작가에게 배분됩니다.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
@@ -287,7 +292,7 @@ function LibraryPage() {
               />
             </Field>
 
-            <Field label="媛뺣룄">
+            <Field label="수위">
               <Segmented
                 value={heatInput}
                 values={[
@@ -300,13 +305,13 @@ function LibraryPage() {
               />
             </Field>
 
-            <Field label="?쒓렇">
-              <Input value={tagsInput} placeholder="?ㅽ뵾?? ?ы쉶, 鍮꾨?怨꾩빟" onChange={(event) => setTagsInput(event.target.value)} />
+            <Field label="태그">
+              <Input value={tagsInput} placeholder="스파이, 후회, 비밀계약" onChange={(event) => setTagsInput(event.target.value)} />
             </Field>
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setPublishTarget(null)}>
-              痍⑥냼
+              취소
             </Button>
             <Button
               disabled={publishMut.isPending}
@@ -327,7 +332,7 @@ function LibraryPage() {
               }}
             >
               {publishMut.isPending && <Loader2 className="mr-1 size-4 animate-spin" />}
-              ?먮ℓ ?깅줉
+              판매 등록
             </Button>
           </DialogFooter>
         </DialogContent>

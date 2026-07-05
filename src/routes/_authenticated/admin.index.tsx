@@ -12,7 +12,6 @@ import {
   ArrowRight,
   Image,
   Store,
-  FilePlus2,
   KeyRound,
   Gauge,
 } from "lucide-react";
@@ -41,15 +40,12 @@ function DashboardPage() {
           </span>
           <h1 className="mt-1 font-display text-3xl font-semibold">오늘의 작업 현황</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            콘텐츠 등록은 <b>새 콘텐츠 등록</b>, 목록 운영은 <b>콘텐츠 관리</b>에서 처리하세요.
+            콘텐츠 등록과 목록 운영은 <b>스토리관리</b>에서 처리하세요.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Link to="/admin/import" className="inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:opacity-90">
-            <FilePlus2 className="h-4 w-4" /> 새 콘텐츠 등록
-          </Link>
-          <Link to="/admin/stories" className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm hover:border-primary/40">
-            <BookOpen className="h-4 w-4" /> 콘텐츠 관리
+          <Link to="/admin/stories" className="inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:opacity-90">
+            <BookOpen className="h-4 w-4" /> 스토리관리
           </Link>
         </div>
       </header>
@@ -105,19 +101,13 @@ function DashboardPage() {
               <QuickCard
                 to="/admin/stories"
                 icon={BookOpen}
-                title="콘텐츠 관리"
-                desc="검색 · 필터 · 분류 · 일괄 운영"
-              />
-              <QuickCard
-                to="/admin/import"
-                icon={FilePlus2}
-                title="새 콘텐츠 등록"
-                desc="원문 입력 → 초안 생성 → 편집 시작"
+                title="스토리관리"
+                desc="등록 · 검색 · 분류 · 일괄 운영"
               />
               <QuickCard
                 to="/admin/characters"
                 icon={Sparkles}
-                title="캐릭터"
+                title="캐릭터관리"
                 desc="캐릭터 카드 · 관계 · 비주얼 프롬프트"
               />
               <QuickCard

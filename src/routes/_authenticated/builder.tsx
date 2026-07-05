@@ -14,10 +14,10 @@ import { BUILDER_PRICING, generateUserStory } from "@/lib/story-builder.function
 export const Route = createFileRoute("/_authenticated/builder")({
   head: () => ({
     meta: [
-      { title: "?먯옉?ㅽ넗由?| Lovetale" },
+      { title: "자작스토리 | Lovetale" },
       {
         name: "description",
-        content: "?먭퀬, PDF ?댁슜, 罹먮┃???ㅼ젙??硫?곕え???명꽣?숉떚釉??ㅽ넗由щ줈 ?쒖옉?⑸땲??",
+        content: "원고, PDF 내용, 캐릭터 설정을 멀티모달 인터랙티브 스토리로 제작합니다.",
       },
     ],
   }),
@@ -25,9 +25,9 @@ export const Route = createFileRoute("/_authenticated/builder")({
 });
 
 const SAMPLES = [
-  "鍮꾧? ?ㅻ뒗 諛? ?ㅻ옒???ㅼ뼱吏??곗씤怨?媛숈? ??앹뿉??留덉＜移쒕떎. 洹몃뒗 ?꾩쭅???닿? 以 紐⑷구?대? 李④퀬 ?덈떎.",
-  "?닿렐 ??硫덉텣 ?섎━踰좎씠?? ?됱냼 ?됱젙?섎뜕 ?곸궗媛 泥섏쓬?쇰줈 ?붾뱾由щ뒗 ?쒖젙??蹂댁씤??",
-  "寃고샎???꾨궇 諛? 媛??移쒗븳 移쒓뎄???띾뫁?닿? 留덉?留?遺?곸쓣 ?꾪븯??李얠븘?⑤떎.",
+  "비가 오던 밤, 오래전 헤어진 연인이 같은 대피소에 멈춰 섰다. 그는 아직도 내가 준 목걸이를 차고 있었다.",
+  "퇴근길 엘리베이터 안, 늘 냉정하던 상사가 처음으로 흔들리는 표정을 보였다.",
+  "결혼식 전날 밤, 가장 친한 친구의 약혼자가 마지막 부탁을 하기 위해 찾아왔다.",
 ];
 
 function BuilderPage() {
@@ -54,7 +54,7 @@ function BuilderPage() {
         },
       }),
     onSuccess: (res) => {
-      toast.success(`?ㅽ넗由ш? ?앹꽦?섏뿀?듬땲??(-${res.creditsCharged} ?щ젅??`);
+      toast.success(`스토리가 생성되었습니다. (-${res.creditsCharged} 크레딧)`);
       qc.invalidateQueries({ queryKey: ["my_user_stories"] });
       qc.invalidateQueries({ queryKey: ["profile_balance"] });
       navigate({ to: "/builder/$id", params: { id: res.id } });
@@ -87,7 +87,7 @@ function BuilderPage() {
             </Link>
             <Link to="/marketplace" className="hidden items-center gap-1 text-sm text-muted-foreground hover:text-foreground sm:inline-flex">
               <Store className="size-4" />
-              留덉폆
+              스토리마켓
             </Link>
           </div>
         </div>
@@ -99,15 +99,16 @@ function BuilderPage() {
             <div className="flex items-center gap-2">
               <Badge variant="outline" className="gap-1 border-primary/30 bg-primary/10 text-primary">
                 <FileText className="size-3" />
-                理쒕? 10留뚯옄
+                최대 10만자
               </Badge>
               <Badge variant="outline" className="gap-1">
                 <Image className="size-3" />
-                硫?곕え??              </Badge>
+                멀티모달
+              </Badge>
             </div>
             <Button size="sm" variant={advanced ? "secondary" : "outline"} onClick={() => setAdvanced((value) => !value)}>
               <Settings2 className="mr-1 size-3.5" />
-              ?ㅼ젙
+              설정
             </Button>
           </div>
 
@@ -189,7 +190,7 @@ function BuilderPage() {
                     onClick={() => setPrompt(sample)}
                     className="rounded-full border border-border/60 bg-background/40 px-3 py-1 text-xs text-muted-foreground transition hover:border-primary/40 hover:text-foreground disabled:opacity-50"
                   >
-                    ?덉떆 {index + 1}
+                    예시 {index + 1}
                   </button>
                 ))}
               </div>
@@ -207,26 +208,26 @@ function BuilderPage() {
 
           <div className="rounded-3xl border border-border/60 bg-card/45 p-4">
             <div className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">?띿뒪???앹꽦</span>
+              <span className="text-muted-foreground">텍스트 생성</span>
               <span className="font-semibold">{BUILDER_PRICING.text}</span>
             </div>
             <div className="mt-3 flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">?대?吏 ?щ’</span>
-              <span className="font-semibold">{BUILDER_PRICING.perImageSlot}/?λ㈃</span>
+              <span className="text-muted-foreground">이미지 슬롯</span>
+              <span className="font-semibold">{BUILDER_PRICING.perImageSlot}/장면</span>
             </div>
           </div>
 
           <div className="rounded-3xl border border-border/60 bg-card/45 p-4">
-            <div className="text-sm font-semibold">?쒖옉 ?먮쫫</div>
+            <div className="text-sm font-semibold">제작 흐름</div>
             <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
               <span className="rounded-full bg-primary px-2 py-0.5 text-primary-foreground">1</span>
-              ?낅젰
+              입력
               <span className="h-px flex-1 bg-border" />
               <span className="rounded-full bg-primary px-2 py-0.5 text-primary-foreground">2</span>
-              ?몄쭛
+              편집
               <span className="h-px flex-1 bg-border" />
               <span className="rounded-full bg-primary px-2 py-0.5 text-primary-foreground">3</span>
-              ?먮ℓ
+              판매
             </div>
           </div>
         </aside>

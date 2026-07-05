@@ -20,10 +20,10 @@ import { claimReward, getRewardCenter, type RewardMission } from "@/lib/rewards.
 export const Route = createFileRoute("/_authenticated/rewards")({
   head: () => ({
     meta: [
-      { title: "臾대즺 ?щ젅??諛쏄린 | Lovetale" },
+      { title: "무료크레딧 | Lovetale" },
       {
         name: "description",
-        content: "출석체크? 泥??댁슜 誘몄뀡?쇰줈 Lovetale 泥댄뿕 ?щ젅?㏃쓣 諛쏆쓣 ???덉뒿?덈떎.",
+        content: "출석체크와 첫 이용 미션으로 Lovetale 체험 크레딧을 받을 수 있습니다.",
       },
     ],
   }),
@@ -43,12 +43,12 @@ function RewardsPage() {
   const claimMut = useMutation({
     mutationFn: (rewardId: RewardMission["id"] | "daily_attendance") => claim({ data: { rewardId } }),
     onSuccess: (result) => {
-      toast.success(`${result.creditsAwarded.toLocaleString()} ?щ젅?㏃쓣 諛쏆븯?듬땲??`);
+      toast.success(`${result.creditsAwarded.toLocaleString()} 크레딧을 받았습니다.`);
       qc.invalidateQueries({ queryKey: ["reward_center"] });
       qc.invalidateQueries({ queryKey: ["my_profile_balance"] });
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "蹂댁긽 吏湲됱뿉 ?ㅽ뙣?덉뒿?덈떎.");
+      toast.error(error instanceof Error ? error.message : "보상 지급에 실패했습니다.");
     },
   });
 
@@ -62,12 +62,12 @@ function RewardsPage() {
             <Gift className="size-3" />
             FREE CREDIT
           </Badge>
-          <h1 className="text-base font-semibold">臾대즺 ?щ젅??諛쏄린</h1>
+          <h1 className="text-base font-semibold">무료크레딧</h1>
         </div>
         <Button asChild variant="outline" size="sm" className="w-fit gap-1.5 rounded-full">
           <Link to="/premium">
             <Coins className="size-4" />
-            異⑹쟾쨌援щ룆 蹂닿린
+            충전,구독 보기
           </Link>
         </Button>
       </section>
@@ -76,11 +76,12 @@ function RewardsPage() {
         <div className="grid min-h-[360px] place-items-center rounded-3xl border border-border/60 bg-card/35">
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="size-4 animate-spin" />
-            蹂댁긽 ?뺣낫瑜?遺덈윭?ㅻ뒗 以?          </div>
+            보상 정보를 불러오는 중
+          </div>
         </div>
       ) : !data ? (
         <div className="rounded-3xl border border-border/60 bg-card/35 p-8 text-center text-sm text-muted-foreground">
-          蹂댁긽 ?뺣낫瑜?遺덈윭?ㅼ? 紐삵뻽?듬땲??
+          보상 정보를 불러오지 못했습니다.
         </div>
       ) : (
         <>
@@ -112,14 +113,14 @@ function RewardsPage() {
                 className="mt-5 w-full rounded-full bg-pink-500 text-white hover:bg-pink-500/90"
               >
                 {claimMut.isPending ? <Loader2 className="mr-2 size-4 animate-spin" /> : <Gift className="mr-2 size-4" />}
-                {data.attendance.claimedToday ? "?ㅻ뒛 異쒖꽍 蹂댁긽 ?꾨즺" : "?ㅻ뒛 異쒖꽍 蹂댁긽 諛쏄린"}
+                {data.attendance.claimedToday ? "오늘 출석 보상 완료" : "오늘 출석 보상 받기"}
               </Button>
             </div>
 
             <div className="rounded-3xl border border-blue-500/40 bg-card/50 p-5">
               <div className="mb-3 inline-flex items-center gap-1 rounded-full bg-blue-500/10 px-2.5 py-1 text-[11px] font-medium text-blue-600 dark:text-blue-200">
                 <Sparkles className="size-3" />
-                泥댄뿕 ?ㅺ퀎
+                체험 설계
               </div>
               <h2 className="text-xl font-semibold">크레딧이 없어도 핵심 기능을 먼저 경험하세요</h2>
               <p className="mt-2 text-sm leading-6 text-muted-foreground">
@@ -179,23 +180,24 @@ function MissionCard({
       {mission.claimed ? (
         <Button disabled variant="outline" className="mt-4 rounded-full">
           <CheckCircle2 className="mr-1.5 size-4" />
-          ?꾨즺
+          완료
         </Button>
       ) : mission.canClaim ? (
         <Button onClick={onClaim} disabled={isPending} className="mt-4 rounded-full">
           {isPending ? <Loader2 className="mr-1.5 size-4 animate-spin" /> : <Gift className="mr-1.5 size-4" />}
-          蹂댁긽 諛쏄린
+          보상 받기
         </Button>
       ) : mission.actionHref ? (
         <Button asChild variant="outline" className="mt-4 rounded-full">
           <Link to={mission.actionHref}>
-            {mission.actionLabel ?? "吏꾪뻾?섍린"}
+            {mission.actionLabel ?? "진행하기"}
             <ArrowRight className="ml-1.5 size-4" />
           </Link>
         </Button>
       ) : (
         <Button disabled variant="outline" className="mt-4 rounded-full">
-          議곌굔 ?湲?        </Button>
+          조건 대기
+        </Button>
       )}
     </article>
   );

@@ -27,6 +27,10 @@ import { UnifiedStoryReader, type CharacterChatProfile } from "@/components/unif
 import { BeatReader, type ReaderBeat } from "@/components/beat-reader";
 
 export const Route = createFileRoute("/_authenticated/play/user/$id")({
+  validateSearch: (search: Record<string, unknown>) => ({
+    character: typeof search.character === "string" ? search.character : null,
+    chat: search.chat === true || search.chat === "true",
+  }),
   head: () => ({ meta: [{ title: "스토리 플레이 - Lovetale" }] }),
   component: UserStoryPlay,
 });
@@ -87,7 +91,7 @@ function getCharacterName(card: any) {
   if (Array.isArray(card?.characters) && card.characters[0]?.name) {
     return card.characters[0].name as string;
   }
-  return asString(card?.name, "상대 주인공");
+  return asString(card?.name, "캐릭터 미등록");
 }
 
 function getCharacterProfiles(card: any): CharacterChatProfile[] {
@@ -95,7 +99,7 @@ function getCharacterProfiles(card: any): CharacterChatProfile[] {
   const characters = raw
     .map((character: any, index: number) => ({
       id: asString(character?.id, `character-${index + 1}`),
-      name: asString(character?.name || character?.title, index === 0 ? getCharacterName(card) : `상대 ${index + 1}`),
+      name: asString(character?.name || character?.title),
       role: asString(character?.role),
       persona: asString(character?.persona),
       personality: asString(character?.personality),
@@ -103,15 +107,18 @@ function getCharacterProfiles(card: any): CharacterChatProfile[] {
       relationship: asString(character?.relationship),
       notes: asString(character?.notes),
       avatarUrl: typeof character?.avatarUrl === "string" ? character.avatarUrl : null,
+      showcaseAssets: Array.isArray(character?.showcaseAssets) ? character.showcaseAssets : [],
     }))
     .filter((character) => character.name);
 
   if (characters.length) return characters;
+  const fallbackName = getCharacterName(card);
+  if (fallbackName === "캐릭터 미등록") return [];
 
   return [
     {
       id: "main-character",
-      name: getCharacterName(card),
+      name: fallbackName,
       role: asString(card?.role),
       persona: asString(card?.persona),
       personality: asString(card?.personality),
@@ -119,6 +126,7 @@ function getCharacterProfiles(card: any): CharacterChatProfile[] {
       relationship: asString(card?.relationship),
       notes: asString(card?.notes),
       avatarUrl: typeof card?.avatarUrl === "string" ? card.avatarUrl : null,
+      showcaseAssets: Array.isArray(card?.showcaseAssets) ? card.showcaseAssets : [],
     },
   ];
 }
@@ -173,10 +181,13 @@ function getChapterTeaser(chapter: ReaderChapter, index: number) {
 
 function UserStoryPlay() {
   const { id } = Route.useParams();
+  const search = Route.useSearch();
   const fetchStory = useServerFn(getUnifiedReaderStory);
-  const [stage, setStage] = useState<ReaderStage>("title");
+  const requestedCharacterId = search.character;
+  const shouldOpenChat = Boolean(search.chat || requestedCharacterId);
+  const [stage, setStage] = useState<ReaderStage>(() => (shouldOpenChat ? "reader" : "title"));
   const [selectedChapterId, setSelectedChapterId] = useState<string | null>(null);
-  const [openChatOnReader, setOpenChatOnReader] = useState(false);
+  const [openChatOnReader, setOpenChatOnReader] = useState(shouldOpenChat);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["user_story_unified", id],
@@ -303,6 +314,7 @@ function UserStoryPlay() {
           assetSlots={assetSlots}
           characterName={characterName}
           characterProfiles={characterProfiles}
+          selectedCharacterId={requestedCharacterId}
           initialChatOpen={openChatOnReader}
           nextChapterTitle={nextChapter?.title ?? null}
           onNextChapter={nextChapter ? () => openChapter(nextChapter, { chat: false }) : undefined}

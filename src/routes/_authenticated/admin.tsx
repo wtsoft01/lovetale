@@ -21,8 +21,8 @@ import {
   Gauge,
   ExternalLink,
   KeyRound,
-  FilePlus2,
   Gift,
+  Gamepad2,
   LayoutGrid,
   PanelLeftClose,
   PanelLeftOpen,
@@ -31,6 +31,7 @@ import {
 import { cn } from "@/lib/utils";
 import { getStaffAccess } from "@/lib/staff-access";
 import { useAuth } from "@/hooks/use-auth";
+import { BrandLogo } from "@/components/brand-logo";
 
 export const Route = createFileRoute("/_authenticated/admin")({
   head: () => ({
@@ -53,17 +54,17 @@ type NavItem = {
 const NAV: NavItem[] = [
   {
     to: "/admin/stories",
-    label: "콘텐츠 관리",
+    label: "스토리관리",
     desc: "검색, 필터, 분류, 일괄 운영",
     icon: BookOpen,
     requires: "editor",
     section: "content",
   },
   {
-    to: "/admin/import",
-    label: "새 콘텐츠 등록",
-    desc: "본문 등록, 단편/회차형 스토리 생성",
-    icon: FilePlus2,
+    to: "/admin/story-rpg",
+    label: "스토리게임관리",
+    desc: "RPG 작업본",
+    icon: Gamepad2,
     requires: "editor",
     section: "content",
   },
@@ -77,7 +78,7 @@ const NAV: NavItem[] = [
   },
   {
     to: "/admin/characters",
-    label: "캐릭터",
+    label: "캐릭터관리",
     desc: "주인공과 관계 설정 관리",
     icon: UserCircle2,
     requires: "editor",
@@ -288,9 +289,7 @@ function AdminMenu({
       <div className="mb-4 px-2 pt-1">
         {open ? (
           <>
-            <span className="text-[10px] font-semibold uppercase tracking-[0.32em] text-primary">
-              Lovetale
-            </span>
+            <BrandLogo className="h-8 w-[126px]" />
             <h2 className="mt-0.5 font-display text-xl font-semibold">Studio</h2>
             <p className="mt-1 text-xs text-muted-foreground">
               {isAdmin ? "Admin" : isEditor ? "Editor" : isModerator ? "Moderator" : "Staff"} 콘솔
@@ -303,9 +302,7 @@ function AdminMenu({
             </Link>
           </>
         ) : (
-          <div className="flex justify-center py-2 text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-            LT
-          </div>
+          <BrandLogo className="mx-auto h-8 w-8" imageClassName="w-[126px] max-w-none" />
         )}
       </div>
 

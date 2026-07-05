@@ -41,6 +41,10 @@ export type AdminStoryRow = {
   max_heat: string;
   tags: string[];
   content_type: string;
+  source_story_id: string | null;
+  source_title: string | null;
+  rpg_scenes_count: number;
+  rpg_endings_total: number;
   story_overview: string;
   chapters_count: number;
   free_chapters_count: number;
@@ -206,7 +210,7 @@ export const createDraftStory = createServerFn({ method: "POST" })
     (input: any) =>
       input as {
         title?: string;
-        contentType?: "web_novel" | "romance_sim" | "webtoon" | "short_story" | "other";
+        contentType?: "web_novel" | "romance_sim" | "story_rpg" | "webtoon" | "short_story" | "other";
         sourceText?: string;
         targetStoryId?: string;
         coverUrl?: string | null;
@@ -252,6 +256,21 @@ export const createDraftStory = createServerFn({ method: "POST" })
         characterRole: data.characterRole ?? "",
         characterPersona: data.characterPersona ?? "",
         characterSpeakingStyle: data.characterSpeakingStyle ?? "",
+      }),
+    });
+    return { id: payload.id };
+  });
+
+export const cloneStoryAsRpg = createServerFn({ method: "POST" })
+  .inputValidator((input: any) => input as { sourceStoryId: string; title?: string })
+  .handler(async ({ data }): Promise<{ id: string }> => {
+    const payload = await adminStoriesApi<{ ok: true; id: string }>("", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "clone_story_rpg",
+        sourceStoryId: data.sourceStoryId,
+        title: data.title,
       }),
     });
     return { id: payload.id };

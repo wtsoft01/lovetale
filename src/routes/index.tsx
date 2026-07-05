@@ -27,10 +27,10 @@ import heroBanner from "@/assets/hero-banner.jpg";
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "Lovetale | ?ㅽ넗由??먮젅?댁뀡" },
+      { title: "Lovetale | 스토리탐색" },
       {
         name: "description",
-        content: "硫?곕え??19+ ?ㅽ넗由? 二쇱씤怨듦낵???곗씠?? ?좏깮???곗븷 ?쒕??덉씠?섏쓣 ?쒓납?먯꽌 留뚮굹??Lovetale ?먮젅?댁뀡.",
+        content: "멀티모달 스토리와 주인공 채팅, 선택형 로맨스 시뮬레이션을 한곳에서 만나보세요.",
       },
     ],
   }),
@@ -89,13 +89,11 @@ function Home() {
       <div className="mx-auto max-w-7xl space-y-12 px-6 md:px-10">
         <SlotSection
           title="지금 뜨거운 스토리"
-          subtitle="많이 읽히는 인기 스토리를 만나보세요"
           stories={trending}
           loading={trendingQ.isLoading}
         />
         <SlotSection
           title="신작"
-          subtitle="방금 공개된 새로운 이야기를 먼저 만나보세요"
           stories={newest}
           loading={newQ.isLoading}
         />
@@ -104,9 +102,6 @@ function Home() {
           <div className="mb-5 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div>
               <h2 className="font-display text-2xl font-semibold md:text-3xl">모든 스토리</h2>
-              <p className="mt-1 text-sm text-muted-foreground">
-                읽고, 선택하고, 주인공과 대화하며 나만의 흐름으로 이어가는 작품들입니다.
-              </p>
             </div>
             <div className="relative w-full md:w-80">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -132,6 +127,7 @@ function Home() {
                   key={story.id}
                   story={{
                     id: story.story_id,
+                    content_type: story.content_type,
                     title: story.title,
                     logline: story.logline,
                     cover_url: story.cover_url,
@@ -166,7 +162,7 @@ function HeroSection({ story }: { story?: HomePlacementCard }) {
         <div className="relative z-10 mx-auto flex h-full max-w-7xl flex-col justify-end px-6 pb-12 md:px-10">
           <div className="flex items-center gap-2 text-xs uppercase tracking-[0.3em] text-primary">
             <Flame className="h-3.5 w-3.5" />
-            {story ? "?ㅻ뒛???먮젅?댁뀡" : "?ㅽ넗由??먮젅?댁뀡"}
+            스토리탐색
           </div>
           {story ? (
             <>
@@ -192,12 +188,12 @@ function HeroSection({ story }: { story?: HomePlacementCard }) {
               <div className="mt-6 flex flex-wrap gap-3">
                 <Button asChild size="lg" className="shadow-glow">
                   <Link to="/play/user/$id" params={{ id: story.story_id }}>
-                    <Sparkles className="mr-2 h-4 w-4" /> 諛붾줈 紐곗엯?섍린
+                    <Sparkles className="mr-2 h-4 w-4" /> 바로 몰입하기
                   </Link>
                 </Button>
                 <Button asChild size="lg" variant="outline" className="border-primary/50 bg-primary/10 backdrop-blur">
                   <Link to="/marketplace">
-                    留덉폆 ?섎윭蹂닿린
+                    스토리마켓
                     <ArrowRight className="ml-2 h-4 w-4" />
                   </Link>
                 </Button>
@@ -206,10 +202,8 @@ function HeroSection({ story }: { story?: HomePlacementCard }) {
           ) : (
             <>
               <h1 className="mt-3 max-w-2xl font-display text-4xl font-semibold leading-tight md:text-6xl">
-                ?쎈뒗 ?쒓컙, <span className="text-primary">二쇱씤怨듦낵 ?곌껐?섎뒗</span> ?ㅽ넗由?              </h1>
-              <p className="mt-3 max-w-xl text-sm text-muted-foreground md:text-base">
-                硫?곕え??19+ ?뱀냼?? ?좏깮???곗븷 ?쒕??덉씠?? 二쇱씤怨듦낵???곗씠?낆쓣 ???붾㈃?먯꽌 ?쒖옉?섏꽭??
-              </p>
+                읽는 순간, <span className="text-primary">주인공과 연결되는</span> 스토리
+              </h1>
               <HeroFeatureChips />
             </>
           )}
@@ -223,23 +217,24 @@ function HeroFeatureChips() {
   return (
     <div className="mt-4 flex flex-wrap gap-2">
       <Badge variant="outline" className="gap-1 border-primary/35 bg-primary/10 text-primary">
-        <BookOpen className="size-3" /> 硫?곕え???ㅽ넗由?      </Badge>
+        <BookOpen className="size-3" /> 멀티모달 스토리
+      </Badge>
       <Badge variant="outline" className="gap-1 border-primary/35 bg-primary/10 text-primary">
-        <HeartHandshake className="size-3" /> 二쇱씤怨??곗씠??      </Badge>
+        <HeartHandshake className="size-3" /> 주인공 채팅
+      </Badge>
       <Badge variant="outline" className="gap-1 border-primary/35 bg-primary/10 text-primary">
-        <WandSparkles className="size-3" /> ?좏깮???뚮젅??      </Badge>
+        <WandSparkles className="size-3" /> 선택형 플레이
+      </Badge>
     </div>
   );
 }
 
 function SlotSection({
   title,
-  subtitle,
   stories,
   loading,
 }: {
   title: string;
-  subtitle: string;
   stories: HomePlacementCard[];
   loading: boolean;
 }) {
@@ -249,10 +244,9 @@ function SlotSection({
       <div className="mb-4 flex items-end justify-between">
         <div>
           <h2 className="font-display text-2xl font-semibold md:text-3xl">{title}</h2>
-          <p className="text-sm text-muted-foreground">{subtitle}</p>
         </div>
         <Link to="/marketplace" className="text-xs text-muted-foreground hover:text-foreground">
-          ?꾩껜蹂닿린
+          전체보기
         </Link>
       </div>
       {loading ? (
@@ -266,6 +260,7 @@ function SlotSection({
               key={story.id}
               story={{
                 id: story.story_id,
+                content_type: story.content_type,
                 title: story.title,
                 logline: story.logline,
                 cover_url: story.cover_url,
@@ -284,6 +279,7 @@ function SlotSection({
 
 type TileStory = {
   id: string;
+  content_type: "story" | "story_rpg";
   title: string;
   logline: string | null;
   cover_url: string | null;
@@ -295,9 +291,10 @@ type TileStory = {
 
 function StoryTile({ story }: { story: TileStory }) {
   const heat = HEAT_BADGE[story.max_heat] ?? HEAT_BADGE.soft;
+  const linkTo = story.content_type === "story_rpg" ? "/story-rpg/$id" : "/play/user/$id";
   return (
     <Link
-      to="/play/user/$id"
+      to={linkTo}
       params={{ id: story.id }}
       className="group overflow-hidden rounded-2xl border border-border/60 bg-card/40 backdrop-blur transition hover:border-primary/50"
     >
@@ -349,7 +346,7 @@ function StoryTile({ story }: { story: TileStory }) {
 function EmptyState({ signedIn }: { signedIn: boolean }) {
   return (
     <div className="space-y-2 rounded-2xl border border-dashed border-border bg-surface-elevated/40 p-12 text-center text-sm text-muted-foreground">
-      {signedIn ? <p>?쒖떆???ㅽ넗由ш? ?놁뒿?덈떎.</p> : <p>濡쒓렇?명븯硫??ㅽ넗由щ? 蹂????덉뒿?덈떎.</p>}
+      {signedIn ? <p>표시할 스토리가 없습니다.</p> : <p>로그인하면 더 많은 스토리를 볼 수 있습니다.</p>}
     </div>
   );
 }

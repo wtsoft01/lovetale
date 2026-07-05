@@ -11,15 +11,19 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as ProfileRouteImport } from './routes/profile'
 import { Route as PremiumRouteImport } from './routes/premium'
+import { Route as InteractiveRpgRouteImport } from './routes/interactive-rpg'
 import { Route as ExploreRouteImport } from './routes/explore'
 import { Route as CreateRouteImport } from './routes/create'
 import { Route as ChatsRouteImport } from './routes/chats'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as StoryRpgIdRouteImport } from './routes/story-rpg.$id'
 import { Route as PlaySessionIdRouteImport } from './routes/play.$sessionId'
+import { Route as InteractiveRpgIdRouteImport } from './routes/interactive-rpg.$id'
 import { Route as CharacterIdRouteImport } from './routes/character.$id'
 import { Route as ApiUnlocksRouteImport } from './routes/api/unlocks'
+import { Route as ApiStoryRpgRouteImport } from './routes/api/story-rpg'
 import { Route as ApiReaderStoryRouteImport } from './routes/api/reader-story'
 import { Route as ApiReaderProfileImageRouteImport } from './routes/api/reader-profile-image'
 import { Route as ApiMarketplaceRouteImport } from './routes/api/marketplace'
@@ -47,6 +51,7 @@ import { Route as AuthenticatedMarketplaceIdRouteImport } from './routes/_authen
 import { Route as AuthenticatedBuilderIdRouteImport } from './routes/_authenticated/builder.$id'
 import { Route as AuthenticatedAdminUsersRouteImport } from './routes/_authenticated/admin.users'
 import { Route as AuthenticatedAdminStudioRouteImport } from './routes/_authenticated/admin.studio'
+import { Route as AuthenticatedAdminStoryRpgRouteImport } from './routes/_authenticated/admin.story-rpg'
 import { Route as AuthenticatedAdminStoriesRouteImport } from './routes/_authenticated/admin.stories'
 import { Route as AuthenticatedAdminSettingsRouteImport } from './routes/_authenticated/admin.settings'
 import { Route as AuthenticatedAdminRewardsRouteImport } from './routes/_authenticated/admin.rewards'
@@ -60,6 +65,7 @@ import { Route as AuthenticatedAdminHeatRouteImport } from './routes/_authentica
 import { Route as AuthenticatedAdminCharactersRouteImport } from './routes/_authenticated/admin.characters'
 import { Route as AuthenticatedAdminAnalyticsRouteImport } from './routes/_authenticated/admin.analytics'
 import { Route as AuthenticatedPlayUserIdRouteImport } from './routes/_authenticated/play.user.$id'
+import { Route as AuthenticatedChatsStoryIdCharacterIdRouteImport } from './routes/_authenticated/chats.$storyId.$characterId'
 import { Route as AuthenticatedAdminStoriesIdRouteImport } from './routes/_authenticated/admin.stories.$id'
 import { Route as AuthenticatedAdminStoriesIdPreviewRouteImport } from './routes/_authenticated/admin.stories.$id.preview'
 import { Route as AuthenticatedAdminStoriesIdComposeRouteImport } from './routes/_authenticated/admin.stories.$id.compose'
@@ -74,6 +80,11 @@ const ProfileRoute = ProfileRouteImport.update({
 const PremiumRoute = PremiumRouteImport.update({
   id: '/premium',
   path: '/premium',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const InteractiveRpgRoute = InteractiveRpgRouteImport.update({
+  id: '/interactive-rpg',
+  path: '/interactive-rpg',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ExploreRoute = ExploreRouteImport.update({
@@ -105,10 +116,20 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const StoryRpgIdRoute = StoryRpgIdRouteImport.update({
+  id: '/story-rpg/$id',
+  path: '/story-rpg/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PlaySessionIdRoute = PlaySessionIdRouteImport.update({
   id: '/play/$sessionId',
   path: '/play/$sessionId',
   getParentRoute: () => rootRouteImport,
+} as any)
+const InteractiveRpgIdRoute = InteractiveRpgIdRouteImport.update({
+  id: '/$id',
+  path: '/$id',
+  getParentRoute: () => InteractiveRpgRoute,
 } as any)
 const CharacterIdRoute = CharacterIdRouteImport.update({
   id: '/character/$id',
@@ -118,6 +139,11 @@ const CharacterIdRoute = CharacterIdRouteImport.update({
 const ApiUnlocksRoute = ApiUnlocksRouteImport.update({
   id: '/api/unlocks',
   path: '/api/unlocks',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiStoryRpgRoute = ApiStoryRpgRouteImport.update({
+  id: '/api/story-rpg',
+  path: '/api/story-rpg',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiReaderStoryRoute = ApiReaderStoryRouteImport.update({
@@ -259,6 +285,12 @@ const AuthenticatedAdminStudioRoute =
     path: '/studio',
     getParentRoute: () => AuthenticatedAdminRoute,
   } as any)
+const AuthenticatedAdminStoryRpgRoute =
+  AuthenticatedAdminStoryRpgRouteImport.update({
+    id: '/story-rpg',
+    path: '/story-rpg',
+    getParentRoute: () => AuthenticatedAdminRoute,
+  } as any)
 const AuthenticatedAdminStoriesRoute =
   AuthenticatedAdminStoriesRouteImport.update({
     id: '/stories',
@@ -333,6 +365,12 @@ const AuthenticatedPlayUserIdRoute = AuthenticatedPlayUserIdRouteImport.update({
   path: '/play/user/$id',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedChatsStoryIdCharacterIdRoute =
+  AuthenticatedChatsStoryIdCharacterIdRouteImport.update({
+    id: '/chats/$storyId/$characterId',
+    path: '/chats/$storyId/$characterId',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedAdminStoriesIdRoute =
   AuthenticatedAdminStoriesIdRouteImport.update({
     id: '/$id',
@@ -370,6 +408,7 @@ export interface FileRoutesByFullPath {
   '/chats': typeof ChatsRoute
   '/create': typeof CreateRoute
   '/explore': typeof ExploreRoute
+  '/interactive-rpg': typeof InteractiveRpgRouteWithChildren
   '/premium': typeof PremiumRoute
   '/profile': typeof ProfileRoute
   '/admin': typeof AuthenticatedAdminRouteWithChildren
@@ -384,9 +423,12 @@ export interface FileRoutesByFullPath {
   '/api/marketplace': typeof ApiMarketplaceRoute
   '/api/reader-profile-image': typeof ApiReaderProfileImageRoute
   '/api/reader-story': typeof ApiReaderStoryRoute
+  '/api/story-rpg': typeof ApiStoryRpgRoute
   '/api/unlocks': typeof ApiUnlocksRoute
   '/character/$id': typeof CharacterIdRoute
+  '/interactive-rpg/$id': typeof InteractiveRpgIdRoute
   '/play/$sessionId': typeof PlaySessionIdRoute
+  '/story-rpg/$id': typeof StoryRpgIdRoute
   '/admin/analytics': typeof AuthenticatedAdminAnalyticsRoute
   '/admin/characters': typeof AuthenticatedAdminCharactersRoute
   '/admin/heat': typeof AuthenticatedAdminHeatRoute
@@ -399,6 +441,7 @@ export interface FileRoutesByFullPath {
   '/admin/rewards': typeof AuthenticatedAdminRewardsRoute
   '/admin/settings': typeof AuthenticatedAdminSettingsRoute
   '/admin/stories': typeof AuthenticatedAdminStoriesRouteWithChildren
+  '/admin/story-rpg': typeof AuthenticatedAdminStoryRpgRoute
   '/admin/studio': typeof AuthenticatedAdminStudioRoute
   '/admin/users': typeof AuthenticatedAdminUsersRoute
   '/builder/$id': typeof AuthenticatedBuilderIdRoute
@@ -415,6 +458,7 @@ export interface FileRoutesByFullPath {
   '/api/storage/ensure-story-media': typeof ApiStorageEnsureStoryMediaRoute
   '/admin/': typeof AuthenticatedAdminIndexRoute
   '/admin/stories/$id': typeof AuthenticatedAdminStoriesIdRouteWithChildren
+  '/chats/$storyId/$characterId': typeof AuthenticatedChatsStoryIdCharacterIdRoute
   '/play/user/$id': typeof AuthenticatedPlayUserIdRoute
   '/admin/stories/$id/blocks': typeof AuthenticatedAdminStoriesIdBlocksRoute
   '/admin/stories/$id/compose': typeof AuthenticatedAdminStoriesIdComposeRoute
@@ -427,6 +471,7 @@ export interface FileRoutesByTo {
   '/chats': typeof ChatsRoute
   '/create': typeof CreateRoute
   '/explore': typeof ExploreRoute
+  '/interactive-rpg': typeof InteractiveRpgRouteWithChildren
   '/premium': typeof PremiumRoute
   '/profile': typeof ProfileRoute
   '/builder': typeof AuthenticatedBuilderRouteWithChildren
@@ -440,9 +485,12 @@ export interface FileRoutesByTo {
   '/api/marketplace': typeof ApiMarketplaceRoute
   '/api/reader-profile-image': typeof ApiReaderProfileImageRoute
   '/api/reader-story': typeof ApiReaderStoryRoute
+  '/api/story-rpg': typeof ApiStoryRpgRoute
   '/api/unlocks': typeof ApiUnlocksRoute
   '/character/$id': typeof CharacterIdRoute
+  '/interactive-rpg/$id': typeof InteractiveRpgIdRoute
   '/play/$sessionId': typeof PlaySessionIdRoute
+  '/story-rpg/$id': typeof StoryRpgIdRoute
   '/admin/analytics': typeof AuthenticatedAdminAnalyticsRoute
   '/admin/characters': typeof AuthenticatedAdminCharactersRoute
   '/admin/heat': typeof AuthenticatedAdminHeatRoute
@@ -455,6 +503,7 @@ export interface FileRoutesByTo {
   '/admin/rewards': typeof AuthenticatedAdminRewardsRoute
   '/admin/settings': typeof AuthenticatedAdminSettingsRoute
   '/admin/stories': typeof AuthenticatedAdminStoriesRouteWithChildren
+  '/admin/story-rpg': typeof AuthenticatedAdminStoryRpgRoute
   '/admin/studio': typeof AuthenticatedAdminStudioRoute
   '/admin/users': typeof AuthenticatedAdminUsersRoute
   '/builder/$id': typeof AuthenticatedBuilderIdRoute
@@ -471,6 +520,7 @@ export interface FileRoutesByTo {
   '/api/storage/ensure-story-media': typeof ApiStorageEnsureStoryMediaRoute
   '/admin': typeof AuthenticatedAdminIndexRoute
   '/admin/stories/$id': typeof AuthenticatedAdminStoriesIdRouteWithChildren
+  '/chats/$storyId/$characterId': typeof AuthenticatedChatsStoryIdCharacterIdRoute
   '/play/user/$id': typeof AuthenticatedPlayUserIdRoute
   '/admin/stories/$id/blocks': typeof AuthenticatedAdminStoriesIdBlocksRoute
   '/admin/stories/$id/compose': typeof AuthenticatedAdminStoriesIdComposeRoute
@@ -485,6 +535,7 @@ export interface FileRoutesById {
   '/chats': typeof ChatsRoute
   '/create': typeof CreateRoute
   '/explore': typeof ExploreRoute
+  '/interactive-rpg': typeof InteractiveRpgRouteWithChildren
   '/premium': typeof PremiumRoute
   '/profile': typeof ProfileRoute
   '/_authenticated/admin': typeof AuthenticatedAdminRouteWithChildren
@@ -499,9 +550,12 @@ export interface FileRoutesById {
   '/api/marketplace': typeof ApiMarketplaceRoute
   '/api/reader-profile-image': typeof ApiReaderProfileImageRoute
   '/api/reader-story': typeof ApiReaderStoryRoute
+  '/api/story-rpg': typeof ApiStoryRpgRoute
   '/api/unlocks': typeof ApiUnlocksRoute
   '/character/$id': typeof CharacterIdRoute
+  '/interactive-rpg/$id': typeof InteractiveRpgIdRoute
   '/play/$sessionId': typeof PlaySessionIdRoute
+  '/story-rpg/$id': typeof StoryRpgIdRoute
   '/_authenticated/admin/analytics': typeof AuthenticatedAdminAnalyticsRoute
   '/_authenticated/admin/characters': typeof AuthenticatedAdminCharactersRoute
   '/_authenticated/admin/heat': typeof AuthenticatedAdminHeatRoute
@@ -514,6 +568,7 @@ export interface FileRoutesById {
   '/_authenticated/admin/rewards': typeof AuthenticatedAdminRewardsRoute
   '/_authenticated/admin/settings': typeof AuthenticatedAdminSettingsRoute
   '/_authenticated/admin/stories': typeof AuthenticatedAdminStoriesRouteWithChildren
+  '/_authenticated/admin/story-rpg': typeof AuthenticatedAdminStoryRpgRoute
   '/_authenticated/admin/studio': typeof AuthenticatedAdminStudioRoute
   '/_authenticated/admin/users': typeof AuthenticatedAdminUsersRoute
   '/_authenticated/builder/$id': typeof AuthenticatedBuilderIdRoute
@@ -530,6 +585,7 @@ export interface FileRoutesById {
   '/api/storage/ensure-story-media': typeof ApiStorageEnsureStoryMediaRoute
   '/_authenticated/admin/': typeof AuthenticatedAdminIndexRoute
   '/_authenticated/admin/stories/$id': typeof AuthenticatedAdminStoriesIdRouteWithChildren
+  '/_authenticated/chats/$storyId/$characterId': typeof AuthenticatedChatsStoryIdCharacterIdRoute
   '/_authenticated/play/user/$id': typeof AuthenticatedPlayUserIdRoute
   '/_authenticated/admin/stories/$id/blocks': typeof AuthenticatedAdminStoriesIdBlocksRoute
   '/_authenticated/admin/stories/$id/compose': typeof AuthenticatedAdminStoriesIdComposeRoute
@@ -544,6 +600,7 @@ export interface FileRouteTypes {
     | '/chats'
     | '/create'
     | '/explore'
+    | '/interactive-rpg'
     | '/premium'
     | '/profile'
     | '/admin'
@@ -558,9 +615,12 @@ export interface FileRouteTypes {
     | '/api/marketplace'
     | '/api/reader-profile-image'
     | '/api/reader-story'
+    | '/api/story-rpg'
     | '/api/unlocks'
     | '/character/$id'
+    | '/interactive-rpg/$id'
     | '/play/$sessionId'
+    | '/story-rpg/$id'
     | '/admin/analytics'
     | '/admin/characters'
     | '/admin/heat'
@@ -573,6 +633,7 @@ export interface FileRouteTypes {
     | '/admin/rewards'
     | '/admin/settings'
     | '/admin/stories'
+    | '/admin/story-rpg'
     | '/admin/studio'
     | '/admin/users'
     | '/builder/$id'
@@ -589,6 +650,7 @@ export interface FileRouteTypes {
     | '/api/storage/ensure-story-media'
     | '/admin/'
     | '/admin/stories/$id'
+    | '/chats/$storyId/$characterId'
     | '/play/user/$id'
     | '/admin/stories/$id/blocks'
     | '/admin/stories/$id/compose'
@@ -601,6 +663,7 @@ export interface FileRouteTypes {
     | '/chats'
     | '/create'
     | '/explore'
+    | '/interactive-rpg'
     | '/premium'
     | '/profile'
     | '/builder'
@@ -614,9 +677,12 @@ export interface FileRouteTypes {
     | '/api/marketplace'
     | '/api/reader-profile-image'
     | '/api/reader-story'
+    | '/api/story-rpg'
     | '/api/unlocks'
     | '/character/$id'
+    | '/interactive-rpg/$id'
     | '/play/$sessionId'
+    | '/story-rpg/$id'
     | '/admin/analytics'
     | '/admin/characters'
     | '/admin/heat'
@@ -629,6 +695,7 @@ export interface FileRouteTypes {
     | '/admin/rewards'
     | '/admin/settings'
     | '/admin/stories'
+    | '/admin/story-rpg'
     | '/admin/studio'
     | '/admin/users'
     | '/builder/$id'
@@ -645,6 +712,7 @@ export interface FileRouteTypes {
     | '/api/storage/ensure-story-media'
     | '/admin'
     | '/admin/stories/$id'
+    | '/chats/$storyId/$characterId'
     | '/play/user/$id'
     | '/admin/stories/$id/blocks'
     | '/admin/stories/$id/compose'
@@ -658,6 +726,7 @@ export interface FileRouteTypes {
     | '/chats'
     | '/create'
     | '/explore'
+    | '/interactive-rpg'
     | '/premium'
     | '/profile'
     | '/_authenticated/admin'
@@ -672,9 +741,12 @@ export interface FileRouteTypes {
     | '/api/marketplace'
     | '/api/reader-profile-image'
     | '/api/reader-story'
+    | '/api/story-rpg'
     | '/api/unlocks'
     | '/character/$id'
+    | '/interactive-rpg/$id'
     | '/play/$sessionId'
+    | '/story-rpg/$id'
     | '/_authenticated/admin/analytics'
     | '/_authenticated/admin/characters'
     | '/_authenticated/admin/heat'
@@ -687,6 +759,7 @@ export interface FileRouteTypes {
     | '/_authenticated/admin/rewards'
     | '/_authenticated/admin/settings'
     | '/_authenticated/admin/stories'
+    | '/_authenticated/admin/story-rpg'
     | '/_authenticated/admin/studio'
     | '/_authenticated/admin/users'
     | '/_authenticated/builder/$id'
@@ -703,6 +776,7 @@ export interface FileRouteTypes {
     | '/api/storage/ensure-story-media'
     | '/_authenticated/admin/'
     | '/_authenticated/admin/stories/$id'
+    | '/_authenticated/chats/$storyId/$characterId'
     | '/_authenticated/play/user/$id'
     | '/_authenticated/admin/stories/$id/blocks'
     | '/_authenticated/admin/stories/$id/compose'
@@ -717,6 +791,7 @@ export interface RootRouteChildren {
   ChatsRoute: typeof ChatsRoute
   CreateRoute: typeof CreateRoute
   ExploreRoute: typeof ExploreRoute
+  InteractiveRpgRoute: typeof InteractiveRpgRouteWithChildren
   PremiumRoute: typeof PremiumRoute
   ProfileRoute: typeof ProfileRoute
   ApiCharacterChatRoute: typeof ApiCharacterChatRoute
@@ -725,9 +800,11 @@ export interface RootRouteChildren {
   ApiMarketplaceRoute: typeof ApiMarketplaceRoute
   ApiReaderProfileImageRoute: typeof ApiReaderProfileImageRoute
   ApiReaderStoryRoute: typeof ApiReaderStoryRoute
+  ApiStoryRpgRoute: typeof ApiStoryRpgRoute
   ApiUnlocksRoute: typeof ApiUnlocksRoute
   CharacterIdRoute: typeof CharacterIdRoute
   PlaySessionIdRoute: typeof PlaySessionIdRoute
+  StoryRpgIdRoute: typeof StoryRpgIdRoute
   ApiAdminImportSummaryRoute: typeof ApiAdminImportSummaryRoute
   ApiAdminMediaRoute: typeof ApiAdminMediaRoute
   ApiAdminPlacementsRoute: typeof ApiAdminPlacementsRoute
@@ -754,6 +831,13 @@ declare module '@tanstack/react-router' {
       path: '/premium'
       fullPath: '/premium'
       preLoaderRoute: typeof PremiumRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/interactive-rpg': {
+      id: '/interactive-rpg'
+      path: '/interactive-rpg'
+      fullPath: '/interactive-rpg'
+      preLoaderRoute: typeof InteractiveRpgRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/explore': {
@@ -798,12 +882,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/story-rpg/$id': {
+      id: '/story-rpg/$id'
+      path: '/story-rpg/$id'
+      fullPath: '/story-rpg/$id'
+      preLoaderRoute: typeof StoryRpgIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/play/$sessionId': {
       id: '/play/$sessionId'
       path: '/play/$sessionId'
       fullPath: '/play/$sessionId'
       preLoaderRoute: typeof PlaySessionIdRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/interactive-rpg/$id': {
+      id: '/interactive-rpg/$id'
+      path: '/$id'
+      fullPath: '/interactive-rpg/$id'
+      preLoaderRoute: typeof InteractiveRpgIdRouteImport
+      parentRoute: typeof InteractiveRpgRoute
     }
     '/character/$id': {
       id: '/character/$id'
@@ -817,6 +915,13 @@ declare module '@tanstack/react-router' {
       path: '/api/unlocks'
       fullPath: '/api/unlocks'
       preLoaderRoute: typeof ApiUnlocksRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/story-rpg': {
+      id: '/api/story-rpg'
+      path: '/api/story-rpg'
+      fullPath: '/api/story-rpg'
+      preLoaderRoute: typeof ApiStoryRpgRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/reader-story': {
@@ -1008,6 +1113,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedAdminStudioRouteImport
       parentRoute: typeof AuthenticatedAdminRoute
     }
+    '/_authenticated/admin/story-rpg': {
+      id: '/_authenticated/admin/story-rpg'
+      path: '/story-rpg'
+      fullPath: '/admin/story-rpg'
+      preLoaderRoute: typeof AuthenticatedAdminStoryRpgRouteImport
+      parentRoute: typeof AuthenticatedAdminRoute
+    }
     '/_authenticated/admin/stories': {
       id: '/_authenticated/admin/stories'
       path: '/stories'
@@ -1097,6 +1209,13 @@ declare module '@tanstack/react-router' {
       path: '/play/user/$id'
       fullPath: '/play/user/$id'
       preLoaderRoute: typeof AuthenticatedPlayUserIdRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/chats/$storyId/$characterId': {
+      id: '/_authenticated/chats/$storyId/$characterId'
+      path: '/chats/$storyId/$characterId'
+      fullPath: '/chats/$storyId/$characterId'
+      preLoaderRoute: typeof AuthenticatedChatsStoryIdCharacterIdRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/admin/stories/$id': {
@@ -1189,6 +1308,7 @@ interface AuthenticatedAdminRouteChildren {
   AuthenticatedAdminRewardsRoute: typeof AuthenticatedAdminRewardsRoute
   AuthenticatedAdminSettingsRoute: typeof AuthenticatedAdminSettingsRoute
   AuthenticatedAdminStoriesRoute: typeof AuthenticatedAdminStoriesRouteWithChildren
+  AuthenticatedAdminStoryRpgRoute: typeof AuthenticatedAdminStoryRpgRoute
   AuthenticatedAdminStudioRoute: typeof AuthenticatedAdminStudioRoute
   AuthenticatedAdminUsersRoute: typeof AuthenticatedAdminUsersRoute
   AuthenticatedAdminIndexRoute: typeof AuthenticatedAdminIndexRoute
@@ -1207,6 +1327,7 @@ const AuthenticatedAdminRouteChildren: AuthenticatedAdminRouteChildren = {
   AuthenticatedAdminRewardsRoute: AuthenticatedAdminRewardsRoute,
   AuthenticatedAdminSettingsRoute: AuthenticatedAdminSettingsRoute,
   AuthenticatedAdminStoriesRoute: AuthenticatedAdminStoriesRouteWithChildren,
+  AuthenticatedAdminStoryRpgRoute: AuthenticatedAdminStoryRpgRoute,
   AuthenticatedAdminStudioRoute: AuthenticatedAdminStudioRoute,
   AuthenticatedAdminUsersRoute: AuthenticatedAdminUsersRoute,
   AuthenticatedAdminIndexRoute: AuthenticatedAdminIndexRoute,
@@ -1247,6 +1368,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedMarketplaceRoute: typeof AuthenticatedMarketplaceRouteWithChildren
   AuthenticatedOrdersRoute: typeof AuthenticatedOrdersRoute
   AuthenticatedRewardsRoute: typeof AuthenticatedRewardsRoute
+  AuthenticatedChatsStoryIdCharacterIdRoute: typeof AuthenticatedChatsStoryIdCharacterIdRoute
   AuthenticatedPlayUserIdRoute: typeof AuthenticatedPlayUserIdRoute
 }
 
@@ -1257,11 +1379,25 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedMarketplaceRoute: AuthenticatedMarketplaceRouteWithChildren,
   AuthenticatedOrdersRoute: AuthenticatedOrdersRoute,
   AuthenticatedRewardsRoute: AuthenticatedRewardsRoute,
+  AuthenticatedChatsStoryIdCharacterIdRoute:
+    AuthenticatedChatsStoryIdCharacterIdRoute,
   AuthenticatedPlayUserIdRoute: AuthenticatedPlayUserIdRoute,
 }
 
 const AuthenticatedRouteRouteWithChildren =
   AuthenticatedRouteRoute._addFileChildren(AuthenticatedRouteRouteChildren)
+
+interface InteractiveRpgRouteChildren {
+  InteractiveRpgIdRoute: typeof InteractiveRpgIdRoute
+}
+
+const InteractiveRpgRouteChildren: InteractiveRpgRouteChildren = {
+  InteractiveRpgIdRoute: InteractiveRpgIdRoute,
+}
+
+const InteractiveRpgRouteWithChildren = InteractiveRpgRoute._addFileChildren(
+  InteractiveRpgRouteChildren,
+)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
@@ -1270,6 +1406,7 @@ const rootRouteChildren: RootRouteChildren = {
   ChatsRoute: ChatsRoute,
   CreateRoute: CreateRoute,
   ExploreRoute: ExploreRoute,
+  InteractiveRpgRoute: InteractiveRpgRouteWithChildren,
   PremiumRoute: PremiumRoute,
   ProfileRoute: ProfileRoute,
   ApiCharacterChatRoute: ApiCharacterChatRoute,
@@ -1278,9 +1415,11 @@ const rootRouteChildren: RootRouteChildren = {
   ApiMarketplaceRoute: ApiMarketplaceRoute,
   ApiReaderProfileImageRoute: ApiReaderProfileImageRoute,
   ApiReaderStoryRoute: ApiReaderStoryRoute,
+  ApiStoryRpgRoute: ApiStoryRpgRoute,
   ApiUnlocksRoute: ApiUnlocksRoute,
   CharacterIdRoute: CharacterIdRoute,
   PlaySessionIdRoute: PlaySessionIdRoute,
+  StoryRpgIdRoute: StoryRpgIdRoute,
   ApiAdminImportSummaryRoute: ApiAdminImportSummaryRoute,
   ApiAdminMediaRoute: ApiAdminMediaRoute,
   ApiAdminPlacementsRoute: ApiAdminPlacementsRoute,

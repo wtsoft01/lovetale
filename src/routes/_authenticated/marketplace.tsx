@@ -29,10 +29,10 @@ import {
 export const Route = createFileRoute("/_authenticated/marketplace")({
   head: () => ({
     meta: [
-      { title: "?ㅽ넗由?留덉폆 | Lovetale" },
+      { title: "스토리마켓 | Lovetale" },
       {
         name: "description",
-        content: "?ъ슜?먭? 吏곸젒 留뚮뱺 硫?곕え???ㅽ넗由щ? 援щℓ?섍퀬 ?쇱씠釉뚮윭由ъ뿉 ??ν빐 ?대엺?섎뒗 Lovetale 留덉폆?낅땲??",
+        content: "사용자가 직접 만든 멀티모달 스토리를 구매하고 라이브러리에 저장해 열람하는 Lovetale 마켓입니다.",
       },
     ],
   }),
@@ -95,17 +95,18 @@ function MarketplacePage() {
           <Button asChild variant="ghost" size="sm" className="gap-1.5">
             <Link to="/">
               <ArrowLeft className="size-4" />
-              ?ㅽ넗由??먮젅?댁뀡
+              스토리탐색
             </Link>
           </Button>
           <div className="flex items-center gap-2 text-sm font-semibold">
             <Store className="size-4 text-primary" />
-            ?ㅽ넗由?留덉폆
+            스토리마켓
           </div>
           <Button asChild variant="ghost" size="sm" className="gap-1.5">
             <Link to="/library">
               <Library className="size-4" />
-              ?쇱씠釉뚮윭由?            </Link>
+              라이브러리
+            </Link>
           </Button>
         </div>
       </header>
@@ -117,12 +118,13 @@ function MarketplacePage() {
               <Sparkles className="size-3" />
               USER MADE
             </Badge>
-            <span className="text-sm text-muted-foreground">援щℓ??肄섑뀗痢좊뒗 ?쇱씠釉뚮윭由ъ뿉 ??λ맗?덈떎.</span>
+            <span className="text-sm text-muted-foreground">구매한 콘텐츠는 라이브러리에 저장됩니다.</span>
           </div>
           <Button asChild size="sm" className="gap-1.5 rounded-full">
             <Link to="/builder">
               <WandSparkles className="size-4" />
-              ?먯옉?ㅽ넗由?留뚮뱾湲?            </Link>
+              자작스토리 만들기
+            </Link>
           </Button>
         </section>
 
@@ -172,7 +174,8 @@ function MarketplacePage() {
                 className="inline-flex h-8 shrink-0 items-center gap-1 rounded-full border border-border/60 px-3 text-xs text-muted-foreground transition hover:text-foreground"
               >
                 <X className="size-3" />
-                珥덇린??              </button>
+                초기화
+              </button>
             )}
           </div>
         </section>
@@ -187,7 +190,7 @@ function MarketplacePage() {
           <div className="rounded-2xl border border-dashed border-border/60 p-10 text-center">
             <Store className="mx-auto mb-3 size-8 text-muted-foreground" />
             <p className="text-sm text-muted-foreground">
-              {hasFilters ? "議곌굔??留욌뒗 ?먯옉?ㅽ넗由ш? ?놁뒿?덈떎." : "?꾩쭅 ?먮ℓ 以묒씤 ?먯옉?ㅽ넗由ш? ?놁뒿?덈떎."}
+              {hasFilters ? "조건에 맞는 자작스토리가 없습니다." : "아직 판매 중인 자작스토리가 없습니다."}
             </p>
           </div>
         )}

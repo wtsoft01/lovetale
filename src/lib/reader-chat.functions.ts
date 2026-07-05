@@ -1,4 +1,4 @@
-import { supabase } from "@/integrations/supabase/client";
+﻿import { supabase } from "@/integrations/supabase/client";
 import { createServerFn } from "@/lib/_mock/runtime";
 
 export type ReaderChatRole = "user" | "assistant";
@@ -29,6 +29,9 @@ type StoredReaderChatPayload = {
   avatarUrl?: string | null;
 };
 
+const DEFAULT_CHARACTER_NAME = "캐릭터 미등록";
+const DEFAULT_THREAD_KEY = "single:main-character";
+
 async function requireUserId() {
   const { data, error } = await supabase.auth.getUser();
   if (error || !data.user) throw new Error("Unauthorized");
@@ -42,12 +45,15 @@ function encodeContent(data: Omit<StoredReaderChatPayload, "__lovetale_reader_ch
   } satisfies StoredReaderChatPayload);
 }
 
-function decodeContent(content: string, fallback: { role: ReaderChatRole; storyId: string }): Omit<ReaderChatMessageRow, "id" | "role" | "affectionAt" | "createdAt"> {
+function decodeContent(
+  content: string,
+  fallback: { role: ReaderChatRole; storyId: string },
+): Omit<ReaderChatMessageRow, "id" | "role" | "affectionAt" | "createdAt"> {
   try {
     const parsed = JSON.parse(content) as Partial<StoredReaderChatPayload>;
     if (parsed?.__lovetale_reader_chat === 1 && typeof parsed.text === "string") {
-      const threadKey = String(parsed.threadKey || "single:main-character");
-      const threadLabel = String(parsed.threadLabel || parsed.characterName || "상대 주인공");
+      const threadKey = String(parsed.threadKey || DEFAULT_THREAD_KEY);
+      const threadLabel = String(parsed.threadLabel || parsed.characterName || DEFAULT_CHARACTER_NAME);
       const chatMode: ReaderChatMode = parsed.chatMode === "group" ? "group" : "single";
       return {
         text: parsed.text,
@@ -63,11 +69,11 @@ function decodeContent(content: string, fallback: { role: ReaderChatRole; storyI
     // Older rows may be plain text; fall through to a safe default.
   }
 
-  const fallbackName = fallback.role === "user" ? "나" : "상대 주인공";
+  const fallbackName = fallback.role === "user" ? "나" : DEFAULT_CHARACTER_NAME;
   return {
     text: content,
-    threadKey: "single:main-character",
-    threadLabel: "상대 주인공",
+    threadKey: DEFAULT_THREAD_KEY,
+    threadLabel: DEFAULT_CHARACTER_NAME,
     chatMode: "single",
     characterId: "main-character",
     characterName: fallbackName,
@@ -125,6 +131,7 @@ export const appendReaderChatMessage = createServerFn({ method: "POST" })
     const text = String(data.text || "").trim();
     if (!text) throw new Error("메시지가 비어 있습니다.");
 
+    const characterName = data.characterName || data.threadLabel || DEFAULT_CHARACTER_NAME;
     const { data: row, error } = await supabase
       .from("story_chat_messages")
       .insert({
@@ -133,11 +140,11 @@ export const appendReaderChatMessage = createServerFn({ method: "POST" })
         role,
         content: encodeContent({
           text,
-          threadKey: data.threadKey || "single:main-character",
-          threadLabel: data.threadLabel || data.characterName || "상대 주인공",
+          threadKey: data.threadKey || DEFAULT_THREAD_KEY,
+          threadLabel: data.threadLabel || characterName,
           chatMode: data.chatMode === "group" ? "group" : "single",
           characterId: data.characterId ?? null,
-          characterName: data.characterName || data.threadLabel || "상대 주인공",
+          characterName,
           avatarUrl: data.avatarUrl ?? null,
         }),
         scene_offset: null,

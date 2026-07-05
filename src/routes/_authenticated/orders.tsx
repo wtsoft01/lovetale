@@ -27,7 +27,9 @@ type Order = {
   network: string;
   wallet_address: string;
   tx_hash: string | null;
-  status: "pending" | "submitted" | "confirmed" | "failed";
+  status: "pending" | "submitted" | "confirmed" | "failed" | "refunded";
+  refunded_at?: string | null;
+  refund_reason?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -42,7 +44,7 @@ function OrdersPage() {
     queryFn: async (): Promise<Order[]> => {
       const { data, error } = await supabase
         .from("credit_orders")
-        .select("id, package_id, credits, amount_usd, currency, network, wallet_address, tx_hash, status, created_at, updated_at")
+        .select("id, package_id, credits, amount_usd, currency, network, wallet_address, tx_hash, status, refunded_at, refund_reason, created_at, updated_at")
         .order("created_at", { ascending: false });
       if (error) throw error;
       return data as Order[];
@@ -131,6 +133,9 @@ function OrderCard({ order }: { order: Order }) {
               <span className="truncate">{order.tx_hash}</span>
             </div>
           )}
+          {order.status === "refunded" && order.refund_reason && (
+            <div className="mt-2 text-xs text-blue-400">환불 사유: {order.refund_reason}</div>
+          )}
         </div>
         <StatusPill status={order.status} />
       </div>
@@ -144,6 +149,7 @@ function StatusPill({ status }: { status: Order["status"] }) {
     submitted: { label: "확인중", cls: "bg-amber-500/15 text-amber-400" },
     confirmed: { label: "완료", cls: "bg-emerald-500/15 text-emerald-400" },
     failed: { label: "실패", cls: "bg-destructive/15 text-destructive" },
+    refunded: { label: "환불", cls: "bg-blue-500/15 text-blue-400" },
   };
   const value = map[status];
   return <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-medium ${value.cls}`}>{value.label}</span>;

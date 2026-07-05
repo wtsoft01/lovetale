@@ -8,6 +8,7 @@ import {
   Gift,
   HeartHandshake,
   Library,
+  Swords,
   ShieldCheck,
   Store,
   UserRound,
@@ -18,6 +19,7 @@ import { useServerFn } from "@/lib/_mock/runtime";
 import { getMyProfile } from "@/lib/profile.functions";
 import { useAuth } from "@/hooks/use-auth";
 import { getStaffAccess } from "@/lib/staff-access";
+import { BrandLogo } from "@/components/brand-logo";
 import {
   Sidebar,
   SidebarContent,
@@ -31,10 +33,9 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
 
-const brandSymbolUrl = "/brand-symbol.png";
-
 const playItems = [
   { title: "스토리탐색", url: "/", icon: BookHeart },
+  { title: "스토리게임", url: "/interactive-rpg", icon: Swords },
   { title: "캐릭터채팅", url: "/chats", icon: HeartHandshake },
 ];
 
@@ -81,7 +82,13 @@ function SidebarItemList({
   );
 }
 
-export function AppSidebar() {
+export function AppSidebar({
+  collapsible = "icon",
+  className,
+}: {
+  collapsible?: "offcanvas" | "icon" | "none";
+  className?: string;
+}) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const { session, loading: authLoading } = useAuth();
   const fetchProfile = useServerFn(getMyProfile);
@@ -104,18 +111,13 @@ export function AppSidebar() {
   const isActive = (url: string) => (url === "/" ? pathname === "/" : pathname.startsWith(url));
 
   return (
-    <Sidebar collapsible="icon" className="border-r border-sidebar-border">
+    <Sidebar collapsible={collapsible} className={className ?? "border-r border-sidebar-border"}>
       <SidebarHeader className="px-4 pb-2 pt-4">
-        <Link to="/" className="flex items-center gap-2.5">
-          <div className="relative grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-xl">
-            <img src={brandSymbolUrl} alt="Lovetale" className="h-full w-full object-contain" />
-          </div>
-          <div className="flex flex-col leading-tight group-data-[collapsible=icon]:hidden">
-            <span className="font-display text-lg font-semibold tracking-wide">Lovetale</span>
-            <span className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-              AI DATING NOVEL
-            </span>
-          </div>
+        <Link to="/" className="flex items-center">
+          <BrandLogo
+            className="h-10 w-[158px] group-data-[collapsible=icon]:w-10"
+            imageClassName="w-[158px] max-w-none"
+          />
         </Link>
       </SidebarHeader>
 

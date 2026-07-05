@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+﻿import { useMemo, useState, type ReactNode } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
@@ -34,7 +34,8 @@ export const Route = createFileRoute("/_authenticated/admin/import")({
 
 const CONTENT_TYPES = [
   { key: "web_novel", label: "웹소설", desc: "텍스트 중심" },
-  { key: "romance_sim", label: "연애 시뮬", desc: "캐릭터 대화 중심" },
+  { key: "romance_sim", label: "연애 시뮬레이션", desc: "캐릭터 대화 중심" },
+  { key: "story_rpg", label: "스토리게임", desc: "선택지와 분기형 게임" },
   { key: "webtoon", label: "웹툰", desc: "이미지 중심" },
   { key: "short_story", label: "단편", desc: "짧은 완결형" },
   { key: "other", label: "기타", desc: "자유 형식" },
@@ -99,7 +100,7 @@ async function requestImportAi(input: {
   });
   const payload = await response.json().catch(() => null);
   if (!response.ok || !payload?.ok) {
-    throw new Error(payload?.message || payload?.reason || "AI 자동생성에 실패했습니다.");
+    throw new Error(payload?.message || payload?.reason || "AI 자동 생성에 실패했습니다.");
   }
   return payload as { ok: true; summary?: string; metadata?: AiMetadataResult };
 }
@@ -170,10 +171,10 @@ function NewContentPage() {
         mode: "episode_summary",
         title: episodeTitle.trim() || title.trim(),
         text: episodeBody,
-      }),
+    }),
     onSuccess: (result) => {
       setEpisodeSummary(String(result.summary ?? ""));
-      toast.success("회원 노출용 회차 소개문을 생성했습니다.");
+      toast.success("회원 노출용 회차 요약을 생성했습니다.");
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -294,13 +295,13 @@ function NewContentPage() {
     (mode === "append_episode" && !targetStoryId);
 
   return (
-    <div className="mx-auto max-w-5xl space-y-5">
+    <div className="mx-auto max-w-4xl space-y-4">
       <Link
         to="/admin/stories"
         className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
       >
         <ArrowLeft className="size-4" />
-        콘텐츠 관리로 돌아가기
+        스토리관리로 돌아가기
       </Link>
 
       <header className="flex flex-wrap items-end justify-between gap-3">
@@ -309,9 +310,6 @@ function NewContentPage() {
             Content CMS
           </span>
           <h1 className="mt-1 font-display text-3xl font-semibold">새 콘텐츠 등록</h1>
-          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-            사용자 홈, 탐색 카드, 스토리 시작 화면, 회차 선택 화면에서 바로 쓰이는 정보를 한 번에 등록합니다.
-          </p>
         </div>
         <Button
           type="button"
@@ -320,24 +318,22 @@ function NewContentPage() {
           disabled={metadataMut.isPending || (episodeBody.trim().length < 80 && storyOverview.trim().length < 40)}
         >
           {metadataMut.isPending ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
-          회원용 상품소개 자동생성
+          AI 채우기
         </Button>
       </header>
 
-      <section className="space-y-4 rounded-2xl border border-border bg-card p-4 shadow-sm">
+      <section className="space-y-4 rounded-lg border border-border bg-card p-4">
         <div className="grid gap-2 sm:grid-cols-2">
           <ModeButton
             active={mode === "new_story"}
             icon={BookOpen}
             title="새 스토리 생성"
-            desc="상품 정보와 첫 회차를 함께 등록"
             onClick={() => setMode("new_story")}
           />
           <ModeButton
             active={mode === "append_episode"}
             icon={Layers3}
             title="회차 추가"
-            desc="기존 상품에 다음 회차만 추가"
             onClick={() => setMode("append_episode")}
           />
         </div>
@@ -418,12 +414,6 @@ function NewContentPage() {
           />
         )}
 
-        <div className="rounded-xl border border-border bg-background px-3 py-2 text-xs text-muted-foreground">
-          {mode === "append_episode"
-            ? "회차 추가는 기존 상품 선택만 필수입니다. 회차 제목을 비우면 다음 회차 번호로 자동 저장됩니다."
-            : "새 스토리는 미입력 정보가 있어도 저장됩니다. 저장 후 콘텐츠 작업공간에서 정보수정, 회차편집, 에셋편집을 이어갈 수 있습니다."}
-        </div>
-
         <Button onClick={handleSubmit} disabled={submitDisabled} className="h-11 w-full">
           {submitting ? <Loader2 className="mr-1 size-3.5 animate-spin" /> : <Plus className="mr-1 size-3.5" />}
           {mode === "append_episode" ? "회차 추가하고 편집 열기" : "새 스토리 만들고 편집 열기"}
@@ -437,13 +427,11 @@ function ModeButton({
   active,
   icon: Icon,
   title,
-  desc,
   onClick,
 }: {
   active: boolean;
   icon: typeof BookOpen;
   title: string;
-  desc: string;
   onClick: () => void;
 }) {
   return (
@@ -451,15 +439,12 @@ function ModeButton({
       type="button"
       onClick={onClick}
       className={cn(
-        "flex min-h-16 items-center gap-3 rounded-xl border px-3 text-left text-sm",
+        "flex min-h-12 items-center gap-3 rounded-lg border px-3 text-left text-sm",
         active ? "border-primary bg-primary/10 text-primary" : "border-border bg-background hover:border-primary/40",
       )}
     >
       <Icon className="size-4 shrink-0" />
-      <span>
-        <span className="block font-medium">{title}</span>
-        <span className="block text-xs text-muted-foreground">{desc}</span>
-      </span>
+      <span className="font-medium">{title}</span>
     </button>
   );
 }
@@ -598,9 +583,9 @@ function NewStoryForm(props: {
 }) {
   return (
     <div className="space-y-5">
-      <section className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_220px]">
+      <section className="space-y-3">
         <div className="space-y-3">
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_180px]">
             <Field label="스토리 제목">
               <Input value={props.title} onChange={(event) => props.onTitle(event.target.value)} placeholder="비우면 Untitled story" />
             </Field>
@@ -612,7 +597,7 @@ function NewStoryForm(props: {
             <Input
               value={props.logline}
               onChange={(event) => props.onLogline(event.target.value)}
-              placeholder="회원이 클릭하고 싶게 만드는 한 줄 후킹 문장"
+              placeholder="회원이 클릭하고 싶게 만드는 한 줄 소개"
               maxLength={180}
             />
           </Field>
@@ -620,7 +605,7 @@ function NewStoryForm(props: {
             <Textarea
               value={props.storyOverview}
               onChange={(event) => props.onStoryOverview(event.target.value)}
-              placeholder="관계, 갈등, 비밀, 감정 변화를 담은 프론트 노출용 소개문"
+              placeholder="관계, 갈등, 비밀, 감정 변화를 담은 회원 노출용 소개문"
               className="min-h-32 resize-y"
             />
           </Field>
@@ -634,7 +619,7 @@ function NewStoryForm(props: {
         />
       </section>
 
-      <section className="grid gap-3 md:grid-cols-2">
+      <section className="space-y-3">
         <Field label="스토리 유형">
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
             {CONTENT_TYPES.map((type) => (
@@ -690,13 +675,13 @@ function NewStoryForm(props: {
         <Input
           value={props.tagsText}
           onChange={(event) => props.onTagsText(event.target.value)}
-          placeholder="쉼표로 구분: 계약연애, 긴장감, 로맨스"
+          placeholder="계약연애, 긴장감, 로맨스"
         />
       </Field>
 
-      <section className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_260px]">
-        <div className="space-y-3 rounded-xl border border-border bg-background p-3">
-          <div className="text-sm font-semibold">대표 캐릭터 / 채팅 상대</div>
+      <section className="space-y-3">
+        <div className="space-y-3 rounded-lg border border-border bg-background p-3">
+          <div className="text-sm font-semibold">상대 캐릭터</div>
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="이름">
               <Input value={props.characterName} onChange={(event) => props.onCharacterName(event.target.value)} placeholder="상대 주인공 이름" />
@@ -733,7 +718,7 @@ function NewStoryForm(props: {
         />
       </section>
 
-      <section className="rounded-xl border border-border bg-background p-3">
+      <section className="rounded-lg border border-border bg-background p-3">
         <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
           <Layers3 className="size-4 text-primary" />
           첫 회차 정보
@@ -776,7 +761,7 @@ function EpisodeFields(props: {
         <Textarea
           value={props.episodeSummary}
           onChange={(event) => props.onEpisodeSummary(event.target.value)}
-          placeholder="회원이 다음 장면을 궁금해하도록 핵심 사건과 감정 변화를 적어주세요."
+          placeholder="핵심 사건과 감정 변화"
           className="min-h-24 resize-y"
         />
       </Field>
@@ -810,12 +795,11 @@ function EpisodeFields(props: {
             const target = event.currentTarget;
             window.setTimeout(() => props.onEpisodeBody(normalizeProseLineBreaks(target.value)), 0);
           }}
-          placeholder="회차 본문을 입력하세요. 최대 10만자까지 저장할 수 있습니다."
+          placeholder="회차 본문"
           className="min-h-[420px] resize-y whitespace-pre-line font-mono text-[13px] leading-[1.75]"
           spellCheck={false}
         />
-        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-          <span>본문을 붙여넣으면 회원 노출용 줄거리, 태그, 회차 소개문 생성에 활용됩니다.</span>
+        <div className="flex justify-end">
           <Button
             type="button"
             size="sm"
@@ -824,7 +808,7 @@ function EpisodeFields(props: {
             disabled={props.summaryPending || props.episodeBody.trim().length < 80}
           >
             {props.summaryPending ? <Loader2 className="mr-1 size-3 animate-spin" /> : <Wand2 className="mr-1 size-3" />}
-            회원용 회차소개 생성
+            AI 회차 요약
           </Button>
         </div>
       </div>
@@ -840,9 +824,8 @@ function CoverUploader(props: {
   onUpload: (file: File) => void;
 }) {
   return (
-    <div className="space-y-2">
-      <label className="text-xs font-medium text-muted-foreground">표지 이미지</label>
-      <div className="aspect-[4/5] overflow-hidden rounded-xl border border-border bg-background">
+    <div className="grid gap-3 rounded-lg border border-border bg-background p-3 sm:grid-cols-[96px_minmax(0,1fr)]">
+      <div className="aspect-[4/5] overflow-hidden rounded-lg border border-border bg-card">
         {props.coverPreview || props.coverUrl ? (
           <img src={props.coverPreview ?? props.coverUrl ?? ""} alt="" className="size-full object-cover" />
         ) : (
@@ -851,16 +834,19 @@ function CoverUploader(props: {
           </div>
         )}
       </div>
-      <UploadLabel disabled={props.uploadingCover} accept="image/*" onUpload={props.onUpload}>
-        {props.uploadingCover ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
-        이미지 업로드
-      </UploadLabel>
-      <Input
-        value={props.coverUrl ?? ""}
-        onChange={(event) => props.onCoverUrl(event.target.value)}
-        placeholder="이미지 URL 또는 storage path"
-        className="text-xs"
-      />
+      <div className="space-y-2">
+        <label className="text-xs font-medium text-muted-foreground">표지 이미지</label>
+        <UploadLabel disabled={props.uploadingCover} accept="image/*" onUpload={props.onUpload}>
+          {props.uploadingCover ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
+          업로드
+        </UploadLabel>
+        <Input
+          value={props.coverUrl ?? ""}
+          onChange={(event) => props.onCoverUrl(event.target.value)}
+          placeholder="이미지 URL 또는 storage path"
+          className="text-xs"
+        />
+      </div>
     </div>
   );
 }
@@ -875,9 +861,8 @@ function PreviewUploader(props: {
   onUpload: (file: File) => void;
 }) {
   return (
-    <div className="space-y-2">
-      <label className="text-xs font-medium text-muted-foreground">미리보기 이미지/영상</label>
-      <div className="aspect-video overflow-hidden rounded-xl border border-border bg-background">
+    <div className="grid gap-3 rounded-lg border border-border bg-background p-3 sm:grid-cols-[132px_minmax(0,1fr)]">
+      <div className="aspect-video overflow-hidden rounded-lg border border-border bg-card">
         {props.previewPreview || props.previewUrl ? (
           props.previewType === "video" ? (
             <video src={props.previewPreview ?? props.previewUrl ?? ""} className="size-full object-cover" muted controls />
@@ -890,34 +875,36 @@ function PreviewUploader(props: {
           </div>
         )}
       </div>
-      <div className="grid grid-cols-2 gap-2">
-        <Button
-          type="button"
-          variant={props.previewType === "image" ? "default" : "outline"}
-          size="sm"
-          onClick={() => props.onPreviewType("image")}
-        >
-          이미지
-        </Button>
-        <Button
-          type="button"
-          variant={props.previewType === "video" ? "default" : "outline"}
-          size="sm"
-          onClick={() => props.onPreviewType("video")}
-        >
-          영상
-        </Button>
+      <div className="space-y-2">
+        <label className="text-xs font-medium text-muted-foreground">미리보기</label>
+        <div className="grid grid-cols-3 gap-2">
+          <Button
+            type="button"
+            variant={props.previewType === "image" ? "default" : "outline"}
+            size="sm"
+            onClick={() => props.onPreviewType("image")}
+          >
+            이미지
+          </Button>
+          <Button
+            type="button"
+            variant={props.previewType === "video" ? "default" : "outline"}
+            size="sm"
+            onClick={() => props.onPreviewType("video")}
+          >
+            영상
+          </Button>
+          <UploadLabel disabled={props.uploadingPreview} accept="image/*,video/*" onUpload={props.onUpload}>
+            {props.uploadingPreview ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
+          </UploadLabel>
+        </div>
+        <Input
+          value={props.previewUrl ?? ""}
+          onChange={(event) => props.onPreviewUrl(event.target.value)}
+          placeholder="미리보기 URL 또는 storage path"
+          className="text-xs"
+        />
       </div>
-      <UploadLabel disabled={props.uploadingPreview} accept="image/*,video/*" onUpload={props.onUpload}>
-        {props.uploadingPreview ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
-        파일 업로드
-      </UploadLabel>
-      <Input
-        value={props.previewUrl ?? ""}
-        onChange={(event) => props.onPreviewUrl(event.target.value)}
-        placeholder="미리보기 URL 또는 storage path"
-        className="text-xs"
-      />
     </div>
   );
 }

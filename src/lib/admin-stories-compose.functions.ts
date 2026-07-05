@@ -5,7 +5,7 @@ import { mapNormalizedProseOffset, normalizeProseLineBreaks } from "@/lib/text-n
 
 export type HeatPreset = "soft" | "warm" | "spicy" | "steamy";
 export type AssetTier = HeatPreset | "premium";
-export type ContentType = "web_novel" | "romance_sim" | "webtoon" | "short_story" | "other";
+export type ContentType = "web_novel" | "romance_sim" | "story_rpg" | "webtoon" | "short_story" | "other";
 
 export type AssetSlot = {
   id: string;
@@ -140,18 +140,41 @@ function inferRelationship(text: string) {
   return "서로의 속마음을 확인하지 못해 긴장하는 관계";
 }
 
+function normalizeCharacterName(value: unknown) {
+  return compactText(value).replace(/[“”"'‘’『』「」()[\]{}]/g, "").trim();
+}
+
+function isGenericCharacterName(name: string) {
+  const compact = normalizeCharacterName(name).replace(/\s+/g, "");
+  if (!compact) return true;
+  if (/^(상대주인공|주인공|캐릭터\d*|등장인물\d*|남자|여자|그|그녀|그사람)$/i.test(compact)) return true;
+  if (/^(대표|CEO|상사|비서|회장|사장|남편|아내|친구|동료|직원|선생|학생)$/.test(compact)) return true;
+  return compact.length < 2 || compact.length > 20;
+}
+
+function pushGroundedName(names: Set<string>, value: unknown) {
+  const name = normalizeCharacterName(value);
+  if (!isGenericCharacterName(name)) names.add(name);
+}
+
 function candidateCharacterNames(body: string, card: Record<string, any>) {
   const names = new Set<string>();
   const existing = Array.isArray(card.characters) ? card.characters : [];
   for (const character of existing) {
-    const name = compactText(character?.name ?? character?.title);
-    if (name) names.add(name);
+    pushGroundedName(names, character?.name ?? character?.title);
   }
-  const mainName = compactText(card.name);
-  if (mainName) names.add(mainName);
+  pushGroundedName(names, card.name);
 
   const dialogueLabels = body.matchAll(/(?:^|\n)\s*([가-힣A-Za-z][가-힣A-Za-z0-9 _-]{1,18})\s*[:：]/g);
-  for (const match of dialogueLabels) names.add(match[1].trim());
+  for (const match of dialogueLabels) pushGroundedName(names, match[1]);
+
+  const speechAttributions = body.matchAll(
+    /([가-힣A-Za-z][가-힣A-Za-z0-9 _-]{1,18})\s*(?:이|가|은|는|도)?\s*(?:말했다|물었다|대답했다|속삭였다|중얼거렸다|웃었다|소리쳤다|외쳤다|답했다|불렀다|말을 이었다)/g,
+  );
+  for (const match of speechAttributions) pushGroundedName(names, match[1]);
+
+  const addressPatterns = body.matchAll(/(?:^|[\s“"'‘『「])([가-힣]{2,4})(?:야|아|씨|님|대표님|선배|오빠|형|누나|언니)(?=[,.\s?!…」』”"'])/g);
+  for (const match of addressPatterns) pushGroundedName(names, match[1]);
 
   const stopWords = new Set([
     "나는",
@@ -177,12 +200,11 @@ function candidateCharacterNames(body: string, card: Record<string, any>) {
   ]);
   const nameLike = body.matchAll(/\b([가-힣]{2,4})(?:은|는|이|가|에게|와|과|의|를|을)\b/g);
   for (const match of nameLike) {
-    const name = match[1].trim();
-    if (!stopWords.has(name)) names.add(name);
+    const name = normalizeCharacterName(match[1]);
+    if (!stopWords.has(name)) pushGroundedName(names, name);
     if (names.size >= 8) break;
   }
 
-  if (!names.size) names.add("상대 주인공");
   return [...names].slice(0, 6);
 }
 
@@ -526,7 +548,7 @@ export const getStoryChapterEditor = createServerFn({ method: "GET" })
       title: row.title,
       cover_url: row.cover_url,
       contentType: (card.contentType as ContentType) ?? "web_novel",
-      activeCharacterName: String(card.name || card.characters?.[0]?.name || "주인공"),
+      activeCharacterName: String(card.characters?.[0]?.name || card.name || "캐릭터 미등록"),
       chapter,
       chapterSummaries: chapters.map((item) => ({
         id: item.id,
@@ -1109,21 +1131,35 @@ export type UnifiedReaderStory = {
 export const getUnifiedReaderStory = createServerFn({ method: "POST" })
   .inputValidator((input: any) => input as { id: string })
   .handler(async ({ data }): Promise<UnifiedReaderStory> => {
-    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-    if (sessionError) throw new Error(sessionError.message);
-    const token = sessionData.session?.access_token;
-    if (!token) throw new Error("Unauthorized");
+    const { data: directStory, error: directError } = await supabase
+      .from("user_stories")
+      .select("*")
+      .eq("id", data.id)
+      .maybeSingle();
 
-    const params = new URLSearchParams({ id: data.id });
-    const res = await fetch(`/api/reader-story?${params.toString()}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!res.ok) {
-      const payload = await res.json().catch(() => null);
-      throw new Error(payload?.message || payload?.reason || `Reader API failed (${res.status})`);
+    let story = directStory as StoryRow | UnifiedReaderStory | null;
+
+    if (!story) {
+      if (directError) console.warn("[reader-story] direct Supabase read failed", directError.message);
+
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError) throw new Error(sessionError.message);
+      const token = sessionData.session?.access_token;
+      if (!token) throw new Error("Unauthorized");
+
+      const params = new URLSearchParams({ id: data.id });
+      const res = await fetch(`/api/reader-story?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => null);
+        throw new Error(payload?.message || payload?.reason || `Reader API failed (${res.status})`);
+      }
+      const payload = (await res.json()) as { ok: true; story: UnifiedReaderStory };
+      story = payload.story;
     }
-    const payload = (await res.json()) as { ok: true; story: UnifiedReaderStory };
-    const story = payload.story;
+
+    if (!story) throw new Error("Story not found.");
 
     return {
       id: story.id,

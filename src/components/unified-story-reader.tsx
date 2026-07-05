@@ -135,6 +135,7 @@ type Props = {
   showSlotMarkers?: boolean;
   showAffectionRows?: boolean;
   initialChatOpen?: boolean;
+  selectedCharacterId?: string | null;
   nextChapterTitle?: string | null;
   onNextChapter?: () => void;
   onBackToChapters?: () => void;
@@ -150,6 +151,16 @@ export type CharacterChatProfile = {
   relationship?: string;
   notes?: string;
   avatarUrl?: string | null;
+  showcaseAssets?: CharacterVisualAsset[];
+};
+
+type CharacterVisualAsset = {
+  id: string;
+  tier: AssetSlot["heat_tier"];
+  minAffection: number;
+  mediaUrl: string | null;
+  mediaType: "image" | "video";
+  caption: string;
 };
 
 type ReaderCharacterReply = {
@@ -179,6 +190,14 @@ type ReaderChatThread = {
 
 type ChatPhoneView = "list" | "room";
 type AssetGalleryTab = "unlocked" | "locked";
+type ChatRewardInput = { delta: number; reason: "chat_message" | "meaningful_chat" | "quest" };
+
+type StoryChatChallenge = {
+  id: string;
+  label: string;
+  prompt: string;
+  rewardDelta: number;
+};
 
 const MANGA_AVATAR_POOL = [charLuna, charKaito, charSakura, charEden, charHayoung] as const;
 
@@ -192,6 +211,61 @@ function chatMessageText(message: any) {
     .map((part: any) => (part?.type === "text" ? String(part.text ?? "") : ""))
     .join("")
     .trim();
+}
+
+function chatRewardForText(text: string, questActive: boolean): ChatRewardInput {
+  const clean = text.replace(/\s+/g, " ").trim();
+  const hasQuestion = /[?？]|\b왜\b|\b어떻게\b|\b뭐\b|\b어떤\b/.test(clean);
+  const hasEmotion = /(좋아|싫어|무서|불안|보고|그리워|미안|고마|궁금|설레|두근|걱정|화나|슬퍼|외로)/.test(clean);
+  const isLong = clean.length >= 40;
+
+  if (questActive) return { delta: isLong || hasEmotion ? 4 : 3, reason: "quest" };
+  if (isLong && hasEmotion && hasQuestion) return { delta: 3, reason: "meaningful_chat" };
+  if (isLong || hasEmotion || hasQuestion) return { delta: 2, reason: "meaningful_chat" };
+  return { delta: 1, reason: "chat_message" };
+}
+
+function buildChatChallenges(characterName: string, affection: number, excerpt: string): StoryChatChallenge[] {
+  const name = characterName || "상대";
+  const sceneHint = excerpt.replace(/\s+/g, " ").trim().slice(0, 54);
+  const stagePrompt =
+    affection >= 75
+      ? `${name}에게 지금 가장 숨기고 있는 마음을 물어본다.`
+      : affection >= 50
+        ? `${name}에게 방금 장면에서 왜 그런 선택을 했는지 조심스럽게 묻는다.`
+        : `${name}에게 오늘 처음 기억해줬으면 하는 내 한마디를 남긴다.`;
+
+  return [
+    {
+      id: "scene-empathy",
+      label: "장면 공감",
+      prompt: sceneHint
+        ? `방금 장면을 읽었어. "${sceneHint}..." 이 순간에 네 마음은 어땠어?`
+        : `방금 장면에서 네 마음이 어땠는지 솔직히 말해줘.`,
+      rewardDelta: 3,
+    },
+    {
+      id: "character-question",
+      label: "마음 묻기",
+      prompt: stagePrompt,
+      rewardDelta: affection >= 70 ? 4 : 3,
+    },
+    {
+      id: "choice-consult",
+      label: "선택 상담",
+      prompt: `내가 너에게 더 가까워지려면 지금 어떤 말을 해야 할까?`,
+      rewardDelta: 3,
+    },
+  ];
+}
+
+function proactiveCharacterLine(characterName: string, affection: number, excerpt: string) {
+  const name = characterName || "상대";
+  const scene = excerpt.replace(/\s+/g, " ").trim();
+  if (affection >= 75) return `...조금 전 장면, 너도 그냥 넘기지 못했지? 나한테 먼저 물어봐. 이번엔 피하지 않을게.`;
+  if (affection >= 50) return `아까부터 네 반응이 신경 쓰였어. 지금 읽은 장면에서 제일 걸리는 게 뭐였어?`;
+  if (scene) return `${name}이 조용히 메시지를 보냈다. "방금 읽은 장면, 너는 어떻게 봤어?"`;
+  return `${name}에게서 먼저 메시지가 도착했다. "지금 잠깐 얘기할 수 있어?"`;
 }
 
 function tierMinForSlot(slot: AssetSlot) {
@@ -254,6 +328,21 @@ function getAffectionStage(affection: number) {
     .reduce((best, stage) => (affection >= stage.min ? stage : best), AFFECTION_STAGES[0]);
 }
 
+function characterVisualAssetToSlot(asset: CharacterVisualAsset, index: number): AssetSlot {
+  return {
+    id: asset.id || `character-visual-${index}`,
+    offset: 0,
+    segment_index: null,
+    scene_description: asset.caption || "캐릭터 비주얼",
+    heat_tier: asset.tier || "soft",
+    media_asset_id: null,
+    media_url: asset.mediaUrl,
+    media_type: asset.mediaType,
+    caption: asset.caption || null,
+    source: "manual",
+  };
+}
+
 // 본문을 슬롯 offset 기준으로 잘라 [{text}, {slot}, {text}...] 배열로
 function splitByOffsets(body: string, slots: AssetSlot[]) {
   const sorted = [...slots].sort((a, b) => a.offset - b.offset);
@@ -269,29 +358,73 @@ function splitByOffsets(body: string, slots: AssetSlot[]) {
   return out;
 }
 
+function normalizeSpeakerCandidates(candidates: string[] | undefined, fallback?: string) {
+  const names = [...(candidates ?? []), fallback ?? ""]
+    .map((name) => String(name ?? "").trim())
+    .filter(Boolean)
+    .filter((name) => !/^(캐릭터 미등록|상대 주인공|주인공|등장인물|남자|여자|그|그녀)$/i.test(name.replace(/\s+/g, "")));
+  return Array.from(new Set(names)).sort((a, b) => b.length - a.length);
+}
+
+function parseSpeakerLabel(raw: string) {
+  const text = raw.trim();
+  const match = text.match(/^([가-힣A-Za-z][가-힣A-Za-z0-9 _-]{1,18})\s*[:：]\s*([\s\S]+)$/);
+  if (!match) return { speaker: "", text };
+  const speaker = match[1].trim();
+  if (/^(나|내|독자|사용자|Narrator|나레이터)$/i.test(speaker)) return { speaker: "", text: match[2].trim() };
+  return { speaker, text: match[2].trim() };
+}
+
+function inferDialogueSpeaker(paragraphs: string[], index: number, candidates: string[]) {
+  if (!candidates.length) return "";
+  const windowText = paragraphs
+    .slice(Math.max(0, index - 2), Math.min(paragraphs.length, index + 3))
+    .join(" ")
+    .replace(/\s+/g, " ");
+
+  for (const name of candidates) {
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const attribution = new RegExp(
+      `${escaped}\\s*(?:이|가|은|는|도)?\\s*(?:말했다|물었다|대답했다|답했다|속삭였다|중얼거렸다|웃었다|소리쳤다|외쳤다|불렀다|말을 이었다|입을 열었다|고개를 끄덕였다)`,
+    );
+    if (attribution.test(windowText)) return name;
+  }
+
+  for (const name of candidates) {
+    if (windowText.includes(name)) return name;
+  }
+
+  return candidates[0] ?? "";
+}
+
 /**
  * PDF/문서 폭 때문에 생긴 단일 줄바꿈은 접고, 실제 빈 줄 문단만 읽기 단위로 유지한다.
  */
 function TextBlock({
   value,
   speakerName,
+  speakerCandidates,
   className,
   paragraphClassName,
 }: {
   value: string;
   speakerName?: string;
+  speakerCandidates?: string[];
   className?: string;
   paragraphClassName?: string;
 }) {
   const normalized = normalizeProseLineBreaks(value);
   const paragraphs = normalized.split(/\n{2,}/);
+  const candidates = normalizeSpeakerCandidates(speakerCandidates, speakerName);
   return (
     <div data-scene-block className={cn("space-y-5", className)}>
       {paragraphs.map((p, i) => {
-        const text = p.trim();
+        const parsed = parseSpeakerLabel(p);
+        const text = (parsed.text || p).trim();
         if (!text) return null;
         const isDialogue = /^[“"'‘『「]/.test(text);
         const isScene = !isDialogue && /(보였|풍경|공기|천장|커튼|방|빛|소리|냄새|기억|느낌|통증|시선|손|눈|입술)/.test(text);
+        const inferredSpeaker = parsed.speaker || inferDialogueSpeaker(paragraphs, i, candidates);
 
         if (isDialogue) {
           return (
@@ -301,7 +434,7 @@ function TextBlock({
             >
               <div className="mb-2 flex items-center gap-2 text-[12px] font-semibold text-primary">
                 <span aria-hidden="true">💬</span>
-                <span>{speakerName || "상대 주인공"}</span>
+                <span>{inferredSpeaker || "캐릭터 미등록"}</span>
               </div>
               <p className={cn("whitespace-pre-line text-[18px] leading-[2.05] text-white sm:text-[19px]", paragraphClassName)}>
                 {text}
@@ -550,6 +683,84 @@ function ReaderAssetThumb({
   );
 }
 
+function ReaderCharacterVisualStage({
+  character,
+  slots,
+  affection,
+  onOpenGallery,
+}: {
+  character?: CharacterChatProfile;
+  slots: AssetSlot[];
+  affection: number;
+  onOpenGallery?: () => void;
+}) {
+  const firstUnlocked = slots.find((slot) => isReaderAssetUnlocked(slot, affection));
+  const primarySlot = firstUnlocked ?? slots[0] ?? null;
+  const primaryUrl = useSignedMedia(primarySlot?.media_url ?? primarySlot?.media_asset_id ?? character?.avatarUrl ?? null);
+  const lockedCount = slots.filter((slot) => !isReaderAssetUnlocked(slot, affection)).length;
+  const unlockedCount = slots.length - lockedCount;
+
+  return (
+    <section className="overflow-hidden rounded-[1.75rem] border border-white/10 bg-white/[0.045] shadow-2xl">
+      <div className="grid gap-0 lg:grid-cols-[minmax(0,1.2fr)_minmax(320px,.8fr)]">
+        <div className="relative min-h-[340px] overflow-hidden bg-black">
+          {primaryUrl ? (
+            primarySlot?.media_type === "video" ? (
+              <video src={primaryUrl} className="size-full object-cover" autoPlay muted loop playsInline />
+            ) : (
+              <img src={primaryUrl} alt={character?.name ?? "character"} className="size-full object-cover" />
+            )
+          ) : (
+            <div className="grid size-full place-items-center bg-[radial-gradient(circle_at_30%_20%,rgba(236,72,153,.35),transparent_34%),linear-gradient(145deg,#09090b,#18181b)]">
+              <UserRound className="size-16 text-white/25" />
+            </div>
+          )}
+          <div className="absolute inset-0 bg-gradient-to-t from-black/88 via-black/15 to-transparent" />
+          <div className="absolute bottom-0 left-0 right-0 p-5">
+            <div className="flex flex-wrap items-end justify-between gap-3">
+              <div>
+                <div className="text-[11px] font-bold uppercase tracking-[0.28em] text-primary">Character Visual</div>
+                <h2 className="mt-1 text-3xl font-extrabold text-white">{character?.name ?? "캐릭터"}</h2>
+                <p className="mt-1 max-w-xl text-sm leading-6 text-white/65">{character?.relationship || character?.role || character?.personality || "호감도에 따라 더 깊은 비주얼이 열립니다."}</p>
+              </div>
+              <div className="rounded-2xl border border-rose-300/25 bg-rose-500/15 px-4 py-3 text-right">
+                <div className="text-[11px] text-rose-100/70">호감도</div>
+                <div className="text-2xl font-extrabold text-rose-100">{affection}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="flex flex-col justify-between gap-4 p-4">
+          <div className="grid grid-cols-2 gap-2">
+            <div className="rounded-2xl border border-emerald-300/20 bg-emerald-400/10 p-3">
+              <div className="text-[11px] text-emerald-100/70">해금</div>
+              <div className="mt-1 text-xl font-bold text-emerald-100">{unlockedCount}</div>
+            </div>
+            <div className="rounded-2xl border border-rose-300/20 bg-rose-400/10 p-3">
+              <div className="text-[11px] text-rose-100/70">잠김</div>
+              <div className="mt-1 text-xl font-bold text-rose-100">{lockedCount}</div>
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            {slots.slice(0, 6).map((slot) => (
+              <ReaderAssetThumb key={slot.id} slot={slot} affection={affection} />
+            ))}
+            {slots.length === 0 && [0, 1, 2].map((item) => (
+              <div key={item} className="grid aspect-square place-items-center rounded-xl border border-dashed border-white/10 bg-white/[0.03]">
+                <Lock className="size-4 text-white/25" />
+              </div>
+            ))}
+          </div>
+          <Button type="button" onClick={onOpenGallery} className="rounded-full">
+            누적 콘텐츠 보기
+            <ChevronRight className="ml-1 size-4" />
+          </Button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function ReaderAmbientBackground({ slot }: { slot: AssetSlot | null }) {
   const url = useSignedMedia(slot?.media_url ?? slot?.media_asset_id ?? null);
   if (!url) return null;
@@ -605,13 +816,14 @@ export function UnifiedStoryReader({
   cover,
   bodyText,
   assetSlots,
-  characterName = "상대 주인공",
+  characterName = "캐릭터 미등록",
   characterProfiles,
   previewMode = false,
   previewAffection = 30,
   showSlotMarkers = false,
   showAffectionRows = false,
   initialChatOpen = false,
+  selectedCharacterId,
   nextChapterTitle,
   onNextChapter,
   onBackToChapters,
@@ -685,6 +897,13 @@ export function UnifiedStoryReader({
     if (parts.length < 2) return [title, title];
     return [parts[0], parts.slice(1).join(" - ")];
   }, [title]);
+  const activeVisualCharacter = useMemo(
+    () =>
+      (characterProfiles ?? []).find((character) => character.id === selectedCharacterId) ??
+      (characterProfiles ?? []).find((character) => character.name === characterName) ??
+      (characterProfiles ?? [])[0],
+    [characterName, characterProfiles, selectedCharacterId],
+  );
 
   const summaryText = useMemo(() => {
     const normalized = normalizeProseLineBreaks(bodyText).replace(/\s+/g, " ").trim();
@@ -701,6 +920,14 @@ export function UnifiedStoryReader({
       ...names.map((name) => ({ label: `${name} 호감도`, value: affection })),
     ];
   }, [affection, characterName, characterProfiles]);
+  const speakerCandidates = useMemo(
+    () =>
+      normalizeSpeakerCandidates(
+        (characterProfiles ?? []).map((character) => character.name ?? ""),
+        characterName,
+      ),
+    [characterName, characterProfiles],
+  );
 
   const packedSlots = useMemo(() => {
     const map = new Map<number, AssetSlot[]>();
@@ -731,9 +958,16 @@ export function UnifiedStoryReader({
   const [chatProfileGenerating, setChatProfileGenerating] = useState(false);
   const [llmModel, setLlmModel] = useState<ReaderLlmId>("auto");
   const signedChatProfileImage = useSignedMedia(chatProfileImage);
+  const characterVisualSlots = useMemo(
+    () => (activeVisualCharacter?.showcaseAssets ?? []).map(characterVisualAssetToSlot),
+    [activeVisualCharacter?.showcaseAssets],
+  );
   const mediaAssetSlots = useMemo(
-    () => (assetSlots ?? []).filter((slot) => slot.media_url || slot.media_asset_id),
-    [assetSlots],
+    () => {
+      const storySlots = (assetSlots ?? []).filter((slot) => slot.media_url || slot.media_asset_id);
+      return characterVisualSlots.length ? characterVisualSlots : storySlots;
+    },
+    [assetSlots, characterVisualSlots],
   );
   const selectedReaderFont = READER_FONT_OPTIONS.find((option) => option.id === readerFont) ?? READER_FONT_OPTIONS[0];
   const selectedLlmModel = LLM_MODEL_OPTIONS.find((option) => option.id === llmModel) ?? LLM_MODEL_OPTIONS[0];
@@ -1453,6 +1687,16 @@ export function UnifiedStoryReader({
           </section>
         )}
 
+        <ReaderCharacterVisualStage
+          character={activeVisualCharacter}
+          slots={mediaAssetSlots}
+          affection={affection}
+          onOpenGallery={() => {
+            setAssetGalleryTab("unlocked");
+            setAssetGalleryOpen(true);
+          }}
+        />
+
         <article className={cn("wrtn-like-reader space-y-9", readerMode === "focus" ? "max-w-none" : "max-w-none")}>
           {segments.map((seg, i) =>
             seg.kind === "text" ? (
@@ -1460,6 +1704,7 @@ export function UnifiedStoryReader({
                 key={`t${i}`}
                 value={seg.value}
                 speakerName={characterName}
+                speakerCandidates={speakerCandidates}
                 className={readerMode === "focus" ? "space-y-5" : "space-y-4"}
                 paragraphClassName={bodyTextClass}
               />
@@ -1523,10 +1768,11 @@ export function UnifiedStoryReader({
       </main>
 
       {!previewMode && (
-        <ReaderEngagementChatDock
+        <ReaderCharacterChatPanel
           storyId={storyId}
           characterName={characterName}
           characterProfiles={characterProfiles}
+          selectedCharacterId={selectedCharacterId}
           affection={affection}
           readingExcerpt={readingExcerpt || bodyText.slice(0, 600)}
           open={chatOpen}
@@ -1538,7 +1784,12 @@ export function UnifiedStoryReader({
           chatProfileImage={chatProfileImage}
           llmModel={llmModel}
           onReply={setCharacterReply}
-          onChatReward={() => bumpMut.mutate({ delta: 2, reason: "meaningful_chat" })}
+          onChatReward={(reward) =>
+            bumpMut.mutate({
+              delta: reward?.delta ?? 2,
+              reason: reward?.reason ?? "meaningful_chat",
+            })
+          }
         />
       )}
     </div>
@@ -1562,6 +1813,939 @@ const transport = new DefaultChatTransport({
     }
   },
 });
+
+function ReaderCharacterChatPanel({
+  storyId,
+  characterName,
+  characterProfiles,
+  selectedCharacterId,
+  affection,
+  readingExcerpt,
+  open,
+  onOpenChange,
+  previewMode,
+  readerMode,
+  chatProfileName,
+  chatProfileBio,
+  chatProfileImage,
+  llmModel,
+  onReply,
+  onChatReward,
+}: {
+  storyId: string;
+  characterName: string;
+  characterProfiles?: CharacterChatProfile[];
+  selectedCharacterId?: string | null;
+  affection: number;
+  readingExcerpt: string;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  previewMode: boolean;
+  readerMode: "reader" | "focus";
+  chatProfileName: string;
+  chatProfileBio: string;
+  chatProfileImage: string | null;
+  llmModel: ReaderLlmId;
+  onReply: (reply: ReaderCharacterReply | null) => void;
+  onChatReward: (reward?: ChatRewardInput) => void;
+}) {
+  const cleanCharacters = useMemo<CharacterChatProfile[]>(() => {
+    const rows = (characterProfiles ?? [])
+      .map((character, index) => ({
+        ...character,
+        id: String(character.id || character.name || `character-${index + 1}`),
+        name: String(character.name || characterName || "캐릭터").trim(),
+      }))
+      .filter((character) => character.name && character.name !== "캐릭터 미등록");
+
+    return rows.length
+      ? rows
+      : [{ id: "main-character", name: characterName || "캐릭터", avatarUrl: null }];
+  }, [characterName, characterProfiles]);
+
+  const chatCharacters = useMemo(
+    () =>
+      cleanCharacters.map((character, index) => ({
+        ...character,
+        avatarUrl: character.avatarUrl || fallbackMangaAvatar(`${character.id}:${character.name}`, index),
+      })),
+    [cleanCharacters],
+  );
+
+  const initialCharacterId =
+    selectedCharacterId && chatCharacters.some((character) => character.id === selectedCharacterId)
+      ? selectedCharacterId
+      : chatCharacters[0]?.id ?? "main-character";
+  const [activeCharacterId, setActiveCharacterId] = useState(initialCharacterId);
+  const [draft, setDraft] = useState("");
+  const [lastReward, setLastReward] = useState(false);
+  const [chatMode, setChatMode] = useState<ReaderChatMode>("single");
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [phoneTab, setPhoneTab] = useState<"friends" | "chats">("chats");
+  const [phoneView, setPhoneView] = useState<ChatPhoneView>("list");
+  const [activeChallengeId, setActiveChallengeId] = useState<string | null>(null);
+  const [threads, setThreads] = useState<Record<string, ReaderChatThread>>({});
+  const [unreadByThread, setUnreadByThread] = useState<Record<string, number>>({});
+  const pendingThreadRef = useRef<ReaderChatThread | null>(null);
+  const lastAssistantMessageIdRef = useRef<string | null>(null);
+  const proactiveThreadRef = useRef<Record<string, boolean>>({});
+  const hydratedRef = useRef(false);
+  const notificationAudioRef = useRef<AudioContext | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  const activeCharacter =
+    chatCharacters.find((character) => character.id === activeCharacterId) ?? chatCharacters[0];
+  const activeCharacterName = activeCharacter?.name || characterName || "캐릭터";
+  const activeAvatarSource = activeCharacter?.avatarUrl ?? null;
+  const activeAvatarUrl = useSignedMedia(activeAvatarSource);
+  const activeCharacterVisualSlots = useMemo(
+    () => (activeCharacter?.showcaseAssets ?? []).map(characterVisualAssetToSlot),
+    [activeCharacter?.showcaseAssets],
+  );
+  const hasMultipleCharacters = chatCharacters.length > 1;
+  const targetLabel = chatMode === "group" ? "단체채팅" : activeCharacterName;
+  const threadKey = chatMode === "group" ? "group" : `single:${activeCharacter?.id ?? "main-character"}`;
+  const dockWidthClass = readerMode === "focus" ? "max-w-[768px]" : "max-w-[880px]";
+  const selectedCharacters = chatMode === "group" ? chatCharacters : [activeCharacter].filter(Boolean);
+
+  const { messages, sendMessage, status } = useChat({
+    id: `story-${storyId}-${threadKey}`,
+    transport,
+  });
+  const isStreaming = status === "submitted" || status === "streaming";
+  const latestAssistantMessage = useMemo(() => {
+    const assistantMessage = [...messages].reverse().find((message) => message.role === "assistant");
+    const text = chatMessageText(assistantMessage);
+    return assistantMessage && text ? { id: assistantMessage.id, text } : null;
+  }, [messages]);
+
+  const fetchReaderChats = useServerFn(listReaderChatMessages);
+  const appendReaderChat = useServerFn(appendReaderChatMessage);
+  const chatHistoryQ = useQuery({
+    queryKey: ["reader_chat_messages", storyId],
+    queryFn: () => fetchReaderChats({ data: { storyId, limit: 240 } }),
+    enabled: !previewMode && Boolean(storyId),
+    staleTime: 30_000,
+  });
+  const saveChatMutation = useMutation({
+    mutationFn: (data: {
+      storyId: string;
+      role: "user" | "assistant";
+      text: string;
+      threadKey: string;
+      threadLabel: string;
+      chatMode: ReaderChatMode;
+      characterId?: string | null;
+      characterName: string;
+      avatarUrl?: string | null;
+      affectionAt?: number | null;
+    }) => appendReaderChat({ data }),
+    onError: (error) => console.warn("[reader-chat] failed to save chat message", error),
+  });
+
+  const threadList = useMemo<ReaderChatThread[]>(() => {
+    const singles = chatCharacters.map((character) => {
+      const key = `single:${character.id}`;
+      return (
+        threads[key] ?? {
+          key,
+          label: character.name,
+          mode: "single" as ReaderChatMode,
+          avatarUrl: character.avatarUrl ?? null,
+          messages: [],
+        }
+      );
+    });
+    const groupThread =
+      threads.group ?? {
+        key: "group",
+        label: "단체채팅",
+        mode: "group" as ReaderChatMode,
+        avatarUrl: null,
+        messages: [],
+      };
+    return hasMultipleCharacters ? [...singles, groupThread] : singles;
+  }, [chatCharacters, hasMultipleCharacters, threads]);
+
+  const activeThread =
+    threadList.find((thread) => thread.key === threadKey) ?? threadList[0];
+  const totalUnread = useMemo(
+    () => Object.values(unreadByThread).reduce((sum, count) => sum + count, 0),
+    [unreadByThread],
+  );
+  const chattedFriends = useMemo(() => {
+    const talkedIds = new Set(
+      Object.values(threads)
+        .filter((thread) => thread.mode === "single" && thread.messages.length > 0)
+        .map((thread) => thread.key.replace(/^single:/, "")),
+    );
+    const friends = chatCharacters.filter((character) => talkedIds.has(character.id));
+    return friends.length ? friends : chatCharacters.slice(0, Math.min(4, chatCharacters.length));
+  }, [chatCharacters, threads]);
+  const quickPrompts = useMemo(
+    () => [
+      "지금 장면에서 네 마음은 어때?",
+      "내가 어떤 선택을 하면 좋을까?",
+      "나에게만 힌트를 줘.",
+      "조금 더 가까워지고 싶어.",
+    ],
+    [],
+  );
+  const chatChallenges = useMemo(
+    () => buildChatChallenges(activeCharacterName, affection, readingExcerpt),
+    [activeCharacterName, affection, readingExcerpt],
+  );
+  const activeChallenge = chatChallenges.find((challenge) => challenge.id === activeChallengeId) ?? null;
+  const nextGoal = affection < 30 ? 30 : affection < 55 ? 55 : affection < 75 ? 75 : 100;
+  const affectionGap = Math.max(0, nextGoal - affection);
+
+  useEffect(() => {
+    if (selectedCharacterId && chatCharacters.some((character) => character.id === selectedCharacterId)) {
+      setActiveCharacterId(selectedCharacterId);
+      setChatMode("single");
+      onOpenChange(true);
+    }
+  }, [chatCharacters, onOpenChange, selectedCharacterId]);
+
+  useEffect(() => {
+    if (!chatCharacters.some((character) => character.id === activeCharacterId)) {
+      setActiveCharacterId(chatCharacters[0]?.id ?? "main-character");
+    }
+  }, [activeCharacterId, chatCharacters]);
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+  }, [activeThread?.messages.length, isStreaming, latestAssistantMessage?.text]);
+
+  useEffect(() => {
+    if (open && historyOpen && phoneTab === "chats") clearThreadUnread(threadKey);
+  }, [historyOpen, open, phoneTab, threadKey]);
+
+  useEffect(() => {
+    if (previewMode || !open || proactiveThreadRef.current[threadKey]) return;
+    if ((activeThread?.messages.length ?? 0) > 0) return;
+    proactiveThreadRef.current[threadKey] = true;
+    const timer = window.setTimeout(() => {
+      const thread = makeThread(threadKey, targetLabel, chatMode, chatMode === "group" ? null : activeAvatarSource);
+      const message = {
+        role: "assistant" as const,
+        speaker: thread.label,
+        avatarUrl: thread.avatarUrl ?? null,
+        text: proactiveCharacterLine(thread.label, affection, readingExcerpt),
+      };
+      appendThreadMessage(thread, message);
+      persistThreadMessage(thread, message);
+      playNotification();
+    }, 900);
+    return () => window.clearTimeout(timer);
+  }, [
+    activeAvatarSource,
+    activeThread?.messages.length,
+    affection,
+    chatMode,
+    open,
+    previewMode,
+    readingExcerpt,
+    targetLabel,
+    threadKey,
+  ]);
+
+  useEffect(() => {
+    if (hydratedRef.current || !chatHistoryQ.data?.length) return;
+    const next: Record<string, ReaderChatThread> = {};
+
+    for (const row of chatHistoryQ.data as ReaderChatMessageRow[]) {
+      const key = row.threadKey || "single:main-character";
+      const label = row.threadLabel || row.characterName || "캐릭터";
+      const current = next[key] ?? {
+        key,
+        label,
+        mode: row.chatMode === "group" ? "group" : ("single" as ReaderChatMode),
+        avatarUrl: row.avatarUrl ?? null,
+        messages: [],
+      };
+      current.messages.push({
+        id: row.id,
+        role: row.role,
+        text: row.text,
+        speaker: row.role === "user" ? "나" : row.characterName || label,
+        avatarUrl: row.role === "assistant" ? row.avatarUrl ?? current.avatarUrl ?? null : null,
+        at: new Date(row.createdAt).getTime() || Date.now(),
+      });
+      next[key] = { ...current, messages: current.messages.slice(-80) };
+    }
+
+    setThreads((prev) => ({ ...next, ...prev }));
+    hydratedRef.current = true;
+  }, [chatHistoryQ.data]);
+
+  useEffect(() => {
+    if (!latestAssistantMessage || latestAssistantMessage.id === lastAssistantMessageIdRef.current) return;
+    if (isStreaming) return;
+    lastAssistantMessageIdRef.current = latestAssistantMessage.id;
+    const thread =
+      pendingThreadRef.current ??
+      makeThread(threadKey, targetLabel, chatMode, chatMode === "group" ? null : activeAvatarSource);
+    const message = {
+      role: "assistant" as const,
+      speaker: thread.label,
+      avatarUrl: thread.avatarUrl ?? null,
+      text: latestAssistantMessage.text,
+    };
+    appendThreadMessage(thread, message);
+    persistThreadMessage(thread, message);
+    onReply({
+      characterName: thread.label,
+      avatarUrl: thread.mode === "group" ? null : thread.avatarUrl,
+      text: latestAssistantMessage.text,
+    });
+    playNotification();
+    toast(`${thread.label} 답장`, {
+      description: latestAssistantMessage.text.slice(0, 72),
+      icon: <Bell className="size-4 text-primary" />,
+    });
+  }, [activeAvatarSource, chatMode, isStreaming, latestAssistantMessage, onReply, targetLabel, threadKey]);
+
+  function makeThread(key: string, label: string, mode: ReaderChatMode, avatarUrl?: string | null): ReaderChatThread {
+    return { key, label, mode, avatarUrl: avatarUrl ?? null, messages: [] };
+  }
+
+  function appendThreadMessage(
+    thread: ReaderChatThread,
+    message: Omit<ReaderChatHistoryMessage, "id" | "at">,
+  ) {
+    setThreads((prev) => {
+      const current = prev[thread.key] ?? thread;
+      return {
+        ...prev,
+        [thread.key]: {
+          ...current,
+          label: thread.label,
+          avatarUrl: thread.avatarUrl ?? current.avatarUrl ?? null,
+          messages: [
+            ...current.messages,
+            { ...message, id: `${thread.key}-${Date.now()}-${current.messages.length}`, at: Date.now() },
+          ].slice(-80),
+        },
+      };
+    });
+
+    if (message.role === "assistant" && (thread.key !== threadKey || !open || !historyOpen || phoneTab !== "chats")) {
+      setUnreadByThread((prev) => ({ ...prev, [thread.key]: (prev[thread.key] ?? 0) + 1 }));
+    }
+  }
+
+  function persistThreadMessage(
+    thread: ReaderChatThread,
+    message: Omit<ReaderChatHistoryMessage, "id" | "at">,
+  ) {
+    if (previewMode) return;
+    saveChatMutation.mutate({
+      storyId,
+      role: message.role,
+      text: message.text,
+      threadKey: thread.key,
+      threadLabel: thread.label,
+      chatMode: thread.mode,
+      characterId: thread.mode === "group" ? "group" : thread.key.replace(/^single:/, ""),
+      characterName: thread.label,
+      avatarUrl: thread.avatarUrl ?? null,
+      affectionAt: affection,
+    });
+  }
+
+  async function send() {
+    if (!draft.trim() || isStreaming) return;
+    if (previewMode) {
+      toast.info("미리보기에서는 채팅을 전송하지 않습니다.");
+      setDraft("");
+      return;
+    }
+
+    const text = draft.trim();
+    setDraft("");
+    const thread = makeThread(threadKey, targetLabel, chatMode, chatMode === "group" ? null : activeAvatarSource);
+    pendingThreadRef.current = thread;
+    const userMessage = {
+      role: "user" as const,
+      speaker: "나",
+      avatarUrl: null,
+      text,
+    };
+    appendThreadMessage(thread, userMessage);
+    persistThreadMessage(thread, userMessage);
+    setHistoryOpen(true);
+    setPhoneTab("chats");
+    setPhoneView("room");
+
+    await sendMessage(
+      { text },
+      {
+        body: {
+          storyId,
+          sceneExcerpt: readingExcerpt,
+          affection,
+          chatMode,
+          challengeId: activeChallenge?.id ?? null,
+          engagementIntent: activeChallenge?.label ?? null,
+          characterId: chatMode === "group" ? "group" : activeCharacter?.id,
+          characterName: targetLabel,
+          characterProfile: chatMode === "group" ? { name: "단체채팅", characters: selectedCharacters } : activeCharacter,
+          selectedCharacters,
+          readerProfile: {
+            name: chatProfileName,
+            bio: chatProfileBio,
+            image: chatProfileImage,
+          },
+          preferredLlmModel: llmModel,
+        },
+      },
+    );
+    const baseReward = chatRewardForText(text, Boolean(activeChallenge));
+    const reward = activeChallenge
+      ? { ...baseReward, delta: Math.max(baseReward.delta, activeChallenge.rewardDelta) }
+      : baseReward;
+    onChatReward(reward);
+    if (activeChallenge) {
+      toast.success(`${activeChallenge.label} 완료`, {
+        description: `호감도 보상 +${reward.delta}`,
+        icon: <Check className="size-4 text-emerald-400" />,
+      });
+      setActiveChallengeId(null);
+    }
+    setLastReward(true);
+    window.setTimeout(() => setLastReward(false), 1600);
+  }
+
+  function clearThreadUnread(key: string) {
+    setUnreadByThread((prev) => {
+      if (!prev[key]) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  }
+
+  function openThread(key: string) {
+    clearThreadUnread(key);
+    if (key === "group") {
+      setChatMode("group");
+    } else {
+      setChatMode("single");
+      setActiveCharacterId(key.replace(/^single:/, ""));
+    }
+    onOpenChange(true);
+    setPhoneTab("chats");
+    setPhoneView("room");
+  }
+
+  function playNotification() {
+    if (typeof window === "undefined") return;
+    try {
+      const AudioContextCtor = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioContextCtor) return;
+      const ctx = notificationAudioRef.current ?? new AudioContextCtor();
+      notificationAudioRef.current = ctx;
+      const play = () => {
+        const now = ctx.currentTime;
+        const gain = ctx.createGain();
+        const osc = ctx.createOscillator();
+        gain.gain.setValueAtTime(0.0001, now);
+        gain.gain.exponentialRampToValueAtTime(0.04, now + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.26);
+        osc.frequency.setValueAtTime(1046, now);
+        osc.type = "sine";
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.24);
+      };
+      if (ctx.state === "suspended") void ctx.resume().then(play).catch(() => undefined);
+      else play();
+    } catch {
+      // Browser audio can be blocked until the user interacts with the page.
+    }
+  }
+
+  const activeTimeLabel = useMemo(() => {
+    const latest = activeThread?.messages[activeThread.messages.length - 1];
+    return latest ? new Intl.DateTimeFormat("ko-KR", { hour: "2-digit", minute: "2-digit" }).format(latest.at) : "지금";
+  }, [activeThread]);
+
+  return (
+    <>
+      {!previewMode && (
+        <aside
+          aria-hidden={!historyOpen}
+          className={cn(
+            "fixed bottom-24 left-4 top-[114px] z-30 hidden w-[340px] flex-col transition duration-300 md:flex",
+            historyOpen ? "translate-x-0 opacity-100" : "pointer-events-none -translate-x-[calc(100%+1rem)] opacity-0",
+          )}
+        >
+          <div className="relative flex min-h-0 flex-1 flex-col rounded-[2rem] border-[8px] border-[#111] bg-[#111] shadow-[0_24px_80px_rgba(0,0,0,.62)]">
+            <div className="pointer-events-none absolute left-1/2 top-2 z-20 h-4 w-24 -translate-x-1/2 rounded-full bg-[#111]" />
+            <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1.55rem] bg-[#f7f4ef] text-[#191919]">
+              <div className="flex h-9 items-center justify-between px-5 pt-2 text-[11px] font-bold">
+                <span>{activeTimeLabel}</span>
+                <span className="h-2.5 w-4 rounded-[3px] border border-[#191919]/50">
+                  <span className="block h-full w-3 rounded-[2px] bg-[#191919]" />
+                </span>
+              </div>
+
+              <div className="flex items-center justify-between px-4 pb-3 pt-2">
+                <div className="flex items-center gap-2 text-[22px] font-extrabold tracking-[-0.02em]">
+                  Talk
+                  {totalUnread > 0 && (
+                    <span className="grid min-w-5 place-items-center rounded-full bg-[#ff4d6d] px-1.5 py-0.5 text-[10px] leading-none text-white">
+                      {totalUnread > 99 ? "99+" : totalUnread}
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button type="button" className="grid size-8 place-items-center rounded-full bg-black/5" aria-label="검색">
+                    <Search className="size-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setHistoryOpen(false)}
+                    className="inline-flex h-8 items-center gap-1.5 rounded-full bg-[#191919] px-3 text-[11px] font-extrabold text-white shadow-sm transition hover:bg-[#ff4d6d]"
+                    aria-label="대화 기록 닫기"
+                  >
+                    <PanelLeftClose className="size-4" />
+                    닫기
+                  </button>
+                </div>
+              </div>
+
+              <div className="mx-4 mb-3 grid grid-cols-2 rounded-2xl bg-black/[0.06] p-1 text-xs font-bold">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPhoneTab("friends");
+                    setPhoneView("list");
+                  }}
+                  className={cn("rounded-xl py-2 transition", phoneTab === "friends" ? "bg-white shadow-sm" : "text-[#7b756f]")}
+                >
+                  친구
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPhoneTab("chats");
+                    setPhoneView("list");
+                  }}
+                  className={cn("rounded-xl py-2 transition", phoneTab === "chats" ? "bg-white shadow-sm" : "text-[#7b756f]")}
+                >
+                  채팅
+                </button>
+              </div>
+
+              {phoneView === "list" ? (
+                <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-3 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                  {phoneTab === "friends" ? (
+                    <div className="space-y-2">
+                      {chattedFriends.map((character) => (
+                        <button
+                          key={character.id}
+                          type="button"
+                          onClick={() => openThread(`single:${character.id}`)}
+                          className="flex w-full items-center gap-3 rounded-2xl px-2 py-2 text-left transition hover:bg-black/[0.04]"
+                        >
+                          <ReaderMessengerAvatar label={character.name} src={character.avatarUrl} className="size-12" />
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-sm font-extrabold">{character.name}</span>
+                            <span className="block truncate text-[11px] font-medium text-[#8a837b]">
+                              {character.role || character.personality || "스토리 주인공"}
+                            </span>
+                          </span>
+                          <Heart className="size-4 text-[#ff4d6d]" />
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      {threadList.map((thread) => {
+                        const latest = thread.messages[thread.messages.length - 1];
+                        const unread = unreadByThread[thread.key] ?? 0;
+                        return (
+                          <button
+                            key={thread.key}
+                            type="button"
+                            onClick={() => openThread(thread.key)}
+                            className="flex w-full items-center gap-3 rounded-2xl px-2 py-2 text-left transition hover:bg-black/[0.04]"
+                          >
+                            <ReaderMessengerAvatar
+                              label={thread.label}
+                              src={thread.avatarUrl}
+                              group={thread.mode === "group"}
+                              className="size-12"
+                            />
+                            <span className="min-w-0 flex-1">
+                              <span className="flex items-center justify-between gap-2">
+                                <span className="truncate text-sm font-extrabold">{thread.label}</span>
+                                {latest && (
+                                  <span className="shrink-0 text-[10px] font-medium text-[#9c958e]">
+                                    {new Intl.DateTimeFormat("ko-KR", { hour: "2-digit", minute: "2-digit" }).format(latest.at)}
+                                  </span>
+                                )}
+                              </span>
+                              <span className="mt-0.5 block truncate text-[11px] font-medium text-[#8a837b]">
+                                {latest?.text || "대화를 시작해보세요"}
+                              </span>
+                            </span>
+                            {unread > 0 && (
+                              <span className="grid min-w-5 place-items-center rounded-full bg-[#ff4d6d] px-1.5 py-0.5 text-[10px] leading-none text-white">
+                                {unread > 9 ? "9+" : unread}
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="mx-3 mb-3 flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1.5rem] bg-[#b7c9d7] shadow-inner">
+                  <div className="flex h-11 items-center justify-between bg-[#a9bfce] px-3 text-[#1d2a33]">
+                    <button type="button" onClick={() => setPhoneView("list")} className="inline-flex items-center gap-1 text-xs font-bold">
+                      <ArrowLeft className="size-3.5" /> 목록
+                    </button>
+                    <div className="min-w-0 flex items-center gap-2">
+                      <ReaderMessengerAvatar
+                        label={activeThread?.label ?? targetLabel}
+                        src={activeThread?.avatarUrl ?? null}
+                        group={activeThread?.mode === "group"}
+                        className="size-7 rounded-xl"
+                      />
+                      <span className="truncate text-sm font-extrabold">{activeThread?.label ?? targetLabel}</span>
+                    </div>
+                    <MoreHorizontal className="size-4" />
+                  </div>
+
+                  <div ref={scrollRef} className="min-h-0 flex-1 space-y-2 overflow-y-auto px-3 py-3">
+                    {(activeThread?.messages.length ?? 0) === 0 ? (
+                      <div className="mx-auto mt-8 max-w-[13rem] rounded-2xl bg-white/55 px-3 py-3 text-center text-xs leading-5 text-[#4d5960]">
+                        지금 읽는 장면을 떠올리며 말을 걸어보세요.
+                      </div>
+                    ) : (
+                      activeThread!.messages.map((message) => (
+                        <div key={message.id} className={cn("flex gap-2", message.role === "user" ? "justify-end" : "justify-start")}>
+                          {message.role === "assistant" && (
+                            <ReaderMessengerAvatar label={message.speaker} src={message.avatarUrl} className="mt-0.5 size-8 rounded-xl" />
+                          )}
+                          <div className="max-w-[74%]">
+                            {message.role === "assistant" && (
+                              <div className="mb-1 text-[10px] font-bold text-[#2c3a43]">{message.speaker}</div>
+                            )}
+                            <div
+                              className={cn(
+                                "rounded-2xl px-3 py-2 text-xs leading-5 shadow-sm",
+                                message.role === "user"
+                                  ? "rounded-tr-md bg-[#fee500] text-[#191919]"
+                                  : "rounded-tl-md bg-white text-[#191919]",
+                              )}
+                            >
+                              <div className="whitespace-pre-line">{message.text}</div>
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                    {isStreaming && (
+                      latestAssistantMessage?.text ? (
+                        <div className="flex justify-start gap-2">
+                          <ReaderMessengerAvatar
+                            label={targetLabel}
+                            src={activeThread?.avatarUrl ?? null}
+                            group={activeThread?.mode === "group"}
+                            className="mt-0.5 size-8 rounded-xl"
+                          />
+                          <div className="max-w-[74%]">
+                            <div className="mb-1 text-[10px] font-bold text-[#2c3a43]">{targetLabel}</div>
+                            <div className="rounded-2xl rounded-tl-md bg-white px-3 py-2 text-xs leading-5 text-[#191919] shadow-sm">
+                              <div className="whitespace-pre-line">{latestAssistantMessage.text}</div>
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2 text-xs font-semibold text-[#4d5960]">
+                          <span className="relative flex size-2">
+                            <span className="absolute inline-flex size-full animate-ping rounded-full bg-[#fee500] opacity-70" />
+                            <span className="relative inline-flex size-2 rounded-full bg-[#fee500]" />
+                          </span>
+                          {targetLabel} 입력 중
+                        </div>
+                      )
+                    )}
+                  </div>
+                </div>
+              )}
+
+              <div className="grid grid-cols-3 border-t border-black/5 bg-white/80 py-2 text-[10px] font-bold text-[#8a837b]">
+                <button type="button" onClick={() => { setPhoneTab("friends"); setPhoneView("list"); }} className={cn("flex flex-col items-center gap-1", phoneTab === "friends" && "text-[#191919]")}>
+                  <UserRound className="size-4" /> 친구
+                </button>
+                <button type="button" onClick={() => { setPhoneTab("chats"); setPhoneView("list"); }} className={cn("flex flex-col items-center gap-1", phoneTab === "chats" && "text-[#191919]")}>
+                  <span className="relative">
+                    <MessageCircle className="size-4" />
+                    {totalUnread > 0 && (
+                      <span className="absolute -right-2 -top-2 grid min-w-4 place-items-center rounded-full bg-[#ff4d6d] px-1 text-[8px] leading-4 text-white">
+                        {totalUnread > 9 ? "9+" : totalUnread}
+                      </span>
+                    )}
+                  </span>
+                  채팅
+                </button>
+                <button type="button" className="flex flex-col items-center gap-1">
+                  <MoreHorizontal className="size-4" /> 더보기
+                </button>
+              </div>
+            </div>
+          </div>
+        </aside>
+      )}
+
+      {!previewMode && !historyOpen && (
+        <button
+          type="button"
+          onClick={() => {
+            setHistoryOpen(true);
+            setPhoneTab("chats");
+            setPhoneView("list");
+          }}
+          aria-label="대화 기록 열기"
+          className="fixed bottom-28 left-4 z-30 hidden items-center gap-2 rounded-full border border-white/10 bg-black/86 px-3 py-2 text-xs font-semibold text-white shadow-2xl backdrop-blur-xl transition hover:border-primary/50 md:flex"
+        >
+          <PanelLeftOpen className="size-4 text-primary" />
+          {totalUnread > 0 && (
+            <span className="grid min-w-5 place-items-center rounded-full bg-[#ff4d6d] px-1.5 py-0.5 text-[10px] leading-none text-white">
+              {totalUnread > 99 ? "99+" : totalUnread}
+            </span>
+          )}
+          휴대폰 열기
+        </button>
+      )}
+
+      <div className="fixed inset-x-0 bottom-0 z-30 bg-gradient-to-t from-[#0f0f0f] via-[#0f0f0f]/82 to-transparent pb-4 pt-8">
+        <div className={cn("mx-auto space-y-2 px-4", dockWidthClass)}>
+          {hasMultipleCharacters && open && (
+            <div className="flex items-center gap-1.5 overflow-x-auto rounded-2xl border border-white/10 bg-black/72 p-1.5 backdrop-blur-xl [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              {chatCharacters.map((character) => {
+                const active = chatMode === "single" && character.id === activeCharacter?.id;
+                return (
+                  <button
+                    key={character.id}
+                    type="button"
+                    onClick={() => {
+                      setChatMode("single");
+                      setActiveCharacterId(character.id);
+                    }}
+                    className={cn(
+                      "shrink-0 rounded-full border px-3 py-1.5 text-xs transition",
+                      active
+                        ? "border-primary/70 bg-primary text-primary-foreground"
+                        : "border-white/10 bg-white/[0.04] text-white/70 hover:border-primary/40 hover:text-white",
+                    )}
+                  >
+                    {character.name}
+                  </button>
+                );
+              })}
+              <button
+                type="button"
+                onClick={() => setChatMode("group")}
+                className={cn(
+                  "shrink-0 rounded-full border px-3 py-1.5 text-xs transition",
+                  chatMode === "group"
+                    ? "border-primary/70 bg-primary text-primary-foreground"
+                    : "border-white/10 bg-white/[0.04] text-white/70 hover:border-primary/40 hover:text-white",
+                )}
+              >
+                단체채팅
+              </button>
+            </div>
+          )}
+
+          {open && (
+            <div className="flex items-center justify-between rounded-2xl border border-white/10 bg-black/70 px-3 py-2 text-xs text-white/60 backdrop-blur-xl">
+              <button
+                type="button"
+                onClick={() => setHistoryOpen((value) => !value)}
+                aria-label={historyOpen ? "휴대폰 채팅 닫기" : "휴대폰 채팅 열기"}
+                className="inline-flex items-center gap-2 rounded-full px-2 py-1 text-white transition hover:bg-white/10"
+              >
+                {historyOpen ? <PanelLeftClose className="size-4 text-primary" /> : <PanelLeftOpen className="size-4 text-primary" />}
+                {totalUnread > 0 && (
+                  <span className="grid min-w-5 place-items-center rounded-full bg-[#ff4d6d] px-1.5 py-0.5 text-[10px] leading-none text-white">
+                    {totalUnread > 99 ? "99+" : totalUnread}
+                  </span>
+                )}
+                {historyOpen ? "휴대폰 닫기" : "휴대폰"}
+              </button>
+              <div className="flex items-center gap-2">
+                <span className="relative flex size-2">
+                  <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-60" />
+                  <span className="relative inline-flex size-2 rounded-full bg-emerald-400" />
+                </span>
+                <span className="font-medium text-white">{targetLabel}</span>
+                <span>{chatMode === "group" ? "단체" : "1:1"}</span>
+                <span className="rounded-full border border-rose-400/30 bg-rose-500/10 px-2 py-0.5 text-[11px] text-rose-300">
+                  호감도 {affection}
+                </span>
+              </div>
+            </div>
+          )}
+
+          {open && (
+            <div className="rounded-2xl border border-white/10 bg-black/72 p-2 backdrop-blur-xl">
+              <div className="mb-2 grid grid-cols-[4.5rem_minmax(0,1fr)] gap-2">
+                <div className="relative overflow-hidden rounded-xl bg-white/[0.04]">
+                  {activeAvatarUrl ? (
+                    <img src={activeAvatarUrl} alt="" className="aspect-square size-full object-cover" />
+                  ) : (
+                    <div className="grid aspect-square place-items-center">
+                      <UserRound className="size-6 text-white/30" />
+                    </div>
+                  )}
+                </div>
+                <div className="min-w-0 rounded-xl border border-white/10 bg-white/[0.035] p-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate text-xs font-semibold text-white">{activeCharacterName}</span>
+                    <span className="rounded-full bg-rose-500/15 px-2 py-0.5 text-[10px] text-rose-200">호감도 {affection}</span>
+                  </div>
+                  <div className="mt-2 grid grid-cols-5 gap-1">
+                    {(activeCharacterVisualSlots.length ? activeCharacterVisualSlots : []).slice(0, 5).map((slot) => (
+                      <ReaderAssetThumb key={slot.id} slot={slot} affection={affection} />
+                    ))}
+                    {activeCharacterVisualSlots.length === 0 &&
+                      [0, 1, 2, 3, 4].map((item) => (
+                        <div key={item} className="grid aspect-square place-items-center rounded-lg border border-dashed border-white/10 bg-white/[0.03]">
+                          <Lock className="size-3 text-white/25" />
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              </div>
+              <div className="mb-2 flex items-center justify-between gap-2 px-1 text-[11px] text-white/55">
+                <span className="inline-flex items-center gap-1.5">
+                  <Sparkles className="size-3.5 text-sky-300" />
+                  관계 챌린지
+                </span>
+                <span>{affectionGap > 0 ? `다음 단계까지 ${affectionGap}` : "완전 해금"}</span>
+              </div>
+              <div className="flex gap-1.5 overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                {chatChallenges.map((challenge) => (
+                  <button
+                    key={challenge.id}
+                    type="button"
+                    onClick={() => {
+                      setActiveChallengeId(challenge.id);
+                      setDraft(challenge.prompt);
+                      setPhoneTab("chats");
+                      setPhoneView("room");
+                      onOpenChange(true);
+                    }}
+                    className={cn(
+                      "shrink-0 rounded-full border px-3 py-1.5 text-[11px] transition",
+                      activeChallengeId === challenge.id
+                        ? "border-sky-300/70 bg-sky-400/20 text-sky-100"
+                        : "border-white/10 bg-white/[0.04] text-white/62 hover:border-sky-300/50 hover:text-white",
+                    )}
+                  >
+                    {challenge.label}
+                    <span className="ml-1 text-sky-200">+{challenge.rewardDelta}</span>
+                  </button>
+                ))}
+              </div>
+              {activeChallenge && (
+                <div className="mt-2 rounded-xl border border-sky-300/20 bg-sky-400/10 px-3 py-2 text-[11px] leading-5 text-sky-50/80">
+                  {activeChallenge.label} 진행 중. 그대로 보내거나 네 말투로 바꿔도 됩니다.
+                </div>
+              )}
+            </div>
+          )}
+
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void send();
+            }}
+            className="flex items-center gap-2 rounded-2xl border border-white/10 bg-black/86 p-2 shadow-2xl backdrop-blur-xl"
+          >
+            <button
+              type="button"
+              onClick={() => {
+                if (!hasMultipleCharacters) return;
+                setChatMode("single");
+                const currentIndex = Math.max(0, chatCharacters.findIndex((character) => character.id === activeCharacter?.id));
+                const next = chatCharacters[(currentIndex + 1) % chatCharacters.length];
+                setActiveCharacterId(next.id);
+              }}
+              className={cn(
+                "flex min-w-0 shrink-0 items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-2.5 py-2 text-left",
+                hasMultipleCharacters && "transition hover:border-primary/40",
+              )}
+              title={hasMultipleCharacters ? "대화 상대 변경" : targetLabel}
+            >
+              <span className="grid size-8 shrink-0 place-items-center overflow-hidden rounded-full border border-primary/30 bg-primary/10">
+                {chatMode === "group" ? (
+                  <MessageCircle className="size-4 text-primary" />
+                ) : activeAvatarUrl ? (
+                  <img src={activeAvatarUrl} alt="" className="size-full object-cover" />
+                ) : (
+                  <span className="text-xs font-semibold text-primary">{activeCharacterName.slice(0, 1)}</span>
+                )}
+              </span>
+              <span className="hidden max-w-28 truncate text-xs font-semibold text-white sm:block">{targetLabel}</span>
+            </button>
+
+            <textarea
+              value={draft}
+              onFocus={() => onOpenChange(true)}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  void send();
+                }
+              }}
+              rows={open ? 2 : 1}
+              placeholder={`${targetLabel}에게 메시지 보내기`}
+              className="min-h-10 flex-1 resize-none rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm leading-6 text-white placeholder:text-white/35 focus:outline-none focus:ring-1 focus:ring-primary"
+            />
+
+            <div className="flex shrink-0 items-center gap-1.5">
+              {lastReward && <span className="hidden text-[11px] font-semibold text-rose-300 sm:inline">호감도 상승</span>}
+              {affectionGap > 0 && (
+                <span className="hidden rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[11px] text-white/55 md:inline">
+                  다음 {affectionGap}
+                </span>
+              )}
+              <Button type="submit" size="sm" disabled={!draft.trim() || isStreaming} className="size-10 rounded-full p-0">
+                {isStreaming ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
+              </Button>
+            </div>
+          </form>
+          <div className="flex gap-1.5 overflow-x-auto px-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            {quickPrompts.map((prompt) => (
+              <button
+                key={prompt}
+                type="button"
+                onClick={() => {
+                  setDraft(prompt);
+                  onOpenChange(true);
+                }}
+                className="shrink-0 rounded-full border border-white/10 bg-black/55 px-3 py-1.5 text-[11px] text-white/62 transition hover:border-primary/40 hover:text-white"
+              >
+                {prompt}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
 
 function CharacterChatDock({
   storyId,
@@ -1811,6 +2995,10 @@ function ReaderEngagementChatDock({
   onOpenChange,
   previewMode,
   readerMode,
+  chatProfileName,
+  chatProfileBio,
+  chatProfileImage,
+  llmModel,
   onReply,
   onChatReward,
 }: {
@@ -1823,6 +3011,10 @@ function ReaderEngagementChatDock({
   onOpenChange: (v: boolean) => void;
   previewMode: boolean;
   readerMode: "reader" | "focus";
+  chatProfileName: string;
+  chatProfileBio: string;
+  chatProfileImage: string | null;
+  llmModel: ReaderLlmId;
   onReply: (reply: ReaderCharacterReply | null) => void;
   onChatReward: () => void;
 }) {
@@ -1855,12 +3047,12 @@ function ReaderEngagementChatDock({
       .map((character, index) => ({
         ...character,
         id: String(character.id || character.name || `character-${index + 1}`),
-        name: String(character.name || characterName || "상대 주인공"),
+        name: String(character.name || characterName || "캐릭터 미등록"),
       }))
       .filter((character) => character.name.trim());
     return fromProfiles.length
       ? fromProfiles
-      : [{ id: "main-character", name: characterName || "상대 주인공" }];
+      : [{ id: "unregistered-character", name: "캐릭터 미등록" }];
   }, [characterProfiles, characterName]);
   const chatCharacters = useMemo(
     () =>
@@ -1972,7 +3164,7 @@ function ReaderEngagementChatDock({
     const nextThreads: Record<string, ReaderChatThread> = {};
     for (const row of chatHistoryQ.data as ReaderChatMessageRow[]) {
       const key = row.threadKey || "single:main-character";
-      const label = row.threadLabel || row.characterName || "상대 주인공";
+      const label = row.threadLabel || row.characterName || "캐릭터 미등록";
       const mode = row.chatMode === "group" ? "group" : "single";
       const current = nextThreads[key] ?? {
         key,

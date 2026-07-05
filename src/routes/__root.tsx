@@ -9,7 +9,7 @@ import {
   Scripts,
 } from "@tanstack/react-router";
 import { useEffect, useState, type ReactNode } from "react";
-import { Coins, Bell, LogIn, LogOut, Moon, Sun } from "lucide-react";
+import { Coins, Bell, LogIn, LogOut, Menu, Moon, Sun } from "lucide-react";
 
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
@@ -25,7 +25,7 @@ function NotFoundComponent() {
         <h1 className="font-display text-7xl font-bold text-gradient">404</h1>
         <h2 className="mt-4 text-xl font-semibold">길을 잃었어요</h2>
         <p className="mt-2 text-sm text-muted-foreground">
-          이 페이지는 존재하지 않거나, 다른 차원으로 이동했어요.
+          이 페이지는 존재하지 않거나 다른 곳으로 이동했어요.
         </p>
         <div className="mt-6">
           <Link
@@ -76,35 +76,39 @@ function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
   );
 }
 
+const siteDescription =
+  "AI 캐릭터 채팅과 멀티모달 웹소설을 결합한 로맨스 스토리 플랫폼입니다.";
+
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
   head: () => ({
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "러브테일,  AI 비주얼 소설 & 로맨스 시뮬레이션" },
-      {
-        name: "description",
-        content:
-          "AI가 살아 숨쉬는 캐릭터와 함께하는 차세대 비주얼 노벨 · 연애 시뮬레이션 플랫폼.",
-      },
+      { title: "Lovetale | AI 멀티모달 로맨스 스토리" },
+      { name: "description", content: siteDescription },
       { name: "author", content: "Lovetale" },
-      { property: "og:title", content: "러브테일,  AI 비주얼 소설 & 로맨스 시뮬레이션" },
-      {
-        property: "og:description",
-        content: "AI가 만들어내는 몰입형 캐릭터 로맨스 경험.",
-      },
+      { property: "og:title", content: "Lovetale | AI 멀티모달 로맨스 스토리" },
+      { property: "og:description", content: siteDescription },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
-      { name: "twitter:title", content: "러브테일,  AI 비주얼 소설 & 로맨스 시뮬레이션" },
-      { name: "description", content: "AI 비쥬얼 소설 및 데이팅 시뮬레이션, 인공지능 소설만들기, 서브컬처, 데이팅 시뮬레이션, 몰입형 19금 소설" },
-      { property: "og:description", content: "AI 비쥬얼 소설 및 데이팅 시뮬레이션, 인공지능 소설만들기, 서브컬처, 데이팅 시뮬레이션, 몰입형 19금 소설" },
-      { name: "twitter:description", content: "AI 비쥬얼 소설 및 데이팅 시뮬레이션, 인공지능 소설만들기, 서브컬처, 데이팅 시뮬레이션, 몰입형 19금 소설" },
-      { property: "og:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/124ea065-f219-46d2-beac-e98d4975419c/id-preview-bd03ac19--a2d88b88-1d3a-46ab-b2c6-7cff130f9c7f.lovable.app-1782140116678.png" },
-      { name: "twitter:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/124ea065-f219-46d2-beac-e98d4975419c/id-preview-bd03ac19--a2d88b88-1d3a-46ab-b2c6-7cff130f9c7f.lovable.app-1782140116678.png" },
+      { name: "twitter:title", content: "Lovetale | AI 멀티모달 로맨스 스토리" },
+      { name: "twitter:description", content: siteDescription },
+      {
+        property: "og:image",
+        content:
+          "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/124ea065-f219-46d2-beac-e98d4975419c/id-preview-bd03ac19--a2d88b88-1d3a-46ab-b2c6-7cff130f9c7f.lovable.app-1782140116678.png",
+      },
+      {
+        name: "twitter:image",
+        content:
+          "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/124ea065-f219-46d2-beac-e98d4975419c/id-preview-bd03ac19--a2d88b88-1d3a-46ab-b2c6-7cff130f9c7f.lovable.app-1782140116678.png",
+      },
     ],
     links: [
       { rel: "stylesheet", href: appCss },
-      { rel: "icon", href: "/brand-symbol.png", type: "image/png" },
+      { rel: "icon", href: "/favicon.png", type: "image/png" },
+      { rel: "shortcut icon", href: "/favicon.png", type: "image/png" },
+      { rel: "apple-touch-icon", href: "/favicon.png" },
       { rel: "preconnect", href: "https://fonts.googleapis.com" },
       { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "anonymous" },
       { rel: "preconnect", href: "https://cdn.jsdelivr.net", crossOrigin: "anonymous" },
@@ -126,7 +130,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
 
 function RootShell({ children }: { children: ReactNode }) {
   return (
-    <html lang="ko">
+    <html lang="ko" className="dark" style={{ colorScheme: "dark" }} suppressHydrationWarning>
       <head>
         <HeadContent />
         <script
@@ -154,14 +158,30 @@ function RootComponent() {
   const isPlayRoute = useRouterState({
     select: (s) =>
       s.location.pathname.startsWith("/play/") ||
+      s.location.pathname.startsWith("/story-rpg/") ||
       s.location.pathname.startsWith("/_authenticated/play/"),
   });
 
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
-        {isAdminRoute || isPlayRoute ? (
+        {isAdminRoute ? (
           <Outlet />
+        ) : isPlayRoute ? (
+          <SidebarProvider defaultOpen={false}>
+            <div className="min-h-screen w-full bg-background">
+              <AppSidebar
+                collapsible="offcanvas"
+                className="border-r border-sidebar-border bg-sidebar/98 shadow-2xl"
+              />
+              <div className="fixed left-3 top-3 z-50 md:left-4 md:top-4">
+                <SidebarTrigger className="h-10 w-10 rounded-full border border-white/12 bg-black/72 text-white shadow-2xl backdrop-blur-xl hover:bg-black/86 hover:text-white">
+                  <Menu className="h-4 w-4" />
+                </SidebarTrigger>
+              </div>
+              <Outlet />
+            </div>
+          </SidebarProvider>
         ) : (
           <SidebarProvider>
             <div className="flex min-h-screen w-full">
@@ -209,7 +229,10 @@ function HeaderAuth() {
         <span className="font-medium">100</span>
         <span className="text-muted-foreground">크레딧</span>
       </div>
-      <button className="grid h-9 w-9 place-items-center rounded-full border border-border bg-surface-elevated/60 text-muted-foreground transition hover:text-foreground">
+      <button
+        className="grid h-9 w-9 place-items-center rounded-full border border-border bg-surface-elevated/60 text-muted-foreground transition hover:text-foreground"
+        aria-label="알림"
+      >
         <Bell className="h-4 w-4" />
       </button>
       <HeaderThemeToggle />
@@ -224,6 +247,7 @@ function HeaderAuth() {
         onClick={() => signOut()}
         className="grid h-9 w-9 place-items-center rounded-full border border-border bg-surface-elevated/60 text-muted-foreground transition hover:text-foreground"
         title="로그아웃"
+        aria-label="로그아웃"
       >
         <LogOut className="h-4 w-4" />
       </button>

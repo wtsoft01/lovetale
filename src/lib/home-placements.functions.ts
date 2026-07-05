@@ -9,6 +9,7 @@ export type HomePlacementCard = {
   slot: HomeSlot;
   sort_order: number;
   story_id: string;
+  content_type: "story" | "story_rpg";
   title: string;
   logline: string | null;
   cover_url: string | null;

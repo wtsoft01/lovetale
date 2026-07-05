@@ -40,8 +40,8 @@ import { listSavedEndings } from "@/lib/sessions.functions";
 export const Route = createFileRoute("/profile")({
   head: () => ({
     meta: [
-      { title: "?꾨줈????Lovetale" },
-      { name: "description", content: "???꾨줈?? ?깆씤 ?몄쬆, ??ν븳 ?붾뵫." },
+      { title: "내 프로필 | Lovetale" },
+      { name: "description", content: "내 프로필, 성인 인증, 저장한 엔딩과 설정을 관리합니다." },
     ],
   }),
   component: Profile,
@@ -118,7 +118,7 @@ function Profile() {
     setDarkMode(checked);
     window.localStorage.setItem("lovetale-theme", checked ? "dark" : "light");
     applyTheme(checked);
-    toast.success(checked ? "?ㅽ겕紐⑤뱶媛 ?곸슜?섏뿀?듬땲??" : "?쇱씠?몃え?쒓? ?곸슜?섏뿀?듬땲??");
+    toast.success(checked ? "다크모드가 적용되었습니다." : "라이트모드가 적용되었습니다.");
   }
 
   async function handleVerify() {
@@ -128,7 +128,7 @@ function Profile() {
       await fnVerify({ data: { confirm: true } });
       setProfile((p) => (p ? { ...p, age_verified: true } : p));
       setOpen(false);
-      toast.success("?깆씤 ?몄쬆???꾨즺?섏뿀?댁슂.");
+      toast.success("성인 인증이 완료되었습니다.");
     } catch (e: any) {
       toast.error(e?.message ?? "?몄쬆 ?ㅽ뙣");
     } finally {
@@ -176,7 +176,7 @@ function Profile() {
                 </span>
                 {verified && (
                   <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-emerald-300">
-                    <ShieldCheck className="h-3 w-3" /> 19+ ?몄쬆
+                    <ShieldCheck className="h-3 w-3" /> 19+ 인증
                   </span>
                 )}
               </div>
@@ -206,10 +206,11 @@ function Profile() {
             </div>
             <div className="min-w-0 flex-1">
               <h2 className="font-display text-lg font-semibold">
-                ?깆씤 ?몄쬆 ??誘몄씤利?              </h2>
+                성인 인증이 필요합니다
+              </h2>
               <p className="mt-1 text-sm text-muted-foreground">
-                19+ ?쒕굹由ъ삤瑜??대엺?섎젮硫??깆씤 ?몄쬆???꾩슂?⑸땲?? ?꾨줈?좏???                ?④퀎?먯꽌???먭린 ?좉퀬 諛⑹떇?쇰줈 吏꾪뻾?섎ŉ, ?뺤떇 異쒖떆 ?④퀎?먯꽌 PG
-                蹂몄씤 ?몄쬆?쇰줈 ?꾪솚?⑸땲??
+                19+ 콘텐츠를 열람하려면 성인 인증이 필요합니다. 현재는 프로토타입 단계라
+                자가 확인 방식으로 진행되며, 정식 출시 단계에서는 PG 본인 인증으로 전환됩니다.
               </p>
               <div className="mt-3 flex gap-2">
                 <Button
@@ -218,12 +219,13 @@ function Profile() {
                   disabled={!user}
                   onClick={() => setOpen(true)}
                 >
-                  <ShieldCheck className="mr-1.5 h-3.5 w-3.5" /> ?몄쬆 ?쒖옉
+                  <ShieldCheck className="mr-1.5 h-3.5 w-3.5" /> 인증 시작
                 </Button>
                 {!user && (
                   <Link to="/auth">
                     <Button size="sm" variant="outline" className="rounded-full">
-                      癒쇱? 濡쒓렇??                    </Button>
+                      먼저 로그인
+                    </Button>
                   </Link>
                 )}
               </div>
@@ -270,12 +272,12 @@ function Profile() {
 
       {/* Saved endings (real) */}
       <section>
-        <h2 className="mb-3 font-display text-xl font-semibold">??ν븳 ?붾뵫</h2>
+        <h2 className="mb-3 font-display text-xl font-semibold">저장한 엔딩</h2>
         {endings.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-border bg-card p-8 text-center text-sm text-muted-foreground">
             {user
-              ? "?꾩쭅 ??λ맂 ?붾뵫???놁뼱?? ?ㅽ넗由щ? ?앷퉴吏 ?뚮젅?댄븯硫??먮룞?쇰줈 而щ젆?섏뿉 異붽??⑸땲??"
-              : "濡쒓렇?명븯硫??꾨떖???붾뵫??而щ젆?섏뿉 ??λ뤌??"}
+              ? "아직 저장된 엔딩이 없습니다. 스토리를 끝까지 플레이하면 컬렉션에 자동으로 추가됩니다."
+              : "로그인하면 도달한 엔딩이 컬렉션에 저장됩니다."}
           </div>
         ) : (
           <div className="rounded-2xl border border-border bg-card">
@@ -293,7 +295,7 @@ function Profile() {
                           {e.ending_title}
                         </div>
                         <div className="text-xs text-muted-foreground">
-                          {s?.title ?? e.story_id} 쨌 {timeAgo(e.created_at)}
+                          {s?.title ?? e.story_id} · {timeAgo(e.created_at)}
                         </div>
                       </div>
                     </div>
@@ -303,7 +305,7 @@ function Profile() {
                         params={{ sessionId: s.id }}
                       >
                         <Button variant="ghost" size="sm" className="rounded-full">
-                          ?ㅼ떆 蹂닿린
+                          다시 보기
                         </Button>
                       </Link>
                     )}
@@ -318,18 +320,18 @@ function Profile() {
 
       {/* Settings */}
       <section>
-        <h2 className="mb-3 font-display text-xl font-semibold">?섍꼍?ㅼ젙</h2>
+        <h2 className="mb-3 font-display text-xl font-semibold">환경설정</h2>
         <div className="divide-y divide-border rounded-2xl border border-border bg-card">
           <SettingSwitchRow
             icon={Bell}
-            title="?뚮┝"
-            desc="?덈줈??罹먮┃?? ?대깽???뚮┝ 諛쏄린"
+            title="알림"
+            desc="새로운 캐릭터와 이벤트 알림 받기"
             checked
           />
           <SettingSwitchRow
             icon={darkMode ? Moon : Sun}
-            title="?ㅽ겕 紐⑤뱶"
-            desc={darkMode ? "?꾩옱 ?대몢???뚮쭏瑜??ъ슜 以묒엯?덈떎." : "?꾩옱 諛앹? ?뚮쭏瑜??ъ슜 以묒엯?덈떎."}
+            title="다크 모드"
+            desc={darkMode ? "현재 어두운 테마를 사용 중입니다." : "현재 밝은 테마를 사용 중입니다."}
             checked={darkMode}
             onCheckedChange={handleDarkModeChange}
           />
@@ -351,7 +353,7 @@ function Profile() {
             onClick={() => signOut()}
             className="rounded-full border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
           >
-            <LogOut className="mr-1.5 h-4 w-4" /> 濡쒓렇?꾩썐
+            <LogOut className="mr-1.5 h-4 w-4" /> 로그아웃
           </Button>
         </section>
       )}
@@ -360,10 +362,10 @@ function Profile() {
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 font-display">
-              <ShieldAlert className="h-5 w-5 text-amber-400" /> ?깆씤 ?몄쬆
+              <ShieldAlert className="h-5 w-5 text-amber-400" /> 성인 인증
             </DialogTitle>
             <DialogDescription>
-              ?꾨옒 ??ぉ???숈쓽?섏떆硫?19+ 肄섑뀗痢??묎렐???쒖꽦?붾맗?덈떎.
+              아래 항목에 동의하면 19+ 콘텐츠 접근이 활성화됩니다.
             </DialogDescription>
           </DialogHeader>
           <label className="flex items-start gap-3 rounded-xl border border-border bg-background/60 p-3 text-sm">
@@ -373,19 +375,19 @@ function Profile() {
               className="mt-0.5"
             />
             <span>
-              ???留?19???댁긽?대ŉ, 蹂?肄섑뀗痢좉? ?깆쟻/??젰??臾섏궗瑜??ы븿????              ?덉쓬???댄빐?⑸땲??
+              저는 만 19세 이상이며, 본 콘텐츠가 성인 대상 표현을 포함할 수 있음을 이해합니다.
             </span>
           </label>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setOpen(false)}>
-              痍⑥냼
+              취소
             </Button>
             <Button
               disabled={!consent || submitting}
               onClick={handleVerify}
               className="bg-gradient-aurora text-primary-foreground shadow-glow"
             >
-              <ShieldCheck className="mr-1.5 h-4 w-4" /> ?몄쬆 ?꾨즺
+              <ShieldCheck className="mr-1.5 h-4 w-4" /> 인증 완료
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -16,7 +16,7 @@ type UserStoryInsert = Database["public"]["Tables"]["user_stories"]["Insert"];
 type UserStoryUpdate = Database["public"]["Tables"]["user_stories"]["Update"];
 type HomeSlot = Database["public"]["Enums"]["home_slot"];
 
-type ContentType = "web_novel" | "romance_sim" | "webtoon" | "short_story" | "other";
+type ContentType = "web_novel" | "romance_sim" | "story_rpg" | "webtoon" | "short_story" | "other";
 
 type CreateStoryPayload = {
   title?: string;
@@ -45,6 +45,12 @@ type BulkStatusPayload = {
   action: "bulk_status" | "bulk_delete";
   ids?: string[];
   statusAction?: "publish" | "unlist" | "private";
+};
+
+type CloneStoryRpgPayload = {
+  action: "clone_story_rpg";
+  sourceStoryId?: string;
+  title?: string;
 };
 
 type SetPlacementPayload = {
@@ -78,6 +84,27 @@ function jsonServerError(error: unknown, status = 500) {
 
 function recordOf(value: unknown): Record<string, any> {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, any>) : {};
+}
+
+function defaultStoryRpgConfig(input: {
+  enabled?: boolean;
+  title: string;
+  logline: string;
+  sceneText: string;
+  characterName: string;
+}) {
+  return {
+    enabled: input.enabled ?? false,
+    startSceneTitle: "첫 선택",
+    startSceneText: input.sceneText || input.logline || "첫 장면을 입력하세요.",
+    partnerLine: input.characterName ? `${input.characterName}이(가) 당신의 선택을 기다립니다.` : "상대가 당신의 선택을 기다립니다.",
+    currentRoute: "Main Route",
+    initialAffection: 0,
+    initialTension: 35,
+    initialTrust: 20,
+    endingsTotal: 5,
+    choices: [],
+  };
 }
 
 function buildChapter(
@@ -123,8 +150,23 @@ function normalizeStoryInsert(data: UserStoryInsert): UserStoryInsert {
 
 function toAdminStoryRow(row: UserStoryRow) {
   const card = recordOf(row.character_card);
+  const storyRpg = recordOf(card.storyRpg);
   const chapters = Array.isArray(card.chapters) ? card.chapters : [];
   const characters = Array.isArray(card.characters) ? card.characters : [];
+  const rpgScenes = Array.isArray(storyRpg.scenes) ? storyRpg.scenes : [];
+  const rawContentType = String(card.contentType ?? "web_novel");
+  const sourceStoryId = String(storyRpg.sourceStoryId || card.sourceStoryId || "").trim() || null;
+  const hasStoryRpgWork =
+    Boolean(sourceStoryId) ||
+    storyRpg.enabled === true ||
+    Boolean(storyRpg.generatedFrom) ||
+    rpgScenes.length > 0;
+  const isStoryRpgWork = rawContentType === "story_rpg" && hasStoryRpgWork;
+  const contentType = isStoryRpgWork
+    ? "story_rpg"
+    : rawContentType === "story_rpg"
+      ? String(card.sourceContentType || storyRpg.sourceContentType || "web_novel")
+      : rawContentType;
   const chapterRows = chapters.map((chapter: any, index: number) => {
     const body = typeof chapter?.body === "string" ? chapter.body : "";
     const assetSlots = Array.isArray(chapter?.assetSlots) ? chapter.assetSlots : [];
@@ -151,7 +193,11 @@ function toAdminStoryRow(row: UserStoryRow) {
     audience: row.audience,
     max_heat: row.max_heat,
     tags: row.tags ?? [],
-    content_type: String(card.contentType ?? "web_novel"),
+    content_type: contentType,
+    source_story_id: sourceStoryId,
+    source_title: String(storyRpg.sourceTitle || card.sourceTitle || "").trim() || null,
+    rpg_scenes_count: rpgScenes.length,
+    rpg_endings_total: Math.max(0, Number(storyRpg.endingsTotal ?? 0) || 0),
     story_overview: String(card.storyOverview ?? row.logline ?? ""),
     chapters: chapterRows,
     chapters_count: chapterRows.length,
@@ -405,6 +451,13 @@ async function createOrAppendStory(request: Request, payload?: Partial<CreateSto
       chapters: chapter ? [chapter] : [],
       characters: primaryCharacter ? [primaryCharacter] : [],
       storyOverview: storyOverview ? storyOverview.slice(0, 280) : "",
+      storyRpg: defaultStoryRpgConfig({
+        enabled: contentType === "story_rpg",
+        title: safeTitle,
+        logline: logline || storyOverview,
+        sceneText: sourceText,
+        characterName,
+      }),
       authorName,
       preview: previewUrl ? { url: previewUrl, type: previewType } : null,
       name: primaryCharacter?.name,
@@ -574,6 +627,80 @@ async function bulkDelete(request: Request, body: BulkStatusPayload) {
   return Response.json({ ok: true, deleted: ids.length });
 }
 
+async function cloneStoryAsRpg(request: Request, body: CloneStoryRpgPayload) {
+  const staff = await requireStaff(request);
+  if ("error" in staff) return staff.error;
+
+  const sourceStoryId = String(body.sourceStoryId ?? "").trim();
+  if (!sourceStoryId) return jsonError("missing_source_story_id");
+
+  const { data: source, error: readError } = await supabaseAdmin
+    .from("user_stories")
+    .select("*")
+    .eq("id", sourceStoryId)
+    .maybeSingle();
+  if (readError) return jsonServerError(readError, 500);
+  if (!source) return jsonError("source_story_not_found", 404);
+
+  const card = recordOf(source.character_card);
+  const sourceContentType = String(card.contentType ?? "web_novel");
+  if (sourceContentType === "story_rpg") return jsonError("source_already_story_rpg", 400);
+
+  const now = new Date().toISOString();
+  const title = String(body.title ?? "").trim() || `${source.title} RPG`;
+  const storyOverview = String(card.storyOverview ?? source.logline ?? "").trim();
+  const insert = normalizeStoryInsert({
+    id: typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : newId("story"),
+    user_id: staff.userId,
+    title,
+    logline: source.logline,
+    cover_url: source.cover_url,
+    body_text: source.body_text ?? "",
+    beats: Array.isArray(source.beats) ? source.beats : [],
+    asset_slots: Array.isArray(source.asset_slots) ? source.asset_slots : [],
+    character_card: {
+      ...card,
+      contentType: "story_rpg",
+      sourceStoryId,
+      sourceContentType,
+      storyOverview,
+      storyRpg: {
+        ...recordOf(card.storyRpg),
+        ...defaultStoryRpgConfig({
+          enabled: true,
+          title,
+          logline: source.logline ?? storyOverview,
+          sceneText: String(source.body_text ?? "").slice(0, 1200),
+          characterName: String(card.name ?? ""),
+        }),
+        sourceStoryId,
+        sourceTitle: source.title,
+        generatedFrom: "source_story_clone",
+      },
+    },
+    status: "draft",
+    is_public: false,
+    is_listed: false,
+    price_credits: source.price_credits ?? 0,
+    audience: source.audience ?? "all",
+    max_heat: source.max_heat ?? "warm",
+    tags: [...new Set([...(source.tags ?? []), "스토리게임"])],
+    compose_step: "story_rpg",
+    source_prompt: `story_rpg_clone:${sourceStoryId}`,
+    created_at: now,
+    updated_at: now,
+  });
+
+  const { data, error } = await supabaseAdmin
+    .from("user_stories")
+    .insert(insert as any)
+    .select("id")
+    .single();
+  if (error) return jsonServerError(error, 500);
+
+  return Response.json({ ok: true, id: data.id });
+}
+
 async function setPlacement(request: Request, body: SetPlacementPayload) {
   const staff = await requireStaff(request);
   if ("error" in staff) return staff.error;
@@ -601,10 +728,23 @@ async function setPlacement(request: Request, body: SetPlacementPayload) {
     if (deleteError) return jsonServerError(deleteError, 500);
   }
 
-  if (!normalizedSlots.length) return Response.json({ ok: true });
+  const now = new Date().toISOString();
+
+  if (!normalizedSlots.length) {
+    const { error: unlistError } = await supabaseAdmin
+      .from("user_stories")
+      .update({
+        status: "draft",
+        is_public: false,
+        is_listed: false,
+        updated_at: now,
+      })
+      .eq("id", id);
+    if (unlistError) return jsonServerError(unlistError, 500);
+    return Response.json({ ok: true });
+  }
 
   const sortOrder = Math.max(0, Math.floor(Number(body.sort_order) || 0));
-  const now = new Date().toISOString();
   const existingBySlot = new Map<HomeSlot, string>();
   const duplicateIds: string[] = [];
 
@@ -712,10 +852,12 @@ export const Route = createFileRoute("/api/admin/stories")({
           const body = (await request.json().catch(() => ({}))) as
             | Partial<CreateStoryPayload>
             | BulkStatusPayload
+            | CloneStoryRpgPayload
             | SetPlacementPayload
             | RestoreVersionPayload;
           if (body.action === "bulk_status") return await bulkStatus(request, body);
           if (body.action === "bulk_delete") return await bulkDelete(request, body);
+          if (body.action === "clone_story_rpg") return await cloneStoryAsRpg(request, body);
           if (body.action === "set_home_placement") return await setPlacement(request, body);
           if (body.action === "restore_version") return await restoreVersion(request, body);
           return await createOrAppendStory(request, body as Partial<CreateStoryPayload>);

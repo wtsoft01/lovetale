@@ -78,7 +78,7 @@ function ChapterTextEditorPage() {
       <main className="mx-auto max-w-3xl px-4 py-10">
         <Button variant="ghost" asChild className="mb-4">
           <Link to="/admin/stories">
-            <ArrowLeft className="size-4" /> 콘텐츠 관리
+            <ArrowLeft className="size-4" /> 스토리관리
           </Link>
         </Button>
         <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-5 text-sm text-destructive">
@@ -96,7 +96,7 @@ function ChapterTextEditorPage() {
         <div>
           <Button variant="ghost" asChild className="-ml-3 mb-2">
             <Link to="/admin/stories">
-              <ArrowLeft className="size-4" /> 콘텐츠 관리
+              <ArrowLeft className="size-4" /> 스토리관리
             </Link>
           </Button>
           <h1 className="text-xl font-semibold">{chapter.episodeNumber}화 회차 편집</h1>

@@ -116,7 +116,7 @@ export const listAdminOrders = createServerFn({ method: "GET" })
     requireAnyRole(roles);
     const { data, error } = await supabaseAdmin
       .from("credit_orders")
-      .select("id, user_id, package_id, credits, amount_usd, currency, network, wallet_address, tx_hash, status, note, created_at, updated_at")
+      .select("id, user_id, package_id, credits, amount_usd, currency, network, wallet_address, tx_hash, status, note, created_at, updated_at, confirmed_at, confirmed_by, refunded_at, refund_reason")
       .order("created_at", { ascending: false })
       .limit(200);
     if (error) throw new Error(error.message);
@@ -134,70 +134,31 @@ export const confirmCreditOrder = createServerFn({ method: "POST" })
     if (!data.orderId) throw new Error("Missing order id");
     if (!txHash) throw new Error("Missing transaction hash");
 
-    const { data: order, error: orderError } = await supabaseAdmin
-      .from("credit_orders")
-      .select("id, user_id, package_id, credits, status, tx_hash, note")
-      .eq("id", data.orderId)
-      .single();
-    if (orderError) throw new Error(orderError.message);
-    if (!order) throw new Error("Order not found");
-    if (order.status === "confirmed") throw new Error("Order already confirmed");
-    if (order.status === "failed") throw new Error("Failed order cannot be confirmed");
-
-    const { data: profile, error: profileError } = await supabaseAdmin
-      .from("profiles")
-      .select("credits, subscription_expires_at")
-      .eq("id", order.user_id)
-      .single();
-    if (profileError) throw new Error(profileError.message);
-
-    const balanceAfter = Math.max(0, Number(profile?.credits ?? 0)) + Math.max(0, Number(order.credits ?? 0));
-    const now = new Date().toISOString();
-    const orderNote = parseOrderNote(order.note);
-    const isSubscription = order.package_id?.startsWith("sub_") || orderNote?.kind === "subscription";
-    const profileUpdate: Record<string, string | number | boolean> = {
-      credits: balanceAfter,
-      updated_at: now,
-    };
-
-    if (isSubscription) {
-      profileUpdate.is_subscribed = true;
-      profileUpdate.subscription_expires_at = addSubscriptionMonths(
-        profile?.subscription_expires_at ?? null,
-        Number(orderNote?.months ?? 1),
-      );
-    }
-
-    const { error: creditError } = await supabaseAdmin
-      .from("profiles")
-      .update(profileUpdate)
-      .eq("id", order.user_id);
-    if (creditError) throw new Error(creditError.message);
-
-    const { error: ledgerError } = await supabaseAdmin.from("credit_ledger").insert({
-      user_id: order.user_id,
-      delta: Math.max(0, Number(order.credits ?? 0)),
-      reason: isSubscription ? "subscription_order_confirmed" : "order_confirmed",
-      ref_type: "credit_order",
-      ref_id: order.id,
-      balance_after: balanceAfter,
+    const { data: confirmed, error } = await (supabaseAdmin as any).rpc("admin_confirm_credit_order", {
+      _order_id: data.orderId,
+      _tx_hash: txHash,
+      _note: data.note?.trim() || null,
     });
-    if (ledgerError) throw new Error(ledgerError.message);
+    if (error) throw new Error(error.message);
 
-    const { data: confirmed, error: confirmError } = await supabaseAdmin
-      .from("credit_orders")
-      .update({
-        status: "confirmed",
-        tx_hash: txHash,
-        note: data.note?.trim() || order.note,
-        updated_at: now,
-      })
-      .eq("id", order.id)
-      .select()
-      .single();
-    if (confirmError) throw new Error(confirmError.message);
+    return { ok: true, order: confirmed };
+  });
 
-    return { ok: true, order: confirmed, balanceAfter };
+export const refundCreditOrder = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((i: unknown) => i as { orderId: string; reason?: string })
+  .handler(async ({ data, context }) => {
+    const roles = await getCurrentRoles((context as any).userId as string);
+    if (!roles.includes("admin")) throw new Error("Forbidden");
+    if (!data.orderId) throw new Error("Missing order id");
+
+    const { data: refunded, error } = await (supabaseAdmin as any).rpc("admin_refund_credit_order", {
+      _order_id: data.orderId,
+      _reason: data.reason?.trim() || null,
+    });
+    if (error) throw new Error(error.message);
+
+    return { ok: true, order: refunded };
   });
 
 export const markOrderFailed = createServerFn({ method: "POST" })
@@ -216,6 +177,7 @@ export const markOrderFailed = createServerFn({ method: "POST" })
     if (orderError) throw new Error(orderError.message);
     if (!order) throw new Error("Order not found");
     if (order.status === "confirmed") throw new Error("Confirmed order cannot be marked failed");
+    if ((order.status as string) === "refunded") throw new Error("Refunded order cannot be marked failed");
 
     const { error } = await supabaseAdmin
       .from("credit_orders")
@@ -284,35 +246,15 @@ export const adjustUserCredits = createServerFn({ method: "POST" })
     if (!userId) throw new Error("Missing user id");
     if (!Number.isFinite(delta) || delta === 0) throw new Error("크레딧 변동값을 입력하세요.");
 
-    const { data: profile, error: profileError } = await supabaseAdmin
-      .from("profiles")
-      .select("credits")
-      .eq("id", userId)
-      .single();
-    if (profileError) throw new Error(profileError.message);
-    if (!profile) throw new Error("User profile not found");
-
-    const currentCredits = Math.max(0, Number(profile.credits ?? 0));
-    const balanceAfter = Math.max(0, currentCredits + delta);
-    const appliedDelta = balanceAfter - currentCredits;
-    if (appliedDelta === 0) throw new Error("차감 가능한 크레딧이 없습니다.");
-
-    const now = new Date().toISOString();
-    const { error: updateError } = await supabaseAdmin
-      .from("profiles")
-      .update({ credits: balanceAfter, updated_at: now })
-      .eq("id", userId);
-    if (updateError) throw new Error(updateError.message);
-
-    const { error: ledgerError } = await supabaseAdmin.from("credit_ledger").insert({
-      user_id: userId,
-      delta: appliedDelta,
-      reason: appliedDelta > 0 ? "admin_grant" : "admin_deduct",
-      ref_type: note ? `admin_manual:${note.slice(0, 80)}` : "admin_manual",
-      ref_id: adminUserId,
-      balance_after: balanceAfter,
+    const { data: balanceAfter, error } = await (supabaseAdmin as any).rpc("admin_adjust_user_credits", {
+      _user_id: userId,
+      _delta: delta,
+      _reason: delta > 0 ? "admin_grant" : "admin_deduct",
+      _note: note || null,
+      _ref_type: "admin_manual",
+      _ref_id: adminUserId,
     });
-    if (ledgerError) throw new Error(ledgerError.message);
+    if (error) throw new Error(error.message);
 
-    return { ok: true, balanceAfter, delta: appliedDelta };
+    return { ok: true, balanceAfter: Number(balanceAfter ?? 0), delta };
   });
