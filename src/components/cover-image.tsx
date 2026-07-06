@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 
+const signedUrlCache = new Map<string, { url: string; expiresAt: number }>();
+const SIGNED_URL_TTL_MS = 55 * 60 * 1000;
+
 /**
  * Renders a story cover image. Accepts:
  * - full http(s) / data / blob URLs → used as-is
@@ -41,11 +44,22 @@ export function CoverImage({
     } else {
       path = src;
     }
+
+    const cached = signedUrlCache.get(path);
+    if (cached && cached.expiresAt > Date.now()) {
+      setResolved(cached.url);
+      return;
+    }
+
     supabase.storage
       .from("story-media")
       .createSignedUrl(path, 60 * 60)
       .then(({ data }) => {
-        if (!cancelled) setResolved(data?.signedUrl);
+        const signedUrl = data?.signedUrl;
+        if (signedUrl) {
+          signedUrlCache.set(path, { url: signedUrl, expiresAt: Date.now() + SIGNED_URL_TTL_MS });
+        }
+        if (!cancelled) setResolved(signedUrl);
       })
       .catch(() => !cancelled && setResolved(undefined));
     return () => {

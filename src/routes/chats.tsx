@@ -1,12 +1,16 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
-import { Bookmark, Gamepad2, Heart, HeartHandshake, Loader2, Lock, MessageCircle, Search, Sparkles, UserRound } from "lucide-react";
+import { Bookmark, Gamepad2, Heart, HeartHandshake, ImageIcon, Loader2, Lock, MessageCircle, Plus, Save, Search, Sparkles, Trash2, UserRound, Video, Wand2 } from "lucide-react";
+import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
+import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/hooks/use-auth";
 import { supabase } from "@/integrations/supabase/client";
 import { useServerFn } from "@/lib/_mock/runtime";
@@ -15,6 +19,7 @@ import {
   type PublicChatCharacterRow,
 } from "@/lib/admin-characters.functions";
 import { listMySessions } from "@/lib/sessions.functions";
+import { resolveStoryMediaSource } from "@/lib/story-media-url";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/chats")({
@@ -45,12 +50,48 @@ type Row = {
 
 type CharacterGender = "all" | "male" | "female" | "neutral";
 
+type MyChatCharacter = {
+  id: string;
+  name: string;
+  gender: Exclude<CharacterGender, "all">;
+  concept: string;
+  mood: string;
+  mediaType: "image" | "video";
+  mediaUrl: string | null;
+  signedUrl?: string | null;
+  prompt?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 const GENDER_FILTERS: { value: CharacterGender; label: string }[] = [
   { value: "all", label: "전체" },
   { value: "male", label: "남성" },
   { value: "female", label: "여성" },
   { value: "neutral", label: "중성" },
 ];
+
+const MY_CHARACTER_STORAGE_PREFIX = "lovetale:my-chat-characters:";
+
+function myCharacterStorageKey(userId?: string | null) {
+  return `${MY_CHARACTER_STORAGE_PREFIX}${userId || "anon"}`;
+}
+
+function loadMyCharacters(userId?: string | null): MyChatCharacter[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(myCharacterStorageKey(userId));
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveMyCharacters(userId: string | undefined | null, rows: MyChatCharacter[]) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(myCharacterStorageKey(userId), JSON.stringify(rows.slice(0, 20)));
+}
 
 function timeAgo(iso: string) {
   const time = new Date(iso).getTime();
@@ -94,17 +135,18 @@ function useSignedMedia(path?: string | null) {
 
   useEffect(() => {
     let cancelled = false;
-    if (!path) {
+    const source = resolveStoryMediaSource(path);
+    if (!source) {
       setUrl(null);
       return;
     }
-    if (/^(https?:|data:|blob:)/.test(path)) {
-      setUrl(path);
+    if (source.kind === "direct") {
+      setUrl(source.url);
       return;
     }
     supabase.storage
       .from("story-media")
-      .createSignedUrl(path, 60 * 60)
+      .createSignedUrl(source.path, 60 * 60)
       .then(({ data }) => !cancelled && setUrl(data?.signedUrl ?? null))
       .catch(() => !cancelled && setUrl(null));
     return () => {
@@ -119,28 +161,47 @@ function Chats() {
   const { user, loading } = useAuth();
   const listSessions = useServerFn(listMySessions);
   const listCharacters = useServerFn(listPublicChatCharacters);
-  const [rows, setRows] = useState<Row[] | null>(null);
-  const [characters, setCharacters] = useState<PublicChatCharacterRow[] | null>(null);
   const [query, setQuery] = useState("");
   const [gender, setGender] = useState<CharacterGender>("all");
   const [storyFilter, setStoryFilter] = useState("all");
+  const [creatorOpen, setCreatorOpen] = useState(false);
+  const [myCharacters, setMyCharacters] = useState<MyChatCharacter[]>([]);
 
   useEffect(() => {
-    listCharacters()
-      .then((data) => setCharacters(data ?? []))
-      .catch(() => setCharacters([]));
-  }, [listCharacters]);
+    setMyCharacters(loadMyCharacters(user?.id));
+  }, [user?.id]);
 
-  useEffect(() => {
-    if (loading) return;
-    if (!user) {
-      setRows([]);
-      return;
-    }
-    listSessions()
-      .then((data) => setRows((data ?? []) as Row[]))
-      .catch(() => setRows([]));
-  }, [user, loading, listSessions]);
+  function persistMyCharacters(next: MyChatCharacter[]) {
+    setMyCharacters(next);
+    saveMyCharacters(user?.id, next);
+  }
+
+  function upsertMyCharacter(character: MyChatCharacter) {
+    persistMyCharacters([character, ...myCharacters.filter((item) => item.id !== character.id)]);
+  }
+
+  function removeMyCharacter(id: string) {
+    persistMyCharacters(myCharacters.filter((item) => item.id !== id));
+  }
+
+  const charactersQ = useQuery({
+    queryKey: ["public_chat_characters"],
+    queryFn: () => listCharacters(),
+    staleTime: 5 * 60_000,
+    gcTime: 15 * 60_000,
+    refetchOnWindowFocus: false,
+  });
+  const sessionsQ = useQuery({
+    queryKey: ["my_story_sessions", user?.id ?? "anon"],
+    queryFn: () => listSessions() as Promise<Row[]>,
+    enabled: !loading && Boolean(user),
+    staleTime: 2 * 60_000,
+    gcTime: 10 * 60_000,
+    refetchOnWindowFocus: false,
+  });
+
+  const characters = charactersQ.data ?? null;
+  const rows = user ? (sessionsQ.data ?? null) : [];
 
   const filteredProfiles = useMemo(() => {
     const keyword = query.trim().toLowerCase();
@@ -194,13 +255,21 @@ function Chats() {
           <h1 className="text-base font-semibold">캐릭터채팅</h1>
           {characters ? <span className="text-xs text-muted-foreground">{filteredProfiles.length}</span> : null}
         </div>
-        <Button asChild variant="outline" size="sm" className="w-fit gap-1.5 rounded-full">
-          <Link to="/explore">
-            <Sparkles className="size-4" />
-            스토리탐색
-          </Link>
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" size="sm" className="w-fit gap-1.5 rounded-full" onClick={() => setCreatorOpen(true)}>
+            <Plus className="size-4" />
+            내 캐릭터 만들기
+          </Button>
+          <Button asChild variant="outline" size="sm" className="w-fit gap-1.5 rounded-full">
+            <Link to="/explore">
+              <Sparkles className="size-4" />
+              스토리탐색
+            </Link>
+          </Button>
+        </div>
       </section>
+
+      <MyCharacterStrip rows={myCharacters} onCreate={() => setCreatorOpen(true)} onRemove={removeMyCharacter} />
 
       <section className="space-y-3">
         <div className="relative">
@@ -302,7 +371,283 @@ function Chats() {
           ))}
         </section>
       )}
+
+      <MyCharacterDialog
+        open={creatorOpen}
+        onOpenChange={setCreatorOpen}
+        userReady={Boolean(user)}
+        onSave={upsertMyCharacter}
+      />
     </div>
+  );
+}
+
+function MyCharacterStrip({
+  rows,
+  onCreate,
+  onRemove,
+}: {
+  rows: MyChatCharacter[];
+  onCreate: () => void;
+  onRemove: (id: string) => void;
+}) {
+  return (
+    <section className="rounded-2xl border border-border/60 bg-card/35 p-3">
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <UserRound className="size-4 text-primary" />
+          <h2 className="text-sm font-semibold">내 채팅 캐릭터</h2>
+          <span className="text-xs text-muted-foreground">{rows.length}</span>
+        </div>
+        <Button size="sm" className="h-8 rounded-full" onClick={onCreate}>
+          <Plus className="size-4" />
+          만들기
+        </Button>
+      </div>
+      {rows.length === 0 ? (
+        <button
+          type="button"
+          onClick={onCreate}
+          className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-border bg-background/40 p-5 text-sm text-muted-foreground transition hover:border-primary/50 hover:text-foreground"
+        >
+          <Wand2 className="size-4" />
+          이름과 이미지/영상으로 나만의 채팅 캐릭터를 만들어보세요.
+        </button>
+      ) : (
+        <div className="flex gap-3 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          {rows.map((character) => (
+            <MyCharacterCard key={character.id} character={character} onRemove={() => onRemove(character.id)} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function MyCharacterCard({ character, onRemove }: { character: MyChatCharacter; onRemove: () => void }) {
+  const mediaUrl = useSignedMedia(character.mediaUrl);
+  return (
+    <article className="group relative w-40 shrink-0 overflow-hidden rounded-2xl border border-border/70 bg-background">
+      <div className="aspect-[4/5] bg-muted">
+        {mediaUrl ? (
+          character.mediaType === "video" ? (
+            <video src={mediaUrl} className="size-full object-cover" muted playsInline loop />
+          ) : (
+            <img src={mediaUrl} alt={character.name} className="size-full object-cover" />
+          )
+        ) : (
+          <div className="grid size-full place-items-center bg-gradient-to-br from-primary/20 via-background to-sky-500/15">
+            <UserRound className="size-9 text-muted-foreground" />
+          </div>
+        )}
+      </div>
+      <div className="space-y-1 p-3">
+        <div className="truncate text-sm font-semibold">{character.name}</div>
+        <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
+          {character.mediaType === "video" ? <Video className="size-3" /> : <ImageIcon className="size-3" />}
+          {character.gender === "male" ? "남성" : character.gender === "female" ? "여성" : "중성"}
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={onRemove}
+        className="absolute right-2 top-2 grid size-7 place-items-center rounded-full bg-black/60 text-white opacity-0 transition group-hover:opacity-100"
+        aria-label="내 캐릭터 삭제"
+      >
+        <Trash2 className="size-3.5" />
+      </button>
+    </article>
+  );
+}
+
+function MyCharacterDialog({
+  open,
+  onOpenChange,
+  userReady,
+  onSave,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  userReady: boolean;
+  onSave: (character: MyChatCharacter) => void;
+}) {
+  const [name, setName] = useState("");
+  const [gender, setGender] = useState<Exclude<CharacterGender, "all">>("female");
+  const [concept, setConcept] = useState("");
+  const [mood, setMood] = useState("");
+  const [mediaType, setMediaType] = useState<"image" | "video">("image");
+  const [mediaUrl, setMediaUrl] = useState<string | null>(null);
+  const [signedUrl, setSignedUrl] = useState<string | null>(null);
+  const [prompt, setPrompt] = useState("");
+
+  async function postToCharacterApi(body: Record<string, unknown>) {
+    const { data, error } = await supabase.auth.getSession();
+    if (error) throw error;
+    const token = data.session?.access_token;
+    if (!token) throw new Error("로그인이 필요합니다.");
+    const response = await fetch("/api/my-chat-character", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(body),
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload?.ok) {
+      throw new Error(payload?.message || payload?.reason || "AI 생성에 실패했습니다.");
+    }
+    return payload;
+  }
+
+  const nameM = useMutation({
+    mutationFn: () => postToCharacterApi({ action: "name", gender, concept, mood }),
+    onSuccess: (payload) => {
+      setName(String(payload.name ?? ""));
+      toast.success("이름을 생성했습니다.");
+    },
+    onError: (error: Error) => toast.error(error.message || "이름 생성에 실패했습니다."),
+  });
+
+  const mediaM = useMutation({
+    mutationFn: () => postToCharacterApi({ action: "media", kind: mediaType, name, gender, concept, mood }),
+    onSuccess: (payload) => {
+      setMediaType(payload.kind === "video" ? "video" : "image");
+      setMediaUrl(payload.storagePath ?? null);
+      setSignedUrl(payload.signedUrl ?? null);
+      setPrompt(payload.prompt ?? "");
+      toast.success(mediaType === "video" ? "캐릭터 영상을 생성했습니다." : "캐릭터 이미지를 생성했습니다.");
+    },
+    onError: (error: Error) => toast.error(error.message || "미디어 생성에 실패했습니다."),
+  });
+
+  function reset() {
+    setName("");
+    setGender("female");
+    setConcept("");
+    setMood("");
+    setMediaType("image");
+    setMediaUrl(null);
+    setSignedUrl(null);
+    setPrompt("");
+  }
+
+  function save() {
+    if (!userReady) {
+      toast.error("로그인 후 저장할 수 있습니다.");
+      return;
+    }
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      toast.error("캐릭터 이름을 입력하거나 AI로 생성해주세요.");
+      return;
+    }
+    const now = new Date().toISOString();
+    onSave({
+      id: `my_char_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      name: trimmedName,
+      gender,
+      concept: concept.trim(),
+      mood: mood.trim(),
+      mediaType,
+      mediaUrl,
+      signedUrl,
+      prompt,
+      createdAt: now,
+      updatedAt: now,
+    });
+    toast.success("내 채팅 캐릭터를 저장했습니다.");
+    onOpenChange(false);
+    reset();
+  }
+
+  const resolvedMediaUrl = useSignedMedia(mediaUrl);
+  const previewUrl = signedUrl || resolvedMediaUrl;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto p-0">
+        <DialogHeader className="border-b border-border px-5 py-4">
+          <DialogTitle>내 채팅 캐릭터 만들기</DialogTitle>
+        </DialogHeader>
+        <div className="grid gap-4 p-5 md:grid-cols-[220px_minmax(0,1fr)]">
+          <div className="space-y-3">
+            <div className="aspect-[4/5] overflow-hidden rounded-2xl border border-border bg-muted">
+              {previewUrl ? (
+                mediaType === "video" ? (
+                  <video src={previewUrl} className="size-full object-cover" controls muted playsInline />
+                ) : (
+                  <img src={previewUrl} alt={name || "내 캐릭터"} className="size-full object-cover" />
+                )
+              ) : (
+                <div className="grid size-full place-items-center bg-gradient-to-br from-primary/20 via-background to-sky-500/15">
+                  <UserRound className="size-12 text-muted-foreground" />
+                </div>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Button type="button" variant={mediaType === "image" ? "default" : "outline"} size="sm" onClick={() => setMediaType("image")}>
+                <ImageIcon className="size-4" />
+                이미지
+              </Button>
+              <Button type="button" variant={mediaType === "video" ? "default" : "outline"} size="sm" onClick={() => setMediaType("video")}>
+                <Video className="size-4" />
+                영상
+              </Button>
+            </div>
+            <Button type="button" className="w-full" onClick={() => mediaM.mutate()} disabled={!userReady || mediaM.isPending}>
+              {mediaM.isPending ? <Loader2 className="size-4 animate-spin" /> : <Wand2 className="size-4" />}
+              {mediaType === "video" ? "AI 영상 생성" : "AI 이미지 생성"}
+            </Button>
+          </div>
+
+          <div className="space-y-3">
+            {!userReady && (
+              <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">
+                로그인 후 AI 생성과 저장을 사용할 수 있습니다.
+              </div>
+            )}
+            <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+              <Input value={name} onChange={(event) => setName(event.target.value)} placeholder="캐릭터 이름" />
+              <Button type="button" variant="outline" onClick={() => nameM.mutate()} disabled={!userReady || nameM.isPending}>
+                {nameM.isPending ? <Loader2 className="size-4 animate-spin" /> : <Wand2 className="size-4" />}
+                이름 생성
+              </Button>
+            </div>
+            <select
+              value={gender}
+              onChange={(event) => setGender(event.target.value as Exclude<CharacterGender, "all">)}
+              className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+            >
+              <option value="female">여성 캐릭터</option>
+              <option value="male">남성 캐릭터</option>
+              <option value="neutral">중성 캐릭터</option>
+            </select>
+            <Input value={mood} onChange={(event) => setMood(event.target.value)} placeholder="분위기: 다정함, 도도함, 위험한 매력..." />
+            <Textarea
+              value={concept}
+              onChange={(event) => setConcept(event.target.value)}
+              className="min-h-32"
+              placeholder="캐릭터 설정, 외형, 성격, 채팅에서 보여줄 말투나 분위기를 적어주세요."
+            />
+            {prompt && (
+              <div className="rounded-xl border border-border bg-background p-3 text-xs leading-5 text-muted-foreground">
+                {prompt}
+              </div>
+            )}
+          </div>
+        </div>
+        <DialogFooter className="border-t border-border px-5 py-4">
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            닫기
+          </Button>
+          <Button type="button" onClick={save} disabled={!userReady}>
+            <Save className="size-4" />
+            저장
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

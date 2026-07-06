@@ -18,6 +18,7 @@ import {
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { CoverImage } from "@/components/cover-image";
 import { Progress } from "@/components/ui/progress";
 import { useAuth } from "@/hooks/use-auth";
 import {
@@ -29,7 +30,7 @@ import {
   updateSessionState,
 } from "@/lib/sessions.functions";
 import { getStoryRpgDetail } from "@/lib/story-rpg.functions";
-import type { StoryRpgChoice, StoryRpgScene } from "@/lib/story-rpg-data";
+import type { StoryRpgAsset, StoryRpgChoice, StoryRpgScene } from "@/lib/story-rpg-data";
 
 type StoryRpgChatMessage = { role: "partner" | "user"; text: string };
 
@@ -227,6 +228,20 @@ function StoryRpgPlay() {
     [choiceHistory, selectedChoice],
   );
 
+  const readingSegments = useMemo(() => {
+    const firstScene = scenes[0];
+    if (!firstScene) return [];
+    const byId = new Map(scenes.map((scene) => [scene.id, scene]));
+    const segments: Array<{ scene: StoryRpgScene; choice: StoryRpgChoice | null }> = [
+      { scene: firstScene, choice: null },
+    ];
+    for (const choice of choiceHistory) {
+      const next = choice.nextSceneId ? byId.get(choice.nextSceneId) : null;
+      if (next) segments.push({ scene: next, choice });
+    }
+    return segments;
+  }, [choiceHistory, scenes]);
+
   const stats = useMemo(
     () =>
       selectedChoices.reduce(
@@ -304,58 +319,74 @@ function StoryRpgPlay() {
     ? chatLog
     : [{ role: "partner" as const, text: currentScene?.partnerLine ?? game.partnerLine }];
 
-  const selectChoice = (choice: StoryRpgChoice) => {
-    setSelectedChoice(choice);
-  };
-
-  const continueToNextScene = () => {
-    if (!selectedChoice || !nextScene) return;
+  const persistChoice = (choice: StoryRpgChoice, targetScene: StoryRpgScene | undefined) => {
     const previousSceneId = currentScene?.id ?? currentSceneId ?? "start";
     const nextStats = {
-      affection: clampStat(stats.affection),
-      tension: clampStat(stats.tension),
-      trust: clampStat(stats.trust),
+      affection: clampStat(stats.affection + choice.affectionDelta),
+      tension: clampStat(stats.tension + choice.tensionDelta),
+      trust: clampStat(stats.trust + choice.trustDelta),
     };
-    setChoiceHistory((items) => [...items, selectedChoice]);
+    setChoiceHistory((items) => [...items, choice]);
     setSelectedChoice(null);
-    setCurrentSceneId(nextScene.id);
-    setChatLog((items) => [
-      ...items,
-      {
-        role: "partner",
-        text: nextScene.partnerLine,
-      },
-    ]);
+    if (targetScene) {
+      setCurrentSceneId(targetScene.id);
+      setChatLog((items) => [
+        ...items,
+        {
+          role: "partner",
+          text: targetScene.partnerLine,
+        },
+      ]);
+    }
+    window.requestAnimationFrame(() => window.scrollBy({ top: 380, behavior: "smooth" }));
     if (serverSessionId) {
       void fnRecordChoice({
         data: {
           sessionId: serverSessionId,
           nodeId: previousSceneId,
-          choiceId: nextScene.id,
-          choiceLabel: selectedChoice.label,
-          affectionDelta: selectedChoice.affectionDelta,
-          arousalDelta: selectedChoice.tensionDelta,
-          trustDelta: selectedChoice.trustDelta,
+          choiceId: targetScene?.id ?? choice.nextSceneId ?? "ending",
+          choiceLabel: choice.label,
+          affectionDelta: choice.affectionDelta,
+          arousalDelta: choice.tensionDelta,
+          trustDelta: choice.trustDelta,
         },
       }).catch(() => {});
       void fnUpdateSession({
         data: {
           sessionId: serverSessionId,
-          currentNode: nextScene.id,
+          currentNode: targetScene?.id ?? previousSceneId,
           affection: nextStats.affection,
           arousal: nextStats.tension,
           trust: nextStats.trust,
+          isCompleted: !targetScene,
+          endingId: targetScene ? null : choice.routeHint,
         },
       }).catch(() => {});
-      void fnAppendMessage({
-        data: {
-          sessionId: serverSessionId,
-          role: "assistant",
-          content: nextScene.partnerLine,
-          nodeId: nextScene.id,
-        },
-      }).catch(() => {});
+      if (targetScene) {
+        void fnAppendMessage({
+          data: {
+            sessionId: serverSessionId,
+            role: "assistant",
+            content: targetScene.partnerLine,
+            nodeId: targetScene.id,
+          },
+        }).catch(() => {});
+      }
     }
+  };
+
+  const selectChoice = (choice: StoryRpgChoice) => {
+    const targetScene = choice.nextSceneId ? scenes.find((scene) => scene.id === choice.nextSceneId) : undefined;
+    if (!targetScene) {
+      setSelectedChoice(choice);
+      return;
+    }
+    persistChoice(choice, targetScene);
+  };
+
+  const continueToNextScene = () => {
+    if (!selectedChoice || !nextScene) return;
+    persistChoice(selectedChoice, nextScene);
   };
 
   const resetProgress = () => {
@@ -404,16 +435,19 @@ function StoryRpgPlay() {
     setChatMessage("");
   };
 
+  const unlockedAssets = game.visualAssets.filter((asset) => stats.affection >= asset.minAffection);
+  const lockedAssets = game.visualAssets.filter((asset) => stats.affection < asset.minAffection);
+
   return (
-    <div className="relative min-h-dvh overflow-hidden bg-[#06040a] text-white">
+    <div className="relative min-h-dvh bg-[#06040a] text-white">
       <div className="fixed inset-0 -z-10">
-        <img src={game.background} alt="" className="h-full w-full object-cover opacity-50" />
+        <CoverImage src={game.background} alt="" className="h-full w-full object-cover opacity-45" />
         <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(6,4,10,.94),rgba(6,4,10,.62),rgba(6,4,10,.96))]" />
         <div className="absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-[#06040a] to-transparent" />
       </div>
 
-      <main className="mx-auto grid min-h-dvh max-w-7xl gap-4 px-5 py-5 lg:grid-cols-[minmax(0,1fr)_320px]">
-        <section className="flex min-h-[calc(100dvh-40px)] flex-col rounded-[26px] border border-white/10 bg-black/30 p-5 backdrop-blur-xl">
+      <main className="mx-auto grid max-w-[1520px] gap-4 px-4 py-4 lg:grid-cols-[minmax(0,1fr)_286px] xl:grid-cols-[minmax(0,1fr)_310px]">
+        <section className="min-h-[calc(100dvh-32px)] rounded-[26px] border border-white/10 bg-black/30 p-5 backdrop-blur-xl">
           <header className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2">
               <Button asChild variant="ghost" size="sm" className="rounded-full bg-white/8 text-white hover:bg-white/12">
@@ -429,7 +463,6 @@ function StoryRpgPlay() {
             <div className="flex flex-wrap items-center gap-2 text-xs text-white/70">
               <StatusChip label={`${sceneIndex + 1}/${totalScenes}`} />
               <StatusChip label={activeRoute} />
-              <StatusChip label={`호감 ${stats.affection}`} />
               <Button
                 type="button"
                 variant="ghost"
@@ -454,102 +487,38 @@ function StoryRpgPlay() {
             <Progress value={progressValue} className="mt-2 h-1.5 bg-white/12" />
           </div>
 
-          <div className="grid min-h-0 flex-1 gap-4 py-4 xl:grid-cols-[minmax(0,1fr)_220px]">
-            <article className="flex min-h-[500px] flex-col justify-end rounded-[24px] border border-white/10 bg-black/35 p-6">
-              <div className="max-w-4xl">
-                <div className="mb-3 text-xs uppercase tracking-[0.28em] text-pink-200">{currentScene?.title}</div>
-                <h1 className="font-display text-4xl font-semibold leading-tight md:text-5xl">{game.title}</h1>
-                <p className="mt-5 max-w-4xl whitespace-pre-wrap text-lg leading-9 text-white/84">{currentScene?.text}</p>
-                <div className="mt-6 rounded-2xl border border-pink-400/25 bg-pink-500/10 p-4 shadow-[0_0_45px_rgba(236,72,153,.08)]">
-                  <div className="text-xs text-pink-200">{game.leadName}</div>
-                  <p className="mt-1 text-xl font-semibold leading-8">"{currentScene?.partnerLine}"</p>
-                </div>
-              </div>
-            </article>
-
-            <aside className="space-y-3">
-              <Stat label="호감도" value={stats.affection} />
-              <Stat label="긴장도" value={stats.tension} />
-              <Stat label="신뢰도" value={stats.trust} />
-              <div className="rounded-2xl border border-white/10 bg-white/7 p-3">
-                <div className="mb-2 text-xs font-semibold text-white/60">진행 로그</div>
-                {recentChoices.length ? (
-                  <div className="space-y-2">
-                    {recentChoices.map((choice, index) => (
-                      <div key={`${choice.label}-${index}`} className="flex items-start gap-2 text-xs leading-5 text-white/62">
-                        <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-primary" />
-                        <span className="line-clamp-2">{choice.label}</span>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="text-xs text-white/42">첫 선택을 기다리는 중</div>
-                )}
-              </div>
-            </aside>
-          </div>
-
-          <section className="rounded-[22px] border border-white/10 bg-white/7 p-4">
-            <div className="mb-3 flex items-center justify-between gap-2">
-              <h2 className="text-sm font-semibold text-white/80">다음 행동</h2>
-              {selectedChoice ? (
-                <Button variant="ghost" size="sm" className="h-8 rounded-full text-white/70" onClick={() => setSelectedChoice(null)}>
-                  다시 선택
-                </Button>
-              ) : null}
+          <article className="mx-auto mt-5 max-w-5xl space-y-5 pb-10">
+            <div className="rounded-[28px] border border-white/10 bg-black/35 p-5 md:p-8">
+              <div className="text-xs uppercase tracking-[0.28em] text-pink-200">Story RPG</div>
+              <h1 className="mt-3 font-display text-4xl font-semibold leading-tight md:text-6xl">{game.title}</h1>
+              <p className="mt-4 max-w-3xl text-sm leading-7 text-white/56">{game.logline}</p>
             </div>
-            {currentScene?.choices.length ? (
-              <div className="grid gap-2 lg:grid-cols-3">
-                {currentScene.choices.map((choice, index) => (
-                  <button
-                    key={`${currentScene.id}-${choice.label}`}
-                    type="button"
-                    onClick={() => selectChoice(choice)}
-                    className={`group rounded-2xl border p-3 text-left transition ${
-                      selectedChoice?.label === choice.label
-                        ? "border-primary/60 bg-primary/18 shadow-[0_0_35px_rgba(236,72,153,.12)]"
-                        : "border-white/10 bg-black/24 hover:border-primary/45 hover:bg-white/7"
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="min-w-0 text-sm font-semibold">
-                        <span className="mr-2 text-primary">{index + 1}</span>
-                        {choice.label}
-                      </div>
-                      <ChevronRight className="size-4 shrink-0 text-white/28 transition group-hover:text-primary" />
-                    </div>
-                    <div className="mt-2 text-xs text-white/52">{choice.tone}</div>
-                    <div className="mt-2 text-[11px] text-white/42">{formatChoiceDelta(choice)}</div>
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <div className="rounded-2xl border border-primary/25 bg-primary/12 p-4 text-sm leading-6 text-white/78">
-                현재 장면은 여기까지입니다.
-              </div>
-            )}
-            {selectedChoice ? (
-              <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-primary/25 bg-primary/12 p-3">
-                <div className="min-w-0 text-sm leading-6 text-white/76">
-                  <div>{selectedChoice.result}</div>
-                  {nextScene ? <div className="mt-1 text-xs text-pink-100/70">다음: {nextScene.title}</div> : null}
-                </div>
-                <Button
-                  type="button"
-                  disabled={!nextScene}
-                  className="rounded-full"
-                  onClick={continueToNextScene}
-                >
-                  계속
-                </Button>
-              </div>
-            ) : null}
-          </section>
+
+            {readingSegments.map((segment, index) => {
+              const isLast = index === readingSegments.length - 1;
+              const inlineAsset = pickSegmentAsset(game.visualAssets, stats.affection, index);
+              return (
+                <StorySegment
+                  key={`${segment.scene.id}-${index}`}
+                  scene={segment.scene}
+                  choice={segment.choice}
+                  leadName={game.leadName}
+                  asset={inlineAsset}
+                  isLast={isLast}
+                  selectedChoice={selectedChoice}
+                  nextScene={nextScene}
+                  onClearSelected={() => setSelectedChoice(null)}
+                  onContinue={continueToNextScene}
+                  onSelectChoice={selectChoice}
+                />
+              );
+            })}
+          </article>
         </section>
 
-        <aside className="flex min-h-[calc(100dvh-40px)] flex-col rounded-[26px] border border-white/10 bg-black/34 p-4 backdrop-blur-xl">
+        <aside className="sticky top-4 flex max-h-[calc(100dvh-32px)] flex-col overflow-hidden rounded-[26px] border border-white/10 bg-black/40 p-4 backdrop-blur-xl">
           <div className="flex items-center gap-3">
-            <img src={game.cover} alt={game.leadName} className="size-14 rounded-2xl object-cover" />
+            <CoverImage src={game.cover} alt={game.leadName} className="size-14 rounded-2xl object-cover" />
             <div className="min-w-0">
               <div className="truncate font-semibold">{game.leadName}</div>
               <div className="text-xs text-white/52">{game.mood}</div>
@@ -566,6 +535,12 @@ function StoryRpgPlay() {
             <Mini label="이미지" value={`${game.images.unlocked}/${game.images.unlocked + game.images.locked}`} icon={ImageIcon} />
           </div>
 
+          <div className="mt-3 space-y-2">
+            <Stat label="호감도" value={stats.affection} />
+            <Stat label="긴장도" value={stats.tension} />
+            <Stat label="신뢰도" value={stats.trust} />
+          </div>
+
           <div
             className="mt-3 rounded-2xl border border-emerald-300/15 bg-emerald-400/10 px-3 py-2 text-xs text-emerald-100/80"
             data-save-target={saveTarget}
@@ -576,17 +551,35 @@ function StoryRpgPlay() {
             ) : null}
           </div>
 
-          <div className="mt-4 flex-1 overflow-hidden rounded-[22px] border border-white/10 bg-white/7 p-3">
-            <div className="mb-3 flex items-center gap-2 font-semibold">
+          <AssetUnlockPanel unlocked={unlockedAssets} locked={lockedAssets} affection={stats.affection} />
+
+          <div className="mt-3 rounded-2xl border border-white/10 bg-white/7 p-3">
+            <div className="mb-2 text-xs font-semibold text-white/60">진행 로그</div>
+            {recentChoices.length ? (
+              <div className="space-y-2">
+                {recentChoices.map((choice, index) => (
+                  <div key={`${choice.label}-${index}`} className="flex items-start gap-2 text-xs leading-5 text-white/62">
+                    <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-primary" />
+                    <span className="line-clamp-2">{choice.label}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-xs text-white/42">첫 선택을 기다리는 중</div>
+            )}
+          </div>
+
+          <div className="mt-3 min-h-0 flex-1 overflow-hidden rounded-[22px] border border-white/10 bg-white/7 p-3">
+            <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
               <MessageCircle className="size-4 text-primary" />
               {game.leadName}
             </div>
-            <div className="max-h-[calc(100dvh-310px)] space-y-3 overflow-y-auto pr-1 text-sm">
-              {messages.map((message, index) => (
+            <div className="max-h-28 space-y-2 overflow-y-auto pr-1 text-xs">
+              {messages.slice(-3).map((message, index) => (
                 <div
                   key={`${message.text}-${index}`}
-                  className={`rounded-2xl p-3 ${
-                    message.role === "partner" ? "bg-white/8 text-white/72" : "ml-6 bg-primary/18 text-white"
+                  className={`rounded-2xl p-2 ${
+                    message.role === "partner" ? "bg-white/8 text-white/64" : "ml-4 bg-primary/18 text-white"
                   }`}
                 >
                   {message.text}
@@ -642,6 +635,215 @@ function StatusChip({ label }: { label: string }) {
       {label}
     </span>
   );
+}
+
+function StorySegment({
+  scene,
+  choice,
+  leadName,
+  asset,
+  isLast,
+  selectedChoice,
+  nextScene,
+  onClearSelected,
+  onContinue,
+  onSelectChoice,
+}: {
+  scene: StoryRpgScene;
+  choice: StoryRpgChoice | null;
+  leadName: string;
+  asset?: StoryRpgAsset | null;
+  isLast: boolean;
+  selectedChoice: StoryRpgChoice | null;
+  nextScene?: StoryRpgScene;
+  onClearSelected: () => void;
+  onContinue: () => void;
+  onSelectChoice: (choice: StoryRpgChoice) => void;
+}) {
+  return (
+    <section className="rounded-[28px] border border-white/10 bg-black/35 p-5 md:p-8">
+      {choice ? (
+        <div className="mb-5 rounded-2xl border border-primary/25 bg-primary/12 p-4">
+          <div className="text-[11px] uppercase tracking-[0.26em] text-pink-200">선택</div>
+          <p className="mt-1 text-base font-semibold text-white/86">{choice.label}</p>
+          <p className="mt-2 text-sm leading-6 text-white/56">{choice.result}</p>
+        </div>
+      ) : null}
+
+      <div className="text-xs uppercase tracking-[0.28em] text-pink-200">{scene.title}</div>
+      <p className="mt-5 whitespace-pre-wrap text-lg leading-9 text-white/84 md:text-xl md:leading-10">{scene.text}</p>
+
+      {asset ? <InlineAsset asset={asset} /> : null}
+
+      <div className="mt-6 rounded-2xl border border-pink-400/25 bg-pink-500/10 p-4 shadow-[0_0_45px_rgba(236,72,153,.08)]">
+        <div className="text-xs text-pink-200">{leadName}</div>
+        <p className="mt-1 text-xl font-semibold leading-8">"{scene.partnerLine}"</p>
+      </div>
+
+      {isLast ? (
+        <ChoiceBlock
+          scene={scene}
+          selectedChoice={selectedChoice}
+          nextScene={nextScene}
+          onClearSelected={onClearSelected}
+          onContinue={onContinue}
+          onSelectChoice={onSelectChoice}
+        />
+      ) : null}
+    </section>
+  );
+}
+
+function ChoiceBlock({
+  scene,
+  selectedChoice,
+  nextScene,
+  onClearSelected,
+  onContinue,
+  onSelectChoice,
+}: {
+  scene: StoryRpgScene;
+  selectedChoice: StoryRpgChoice | null;
+  nextScene?: StoryRpgScene;
+  onClearSelected: () => void;
+  onContinue: () => void;
+  onSelectChoice: (choice: StoryRpgChoice) => void;
+}) {
+  return (
+    <div className="mt-6 rounded-[22px] border border-white/10 bg-white/7 p-4">
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <h2 className="text-sm font-semibold text-white/80">선택지</h2>
+        {selectedChoice ? (
+          <Button variant="ghost" size="sm" className="h-8 rounded-full text-white/70" onClick={onClearSelected}>
+            다시 선택
+          </Button>
+        ) : null}
+      </div>
+      {scene.choices.length ? (
+        <div className="grid gap-2 lg:grid-cols-3">
+          {scene.choices.map((choice, index) => (
+            <button
+              key={`${scene.id}-${choice.label}`}
+              type="button"
+              onClick={() => onSelectChoice(choice)}
+              className={`group rounded-2xl border p-3 text-left transition ${
+                selectedChoice?.label === choice.label
+                  ? "border-primary/60 bg-primary/18 shadow-[0_0_35px_rgba(236,72,153,.12)]"
+                  : "border-white/10 bg-black/24 hover:border-primary/45 hover:bg-white/7"
+              }`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0 text-sm font-semibold">
+                  <span className="mr-2 text-primary">{index + 1}</span>
+                  {choice.label}
+                </div>
+                <ChevronRight className="size-4 shrink-0 text-white/28 transition group-hover:text-primary" />
+              </div>
+              <div className="mt-2 text-xs text-white/52">{choice.tone}</div>
+              <div className="mt-2 text-[11px] text-white/42">{formatChoiceDelta(choice)}</div>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="rounded-2xl border border-primary/25 bg-primary/12 p-4 text-sm leading-6 text-white/78">
+          현재 장면은 여기까지입니다.
+        </div>
+      )}
+      {selectedChoice ? (
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-primary/25 bg-primary/12 p-3">
+          <div className="min-w-0 text-sm leading-6 text-white/76">
+            <div>{selectedChoice.result}</div>
+            {nextScene ? <div className="mt-1 text-xs text-pink-100/70">다음: {nextScene.title}</div> : null}
+          </div>
+          <Button type="button" disabled={!nextScene} className="rounded-full" onClick={onContinue}>
+            계속
+          </Button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function InlineAsset({ asset }: { asset: StoryRpgAsset }) {
+  return (
+    <figure className="my-8 overflow-hidden rounded-[24px] border border-white/10 bg-white/7">
+      <div className="relative aspect-[16/9] bg-black/40">
+        {asset.type === "video" ? (
+          <video src={asset.url} className="size-full object-cover" controls playsInline />
+        ) : (
+          <CoverImage src={asset.url} alt={asset.caption} className="size-full object-cover" />
+        )}
+        <div className="absolute left-3 top-3 rounded-full bg-black/60 px-2.5 py-1 text-[10px] font-semibold text-white backdrop-blur">
+          {asset.tier.toUpperCase()}
+        </div>
+      </div>
+      {asset.caption ? <figcaption className="px-4 py-3 text-xs text-white/54">{asset.caption}</figcaption> : null}
+    </figure>
+  );
+}
+
+function AssetUnlockPanel({
+  unlocked,
+  locked,
+  affection,
+}: {
+  unlocked: StoryRpgAsset[];
+  locked: StoryRpgAsset[];
+  affection: number;
+}) {
+  const unlockedPreview = unlocked.slice(0, 4);
+  const lockedPreview = locked.slice(0, 6);
+  return (
+    <div className="mt-3 rounded-[22px] border border-white/10 bg-white/7 p-3">
+      <div className="mb-3 flex items-center justify-between">
+        <div className="inline-flex items-center gap-2 text-sm font-semibold">
+          <ImageIcon className="size-4 text-primary" />
+          해금 이미지
+        </div>
+        <span className="text-xs text-white/42">{affection}/100</span>
+      </div>
+
+      <div className="grid grid-cols-3 gap-1.5">
+        {unlockedPreview.map((asset) => (
+          <AssetThumb key={asset.id} asset={asset} locked={false} />
+        ))}
+        {lockedPreview.map((asset) => (
+          <AssetThumb key={asset.id} asset={asset} locked />
+        ))}
+        {!unlockedPreview.length && !lockedPreview.length
+          ? Array.from({ length: 6 }).map((_, index) => (
+              <div key={index} className="grid aspect-square place-items-center rounded-xl border border-dashed border-white/12 bg-black/24">
+                <ImageIcon className="size-4 text-white/24" />
+              </div>
+            ))
+          : null}
+      </div>
+    </div>
+  );
+}
+
+function AssetThumb({ asset, locked }: { asset: StoryRpgAsset; locked: boolean }) {
+  return (
+    <div className="relative aspect-square overflow-hidden rounded-xl bg-black/35">
+      {asset.type === "video" ? (
+        <video src={asset.url} className={`size-full object-cover ${locked ? "blur-sm saturate-50" : ""}`} muted playsInline />
+      ) : (
+        <CoverImage src={asset.url} alt={asset.caption} className={`size-full object-cover ${locked ? "blur-sm saturate-50" : ""}`} />
+      )}
+      {locked ? (
+        <>
+          <div className="absolute inset-0 bg-black/48" />
+          <span className="absolute left-1 top-1 rounded bg-rose-500 px-1.5 py-0.5 text-[8px] font-black text-white">19+</span>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+function pickSegmentAsset(assets: StoryRpgAsset[], affection: number, segmentIndex: number) {
+  const visible = assets.filter((asset) => affection >= asset.minAffection);
+  if (!visible.length) return null;
+  return visible[segmentIndex % visible.length];
 }
 
 function storyRpgProgressKey(storyId: string) {

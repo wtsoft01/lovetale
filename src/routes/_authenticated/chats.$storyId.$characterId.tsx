@@ -31,6 +31,7 @@ import {
 } from "@/lib/reader-chat.functions";
 import { getUnifiedReaderStory } from "@/lib/admin-stories-compose.functions";
 import { supabase } from "@/integrations/supabase/client";
+import { resolveStoryMediaSource } from "@/lib/story-media-url";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_authenticated/chats/$storyId/$characterId")({
@@ -138,17 +139,18 @@ function useSignedMedia(path?: string | null) {
 
   useEffect(() => {
     let cancelled = false;
-    if (!path) {
+    const source = resolveStoryMediaSource(path);
+    if (!source) {
       setUrl(null);
       return;
     }
-    if (/^(https?:|data:|blob:|\/)/.test(path)) {
-      setUrl(path);
+    if (source.kind === "direct") {
+      setUrl(source.url);
       return;
     }
     supabase.storage
       .from("story-media")
-      .createSignedUrl(path, 60 * 60)
+      .createSignedUrl(source.path, 60 * 60)
       .then(({ data }) => !cancelled && setUrl(data?.signedUrl ?? null))
       .catch(() => !cancelled && setUrl(null));
     return () => {

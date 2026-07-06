@@ -55,12 +55,14 @@ import {
 } from "@/lib/admin-stories-compose.functions";
 import {
   analyzeStoryCharacters,
+  generateSingleStoryCharacter,
   generateStoryAsset,
   suggestStoryAssetSlots,
   translateStoryChapterToVietnamese,
 } from "@/lib/admin-story-ai.functions";
 import { listMediaAssets, registerMediaAsset, type MediaAssetRow } from "@/lib/admin-media.functions";
 import { ensureStoryMediaBucket } from "@/lib/storage.functions";
+import { resolveStoryMediaSource } from "@/lib/story-media-url";
 import { normalizeProseLineBreaks } from "@/lib/text-normalization";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -205,7 +207,7 @@ function StoriesPage() {
   const [workspaceFor, setWorkspaceFor] = useState<{
     id: string;
     title: string;
-    tab: "info" | "preview" | "assets" | "chapter";
+    tab: "info" | "preview" | "assets" | "chapter" | "characters";
     chapters: StoryChapterSummary[];
     chapterId?: string;
   } | null>(null);
@@ -215,6 +217,7 @@ function StoriesPage() {
     queryKey: ["admin_stories", q, status, contentType],
     queryFn: () => fetchStories({ data: { q, status, contentType } }),
   });
+  const queryError = query.error instanceof Error ? query.error.message : query.error ? String(query.error) : "";
 
   const bulkMut = useMutation({
     mutationFn: (action: "publish" | "unlist" | "private") =>
@@ -265,7 +268,9 @@ function StoriesPage() {
     if (!story) return;
     const requestedTab = params.get("tab");
     const tab =
-      requestedTab === "preview" || requestedTab === "assets" || requestedTab === "chapter" ? requestedTab : "info";
+      requestedTab === "preview" || requestedTab === "assets" || requestedTab === "chapter" || requestedTab === "characters"
+        ? requestedTab
+        : "info";
     const chapterId = params.get("chapter") ?? undefined;
     setWorkspaceFor({ id: story.id, title: story.title, tab, chapterId, chapters: story.chapters ?? [] });
     window.history.replaceState({}, "", "/admin/stories");
@@ -394,6 +399,23 @@ function StoriesPage() {
         )}
       </div>
 
+      {query.isError ? (
+        <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm">
+          <div className="font-semibold text-destructive">스토리 목록을 불러오지 못했습니다.</div>
+          <div className="mt-1 text-muted-foreground">
+            콘텐츠가 삭제된 것이 아니라 관리자 API 또는 로그인 세션 조회가 실패한 상태입니다. 새로고침하거나 다시 로그인한 뒤 확인해 주세요.
+          </div>
+          {queryError ? (
+            <div className="mt-2 rounded-md border border-destructive/20 bg-background/60 px-3 py-2 text-xs text-muted-foreground">
+              {queryError}
+            </div>
+          ) : null}
+          <Button size="sm" variant="outline" className="mt-3" onClick={() => query.refetch()}>
+            다시 불러오기
+          </Button>
+        </div>
+      ) : null}
+
       {selected.size > 0 && (
         <div className="flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-sm">
           <span className="mr-auto">
@@ -461,10 +483,10 @@ function StoriesPage() {
                   onDelete={() => setDeleteFor({ ids: [s.id], title: s.title })}
                 />
               ))}
-              {!rows.length && (
+              {!rows.length && !query.isError && (
                 <tr>
                   <td colSpan={8} className="px-4 py-10 text-center text-sm text-muted-foreground">
-                    등록된 콘텐츠가 없습니다.
+                    {hasActiveFilter ? "조건에 맞는 콘텐츠가 없습니다." : "등록된 콘텐츠가 없습니다."}
                   </td>
                 </tr>
               )}
@@ -520,17 +542,18 @@ function useSignedCover(path?: string | null) {
   const [url, setUrl] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
-    if (!path) {
+    const source = resolveStoryMediaSource(path);
+    if (!source) {
       setUrl(null);
       return;
     }
-    if (/^(https?:|data:|blob:)/.test(path)) {
-      setUrl(path);
+    if (source.kind === "direct") {
+      setUrl(source.url);
       return;
     }
     supabase.storage
       .from("story-media")
-      .createSignedUrl(path, 60 * 60)
+      .createSignedUrl(source.path, 60 * 60)
       .then(({ data }) => !cancelled && setUrl(data?.signedUrl ?? null))
       .catch(() => !cancelled && setUrl(null));
     return () => {
@@ -1156,7 +1179,7 @@ function StoryWorkspaceDialog({
 }: {
   storyId: string;
   title: string;
-  initialTab: 'info' | 'preview' | 'assets' | 'chapter';
+  initialTab: 'info' | 'preview' | 'assets' | 'chapter' | 'characters';
   selectedChapterId?: string;
   chapters: StoryChapterSummary[];
   onClose: () => void;
@@ -1171,6 +1194,7 @@ function StoryWorkspaceDialog({
   const translateChapter = useServerFn(translateStoryChapterToVietnamese);
   const generateAsset = useServerFn(generateStoryAsset);
   const analyzeCharacters = useServerFn(analyzeStoryCharacters);
+  const generateSingleCharacter = useServerFn(generateSingleStoryCharacter);
   const fetchStory = useServerFn(getAdminStory);
   const saveStory = useServerFn(updateAdminStory);
   const [tab, setTab] = useState(initialTab);
@@ -1185,6 +1209,7 @@ function StoryWorkspaceDialog({
   const [localChapters, setLocalChapters] = useState<StoryChapterSummary[]>(chapters);
   const [characterDrafts, setCharacterDrafts] = useState<CharacterEditDraft[]>([]);
   const [characterUploadingId, setCharacterUploadingId] = useState<string | null>(null);
+  const [characterAnalyzing, setCharacterAnalyzing] = useState(false);
   const [chapterDraft, setChapterDraft] = useState({
     title: "",
     episodeNumber: 1,
@@ -1228,7 +1253,7 @@ function StoryWorkspaceDialog({
   const composeQ = useQuery({
     queryKey: ['admin_story_workspace', storyId],
     queryFn: () => fetchCompose({ data: { id: storyId } }),
-    enabled: tab === 'info' || tab === 'preview' || tab === 'assets',
+    enabled: tab === 'info' || tab === 'preview' || tab === 'assets' || tab === 'characters',
   });
   const chapterQ = useQuery({
     queryKey: ['admin_story_chapter_text', storyId, activeChapterId],
@@ -1394,6 +1419,38 @@ function StoryWorkspaceDialog({
     setCharacterDrafts((prev) => prev.filter((character) => character.id !== id));
   }
 
+  async function generateSingleCharacterForWorkspace() {
+    const sourceChapters = (composeChapters.length ? composeChapters : localChapters).filter((chapter) => chapter.id);
+    const target =
+      sourceChapters.find((chapter) => chapter.id === activeChapterId) ??
+      sourceChapters.find((chapter: any) => String(chapter.body ?? chapter.summary ?? "").trim().length >= 80) ??
+      sourceChapters[0];
+    if (!target?.id) {
+      toast.error("캐릭터를 찾을 회차가 없습니다.");
+      return;
+    }
+    setCharacterAnalyzing(true);
+    try {
+      const generated = await generateSingleCharacter({
+        data: {
+          storyId,
+          chapterId: target.id,
+          existingCharacters: characterDrafts.map((character) => ({ id: character.id, name: character.name })),
+        },
+      });
+      if (!generated.character) {
+        toast.info(generated.reason || "새로 추가할 캐릭터를 찾지 못했습니다.");
+        return;
+      }
+      setCharacterDrafts((prev) => mergeAnalyzedCharacters(prev, [generated.character as Record<string, unknown>]));
+      toast.success("AI가 캐릭터 후보 1명을 만들었습니다. 확인 후 DB 저장을 눌러 반영하세요.");
+    } catch (e: any) {
+      toast.error(e?.message ?? "AI 캐릭터 생성에 실패했습니다.");
+    } finally {
+      setCharacterAnalyzing(false);
+    }
+  }
+
   function updateStoryRpgScene(index: number, patch: Partial<StoryRpgSceneDraft>) {
     setStoryRpgScenesDraft((prev) => prev.map((scene, sceneIndex) => (sceneIndex === index ? { ...scene, ...patch } : scene)));
   }
@@ -1556,6 +1613,10 @@ function StoryWorkspaceDialog({
       qc.invalidateQueries({ queryKey: ['admin_stories'] });
       qc.invalidateQueries({ queryKey: ['admin_story_detail', storyId] });
       qc.invalidateQueries({ queryKey: ['admin_story_workspace', storyId] });
+      qc.invalidateQueries({ queryKey: ["public_chat_characters"] });
+      qc.invalidateQueries({ queryKey: ["character_chat_story", storyId] });
+      qc.invalidateQueries({ queryKey: ["user_story_unified", storyId] });
+      qc.invalidateQueries({ queryKey: ["admin_character_stories"] });
     } catch (e: any) {
       toast.error(e?.message ?? '저장에 실패했습니다.');
     } finally {
@@ -1753,7 +1814,7 @@ function StoryWorkspaceDialog({
           <div className="flex items-center justify-between gap-3 pr-8">
           <div>
             <DialogTitle>콘텐츠 작업공간 - {title}</DialogTitle>
-            <div className="text-xs text-muted-foreground">정보수정, 회차현황, 에셋편집, 프리뷰를 한 화면에서 빠르게 확인합니다.</div>
+            <div className="text-xs text-muted-foreground">정보수정, 캐릭터관리, 에셋편집, 프리뷰를 한 화면에서 빠르게 확인합니다.</div>
             <div className="mt-2 flex flex-wrap gap-1.5 text-[11px]">
               <span className="rounded-full border border-border bg-background px-2 py-0.5">회차 {workspaceStats.chapters}</span>
               <span className="rounded-full border border-border bg-background px-2 py-0.5">본문 {workspaceStats.bodyChars.toLocaleString()}자</span>
@@ -1775,6 +1836,7 @@ function StoryWorkspaceDialog({
               <TabsTrigger value="assets">에셋편집</TabsTrigger>
               <TabsTrigger value="preview">프리뷰</TabsTrigger>
               <TabsTrigger value="chapter">회차편집</TabsTrigger>
+              <TabsTrigger value="characters">캐릭터관리</TabsTrigger>
             </TabsList>
           </div>
           <TabsContent value="info" className="m-0 min-h-0 flex-1 overflow-y-auto p-4">
@@ -2394,120 +2456,6 @@ function StoryWorkspaceDialog({
               </section>
 
               <section className="rounded-lg border border-border bg-card p-4">
-                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <div className="text-sm font-semibold">주요 캐릭터</div>
-                    <div className="text-xs text-muted-foreground">
-                      자동 분석된 캐릭터를 확인하고, 채팅 상대 썸네일로 사용할 이미지를 등록합니다.
-                    </div>
-                  </div>
-                  <Button type="button" size="sm" variant="outline" onClick={addCharacterDraft}>
-                    <Plus className="size-3" /> 캐릭터 추가
-                  </Button>
-                </div>
-                <div className="space-y-3">
-                  {characterDrafts.map((character, index) => (
-                    <div key={character.id} className="rounded-lg border border-border bg-background p-3">
-                      <div className="flex flex-col gap-3 sm:flex-row">
-                        <CharacterAvatarPreview path={character.avatarUrl} name={character.name || `캐릭터 ${index + 1}`} />
-                        <div className="min-w-0 flex-1 space-y-3">
-                          <div className="grid gap-3 sm:grid-cols-2">
-                            <div>
-                              <label className="text-xs text-muted-foreground">캐릭터 이름</label>
-                              <Input
-                                className="mt-1"
-                                value={character.name}
-                                onChange={(event) => updateCharacterDraft(character.id, { name: event.target.value })}
-                                placeholder="예: 카이토"
-                              />
-                            </div>
-                            <div>
-                              <label className="text-xs text-muted-foreground">역할</label>
-                              <Input
-                                className="mt-1"
-                                value={character.role}
-                                onChange={(event) => updateCharacterDraft(character.id, { role: event.target.value })}
-                                placeholder="예: 상대 주인공, CEO, 계약 상대"
-                              />
-                            </div>
-                          </div>
-                          <div>
-                            <label className="text-xs text-muted-foreground">캐릭터 이미지 URL 또는 업로드 경로</label>
-                            <div className="mt-1 flex gap-2">
-                              <Input
-                                value={character.avatarUrl}
-                                onChange={(event) => updateCharacterDraft(character.id, { avatarUrl: event.target.value })}
-                                placeholder="이미지 URL 또는 story-media storage path"
-                              />
-                              <label className="inline-flex h-10 cursor-pointer items-center gap-1 rounded-md border border-border bg-card px-3 text-sm hover:border-primary/50">
-                                {characterUploadingId === character.id ? <Loader2 className="size-3 animate-spin" /> : <Upload className="size-3" />}
-                                업로드
-                                <input
-                                  type="file"
-                                  accept="image/*"
-                                  className="hidden"
-                                  disabled={characterUploadingId === character.id}
-                                  onChange={(event) => {
-                                    const file = event.currentTarget.files?.[0];
-                                    event.currentTarget.value = "";
-                                    if (file) void uploadCharacterAvatar(character.id, file);
-                                  }}
-                                />
-                              </label>
-                            </div>
-                          </div>
-                          <div>
-                            <label className="text-xs text-muted-foreground">성격/페르소나</label>
-                            <Textarea
-                              className="mt-1 min-h-20"
-                              value={character.persona}
-                              onChange={(event) => updateCharacterDraft(character.id, { persona: event.target.value })}
-                              placeholder="채팅에서 유지할 성격, 관계, 감정선"
-                            />
-                          </div>
-                          <div className="grid gap-3 sm:grid-cols-2">
-                            <div>
-                              <label className="text-xs text-muted-foreground">말투</label>
-                              <Input
-                                className="mt-1"
-                                value={character.speakingStyle}
-                                onChange={(event) => updateCharacterDraft(character.id, { speakingStyle: event.target.value })}
-                                placeholder="예: 짧고 차갑지만 은근히 다정함"
-                              />
-                            </div>
-                            <div>
-                              <label className="text-xs text-muted-foreground">이미지 생성/선택 참고 프롬프트</label>
-                              <Input
-                                className="mt-1"
-                                value={character.visualPrompt}
-                                onChange={(event) => updateCharacterDraft(character.id, { visualPrompt: event.target.value })}
-                                placeholder="외형, 분위기, 의상 등"
-                              />
-                            </div>
-                          </div>
-                        </div>
-                        <Button
-                          type="button"
-                          size="icon"
-                          variant="ghost"
-                          className="self-start text-muted-foreground hover:text-destructive"
-                          onClick={() => removeCharacterDraft(character.id)}
-                          aria-label="캐릭터 삭제"
-                        >
-                          <Trash2 className="size-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                  {!characterDrafts.length && (
-                    <div className="rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">
-                      아직 등록된 캐릭터가 없습니다. 회차를 저장하면 자동 분석 결과가 반영되고, 직접 추가할 수도 있습니다.
-                    </div>
-                  )}
-                </div>
-              </section>
-
-              <section className="rounded-lg border border-border bg-card p-4">
                 <div className="mb-3">
                   <div className="text-sm font-semibold">노출 및 가격</div>
                   <div className="text-xs text-muted-foreground">판매 가격과 공개 상태를 관리합니다.</div>
@@ -2540,8 +2488,183 @@ function StoryWorkspaceDialog({
               </section>
 
               <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setTab('characters')}>캐릭터관리</Button>
               <Button variant="outline" onClick={() => setTab('assets')}>에셋편집으로 이동</Button>
               <Button onClick={saveInfo} disabled={saving}>{saving ? '저장 중...' : '저장'}</Button>
+              </div>
+            </div>
+          </TabsContent>
+          <TabsContent value="characters" className="m-0 min-h-0 flex-1 overflow-y-auto p-4">
+            <div className="mx-auto max-w-5xl space-y-4 pb-24">
+              <section className="rounded-lg border border-border bg-card p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold">스토리 캐릭터</div>
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      AI가 한 명씩 후보를 만들면 확인하고 바로 DB에 저장할 수 있습니다.
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={generateSingleCharacterForWorkspace}
+                      disabled={characterAnalyzing || composeQ.isLoading}
+                    >
+                      {characterAnalyzing ? <Loader2 className="size-3 animate-spin" /> : <Sparkles className="size-3" />}
+                      AI 한 명 생성
+                    </Button>
+                    <Button type="button" size="sm" variant="outline" onClick={addCharacterDraft}>
+                      <Plus className="size-3" /> 수동 추가
+                    </Button>
+                    <Button type="button" size="sm" onClick={saveInfo} disabled={saving}>
+                      {saving ? <Loader2 className="size-3 animate-spin" /> : <Save className="size-3" />}
+                      DB 저장
+                    </Button>
+                  </div>
+                </div>
+              </section>
+
+              <div className="grid gap-3">
+                {characterDrafts.map((character, index) => (
+                  <section key={character.id} className="rounded-lg border border-border bg-card p-4">
+                    <div className="flex flex-col gap-4 lg:flex-row">
+                      <div className="flex w-full gap-3 lg:w-56 lg:flex-col">
+                        <CharacterAvatarPreview path={character.avatarUrl} name={character.name || `캐릭터 ${index + 1}`} />
+                        <div className="min-w-0 flex-1 space-y-2">
+                          <Input
+                            value={character.avatarUrl}
+                            onChange={(event) => updateCharacterDraft(character.id, { avatarUrl: event.target.value })}
+                            placeholder="이미지 URL 또는 storage path"
+                          />
+                          <label className="inline-flex h-9 w-full cursor-pointer items-center justify-center gap-1 rounded-md border border-border bg-background px-3 text-sm hover:border-primary/50">
+                            {characterUploadingId === character.id ? <Loader2 className="size-3 animate-spin" /> : <Upload className="size-3" />}
+                            이미지 업로드
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              disabled={characterUploadingId === character.id}
+                              onChange={(event) => {
+                                const file = event.currentTarget.files?.[0];
+                                event.currentTarget.value = "";
+                                if (file) void uploadCharacterAvatar(character.id, file);
+                              }}
+                            />
+                          </label>
+                        </div>
+                      </div>
+
+                      <div className="min-w-0 flex-1 space-y-3">
+                        <div className="grid gap-3 md:grid-cols-3">
+                          <div>
+                            <label className="text-xs text-muted-foreground">이름</label>
+                            <Input
+                              className="mt-1"
+                              value={character.name}
+                              onChange={(event) => updateCharacterDraft(character.id, { name: event.target.value })}
+                              placeholder="캐릭터 이름"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-xs text-muted-foreground">역할</label>
+                            <Input
+                              className="mt-1"
+                              value={character.role}
+                              onChange={(event) => updateCharacterDraft(character.id, { role: event.target.value })}
+                              placeholder="상대 주인공, 조력자"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-xs text-muted-foreground">관계</label>
+                            <Input
+                              className="mt-1"
+                              value={character.relationship ?? ""}
+                              onChange={(event) => updateCharacterDraft(character.id, { relationship: event.target.value })}
+                              placeholder="사용자/주인공과의 관계"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <div>
+                            <label className="text-xs text-muted-foreground">성격/성향</label>
+                            <Textarea
+                              className="mt-1 min-h-24"
+                              value={character.persona}
+                              onChange={(event) => updateCharacterDraft(character.id, { persona: event.target.value, personality: event.target.value })}
+                              placeholder="욕망, 상처, 태도, 감정선, 금지해야 할 성격 붕괴 요소"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-xs text-muted-foreground">대화체/답변 패턴</label>
+                            <Textarea
+                              className="mt-1 min-h-24"
+                              value={character.speakingStyle}
+                              onChange={(event) => updateCharacterDraft(character.id, { speakingStyle: event.target.value })}
+                              placeholder="존댓말/반말, 문장 길이, 자주 쓰는 표현, 채팅 응답 규칙"
+                            />
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="text-xs text-muted-foreground">이미지 생성용 캐릭터 묘사</label>
+                          <Textarea
+                            className="mt-1 min-h-20"
+                            value={character.visualPrompt}
+                            onChange={(event) => updateCharacterDraft(character.id, { visualPrompt: event.target.value })}
+                            placeholder="외형, 헤어, 표정, 분위기, 의상, 이미지/영상 생성 시 유지할 특징"
+                          />
+                        </div>
+
+                        <div className="grid gap-3 md:grid-cols-[1fr_140px_140px_40px]">
+                          <Input
+                            value={(character.tags ?? []).join(", ")}
+                            onChange={(event) =>
+                              updateCharacterDraft(character.id, {
+                                tags: event.target.value.split(",").map((tag) => tag.trim()).filter(Boolean),
+                              })
+                            }
+                            placeholder="태그: 냉정함, 집착, 다정함"
+                          />
+                          <label className="flex items-center justify-between rounded-md border border-border bg-background px-3 py-2 text-sm">
+                            <span>채팅</span>
+                            <Switch
+                              checked={character.chatEnabled !== false}
+                              onCheckedChange={(checked) => updateCharacterDraft(character.id, { chatEnabled: checked })}
+                            />
+                          </label>
+                          <label className="flex items-center justify-between rounded-md border border-border bg-background px-3 py-2 text-sm">
+                            <span>재사용</span>
+                            <Switch
+                              checked={character.reusable !== false}
+                              onCheckedChange={(checked) => updateCharacterDraft(character.id, { reusable: checked })}
+                            />
+                          </label>
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="ghost"
+                            className="text-muted-foreground hover:text-destructive"
+                            onClick={() => removeCharacterDraft(character.id)}
+                            aria-label="캐릭터 삭제"
+                          >
+                            <Trash2 className="size-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  </section>
+                ))}
+
+                {!characterDrafts.length && (
+                  <section className="rounded-lg border border-dashed border-border bg-card p-8 text-center">
+                    <UserCircle2 className="mx-auto mb-3 size-8 text-muted-foreground" />
+                    <div className="text-sm font-medium">등록된 캐릭터가 없습니다.</div>
+                    <div className="mt-1 text-xs text-muted-foreground">AI 한 명 생성 또는 수동 추가로 시작하세요.</div>
+                  </section>
+                )}
               </div>
             </div>
           </TabsContent>

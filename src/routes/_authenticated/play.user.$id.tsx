@@ -192,6 +192,9 @@ function UserStoryPlay() {
   const { data, isLoading, error } = useQuery({
     queryKey: ["user_story_unified", id],
     queryFn: () => fetchStory({ data: { id } }),
+    staleTime: 3 * 60_000,
+    gcTime: 10 * 60_000,
+    refetchOnWindowFocus: false,
   });
 
   const legacyBeatMap = useMemo<Record<string, ReaderBeat>>(() => {

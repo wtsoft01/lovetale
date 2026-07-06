@@ -110,6 +110,33 @@ export const analyzeStoryCharacters = createServerFn({ method: "POST" })
     });
   });
 
+export const generateSingleStoryCharacter = createServerFn({ method: "POST" })
+  .inputValidator(
+    (i: unknown) =>
+      i as {
+        storyId: string;
+        chapterId: string;
+        existingCharacters?: Array<{ name?: string; id?: string }>;
+      },
+  )
+  .handler(async ({ data }) => {
+    return storyAiApi<
+      ApiOk<{
+        character: Record<string, unknown> | null;
+        characterAnalysis?: Record<string, unknown> | null;
+        reason?: string;
+        providerLabel?: string;
+        model?: string;
+        tokensUsed?: number;
+      }>
+    >({
+      action: "generate_single_character",
+      storyId: data.storyId,
+      chapterId: data.chapterId,
+      existingCharacters: data.existingCharacters ?? [],
+    });
+  });
+
 export const generateStoryRpgScenario = createServerFn({ method: "POST" })
   .inputValidator((i: unknown) => i as { storyId: string; maxScenes?: number })
   .handler(async ({ data }) => {

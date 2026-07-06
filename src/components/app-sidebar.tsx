@@ -93,8 +93,12 @@ export function AppSidebar({
   const { session, loading: authLoading } = useAuth();
   const fetchProfile = useServerFn(getMyProfile);
   const profileQ = useQuery({
-    queryKey: ["my_profile_balance"],
+    queryKey: ["my_profile_balance", session?.user.id ?? "anon"],
     queryFn: () => fetchProfile(),
+    enabled: !authLoading && Boolean(session),
+    staleTime: 2 * 60_000,
+    gcTime: 10 * 60_000,
+    refetchOnWindowFocus: false,
   });
   const staffQ = useQuery({
     queryKey: ["staff_roles", session?.user.id ?? "anon"],
@@ -105,7 +109,9 @@ export function AppSidebar({
         email: session?.user.email ?? undefined,
       }),
     enabled: !authLoading && Boolean(session),
-    staleTime: 60_000,
+    staleTime: 5 * 60_000,
+    gcTime: 10 * 60_000,
+    refetchOnWindowFocus: false,
   });
   const visibleAccountItems = staffQ.data?.hasAny ? [...accountItems, adminAccountItem] : accountItems;
   const isActive = (url: string) => (url === "/" ? pathname === "/" : pathname.startsWith(url));

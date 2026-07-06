@@ -23,6 +23,15 @@ export type StoryRpgScene = {
   choices: StoryRpgChoice[];
 };
 
+export type StoryRpgAsset = {
+  id: string;
+  url: string;
+  type: "image" | "video";
+  tier: "soft" | "warm" | "spicy" | "steamy" | "premium";
+  minAffection: number;
+  caption: string;
+};
+
 export type StoryRpg = {
   id: string;
   title: string;
@@ -43,6 +52,7 @@ export type StoryRpg = {
   currentChapter: string;
   endings: { unlocked: number; total: number };
   images: { unlocked: number; locked: number };
+  visualAssets: StoryRpgAsset[];
   routes: Array<{ name: string; status: string; condition: string; progress: number }>;
   choices: StoryRpgChoice[];
   scenes?: StoryRpgScene[];

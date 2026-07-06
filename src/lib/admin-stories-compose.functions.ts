@@ -1133,7 +1133,7 @@ export const getUnifiedReaderStory = createServerFn({ method: "POST" })
   .handler(async ({ data }): Promise<UnifiedReaderStory> => {
     const { data: directStory, error: directError } = await supabase
       .from("user_stories")
-      .select("*")
+      .select("id,title,logline,cover_url,body_text,asset_slots,character_card,beats,audience,max_heat,user_id")
       .eq("id", data.id)
       .maybeSingle();
 

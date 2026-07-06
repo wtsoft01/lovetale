@@ -44,6 +44,12 @@ const HEAT_BADGE: Record<HeatTier, { label: string; className: string }> = {
   steamy: { label: "Steamy", className: "border-fuchsia-500/30 bg-fuchsia-500/15 text-fuchsia-300" },
 };
 
+const HOME_QUERY_OPTIONS = {
+  staleTime: 3 * 60 * 1000,
+  gcTime: 10 * 60 * 1000,
+  refetchOnWindowFocus: false,
+} as const;
+
 function Home() {
   const { user } = useAuth();
   const [query, setQuery] = useState("");
@@ -52,18 +58,22 @@ function Home() {
   const heroQ = useQuery({
     queryKey: ["home_placement", "hero"],
     queryFn: () => placementsFn({ data: { slot: "hero" } }),
+    ...HOME_QUERY_OPTIONS,
   });
   const trendingQ = useQuery({
     queryKey: ["home_placement", "trending"],
     queryFn: () => placementsFn({ data: { slot: "trending" } }),
+    ...HOME_QUERY_OPTIONS,
   });
   const newQ = useQuery({
     queryKey: ["home_placement", "new"],
     queryFn: () => placementsFn({ data: { slot: "new" } }),
+    ...HOME_QUERY_OPTIONS,
   });
   const allQ = useQuery({
     queryKey: ["home_placement", "all"],
     queryFn: () => placementsFn({ data: { slot: "all" } }),
+    ...HOME_QUERY_OPTIONS,
   });
 
   const heroStory = heroQ.data?.[0];

@@ -26,6 +26,7 @@ import { Route as ApiUnlocksRouteImport } from './routes/api/unlocks'
 import { Route as ApiStoryRpgRouteImport } from './routes/api/story-rpg'
 import { Route as ApiReaderStoryRouteImport } from './routes/api/reader-story'
 import { Route as ApiReaderProfileImageRouteImport } from './routes/api/reader-profile-image'
+import { Route as ApiMyChatCharacterRouteImport } from './routes/api/my-chat-character'
 import { Route as ApiMarketplaceRouteImport } from './routes/api/marketplace'
 import { Route as ApiHomePlacementsRouteImport } from './routes/api/home-placements'
 import { Route as ApiChatRouteImport } from './routes/api/chat'
@@ -154,6 +155,11 @@ const ApiReaderStoryRoute = ApiReaderStoryRouteImport.update({
 const ApiReaderProfileImageRoute = ApiReaderProfileImageRouteImport.update({
   id: '/api/reader-profile-image',
   path: '/api/reader-profile-image',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiMyChatCharacterRoute = ApiMyChatCharacterRouteImport.update({
+  id: '/api/my-chat-character',
+  path: '/api/my-chat-character',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiMarketplaceRoute = ApiMarketplaceRouteImport.update({
@@ -421,6 +427,7 @@ export interface FileRoutesByFullPath {
   '/api/chat': typeof ApiChatRoute
   '/api/home-placements': typeof ApiHomePlacementsRoute
   '/api/marketplace': typeof ApiMarketplaceRoute
+  '/api/my-chat-character': typeof ApiMyChatCharacterRoute
   '/api/reader-profile-image': typeof ApiReaderProfileImageRoute
   '/api/reader-story': typeof ApiReaderStoryRoute
   '/api/story-rpg': typeof ApiStoryRpgRoute
@@ -483,6 +490,7 @@ export interface FileRoutesByTo {
   '/api/chat': typeof ApiChatRoute
   '/api/home-placements': typeof ApiHomePlacementsRoute
   '/api/marketplace': typeof ApiMarketplaceRoute
+  '/api/my-chat-character': typeof ApiMyChatCharacterRoute
   '/api/reader-profile-image': typeof ApiReaderProfileImageRoute
   '/api/reader-story': typeof ApiReaderStoryRoute
   '/api/story-rpg': typeof ApiStoryRpgRoute
@@ -548,6 +556,7 @@ export interface FileRoutesById {
   '/api/chat': typeof ApiChatRoute
   '/api/home-placements': typeof ApiHomePlacementsRoute
   '/api/marketplace': typeof ApiMarketplaceRoute
+  '/api/my-chat-character': typeof ApiMyChatCharacterRoute
   '/api/reader-profile-image': typeof ApiReaderProfileImageRoute
   '/api/reader-story': typeof ApiReaderStoryRoute
   '/api/story-rpg': typeof ApiStoryRpgRoute
@@ -613,6 +622,7 @@ export interface FileRouteTypes {
     | '/api/chat'
     | '/api/home-placements'
     | '/api/marketplace'
+    | '/api/my-chat-character'
     | '/api/reader-profile-image'
     | '/api/reader-story'
     | '/api/story-rpg'
@@ -675,6 +685,7 @@ export interface FileRouteTypes {
     | '/api/chat'
     | '/api/home-placements'
     | '/api/marketplace'
+    | '/api/my-chat-character'
     | '/api/reader-profile-image'
     | '/api/reader-story'
     | '/api/story-rpg'
@@ -739,6 +750,7 @@ export interface FileRouteTypes {
     | '/api/chat'
     | '/api/home-placements'
     | '/api/marketplace'
+    | '/api/my-chat-character'
     | '/api/reader-profile-image'
     | '/api/reader-story'
     | '/api/story-rpg'
@@ -798,6 +810,7 @@ export interface RootRouteChildren {
   ApiChatRoute: typeof ApiChatRoute
   ApiHomePlacementsRoute: typeof ApiHomePlacementsRoute
   ApiMarketplaceRoute: typeof ApiMarketplaceRoute
+  ApiMyChatCharacterRoute: typeof ApiMyChatCharacterRoute
   ApiReaderProfileImageRoute: typeof ApiReaderProfileImageRoute
   ApiReaderStoryRoute: typeof ApiReaderStoryRoute
   ApiStoryRpgRoute: typeof ApiStoryRpgRoute
@@ -936,6 +949,13 @@ declare module '@tanstack/react-router' {
       path: '/api/reader-profile-image'
       fullPath: '/api/reader-profile-image'
       preLoaderRoute: typeof ApiReaderProfileImageRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/my-chat-character': {
+      id: '/api/my-chat-character'
+      path: '/api/my-chat-character'
+      fullPath: '/api/my-chat-character'
+      preLoaderRoute: typeof ApiMyChatCharacterRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/marketplace': {
@@ -1413,6 +1433,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiChatRoute: ApiChatRoute,
   ApiHomePlacementsRoute: ApiHomePlacementsRoute,
   ApiMarketplaceRoute: ApiMarketplaceRoute,
+  ApiMyChatCharacterRoute: ApiMyChatCharacterRoute,
   ApiReaderProfileImageRoute: ApiReaderProfileImageRoute,
   ApiReaderStoryRoute: ApiReaderStoryRoute,
   ApiStoryRpgRoute: ApiStoryRpgRoute,

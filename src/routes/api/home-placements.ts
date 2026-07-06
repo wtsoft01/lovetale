@@ -103,7 +103,7 @@ async function listPublicPlacements(request: Request) {
   const storyIds = rows.map((row) => row.story_id);
   const { data: stories, error: storiesError } = await supabaseAdmin
     .from("user_stories")
-    .select("*")
+    .select("id,title,logline,cover_url,price_credits,user_id,audience,max_heat,tags,created_at,character_card,is_public,is_listed")
     .in("id", storyIds)
     .eq("is_public", true)
     .eq("is_listed", true);
@@ -124,7 +124,7 @@ async function listPublicPlacements(request: Request) {
 async function listAllPublicStories() {
   const { data: stories, error } = await supabaseAdmin
     .from("user_stories")
-    .select("*")
+    .select("id,title,logline,cover_url,price_credits,user_id,audience,max_heat,tags,created_at,character_card,is_public,is_listed")
     .eq("is_public", true)
     .eq("is_listed", true)
     .order("created_at", { ascending: false })

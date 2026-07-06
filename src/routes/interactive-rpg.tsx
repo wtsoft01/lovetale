@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { Gamepad2, ImageIcon, Loader2, Play, Search, Sparkles, WandSparkles } from "lucide-react";
 
+import { CoverImage } from "@/components/cover-image";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -132,7 +133,7 @@ function FeaturedStrip({ rpg }: { rpg: StoryRpg }) {
       className="group grid overflow-hidden rounded-2xl border border-border bg-card/50 transition hover:border-primary/45 md:grid-cols-[16rem_minmax(0,1fr)_8rem]"
     >
       <div className="relative aspect-[16/10] overflow-hidden md:aspect-auto">
-        <img src={rpg.cover} alt={rpg.title} className="size-full object-cover transition duration-500 group-hover:scale-105" />
+        <StoryRpgCover src={rpg.cover} alt={rpg.title} className="size-full object-cover transition duration-500 group-hover:scale-105" />
         <div className="absolute inset-0 bg-gradient-to-t from-black/70 to-transparent md:hidden" />
       </div>
       <div className="min-w-0 p-4">
@@ -175,7 +176,7 @@ function RpgCard({ rpg }: { rpg: StoryRpg }) {
       className="group overflow-hidden rounded-2xl border border-border bg-card/45 transition hover:-translate-y-0.5 hover:border-primary/45"
     >
       <div className="relative aspect-[4/3] overflow-hidden">
-        <img src={rpg.cover} alt={rpg.title} className="size-full object-cover transition duration-500 group-hover:scale-105" />
+        <StoryRpgCover src={rpg.cover} alt={rpg.title} className="size-full object-cover transition duration-500 group-hover:scale-105" />
         <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/15 to-transparent" />
         <Badge className="absolute left-2 top-2 border-0 bg-black/50 text-white backdrop-blur">
           <Gamepad2 className="mr-1 size-3" />
@@ -199,6 +200,19 @@ function RpgCard({ rpg }: { rpg: StoryRpg }) {
       </div>
     </Link>
   );
+}
+
+function StoryRpgCover({ src, alt, className }: { src?: string | null; alt: string; className?: string }) {
+  const fallbackClass =
+    "bg-[radial-gradient(circle_at_30%_20%,rgba(236,72,153,.32),transparent_34%),linear-gradient(135deg,#130812,#24101c_52%,#0b0710)]";
+  if (!src) {
+    return (
+      <div className={`${className ?? ""} grid place-items-center ${fallbackClass}`}>
+        <Gamepad2 className="size-9 text-white/35" />
+      </div>
+    );
+  }
+  return <CoverImage src={src} alt={alt} className={`${className ?? ""} ${fallbackClass}`} />;
 }
 
 function Metric({ label, value }: { label: string; value: string }) {

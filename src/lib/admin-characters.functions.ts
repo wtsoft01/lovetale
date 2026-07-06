@@ -4,8 +4,8 @@ import { createServerFn } from "@/lib/_mock/runtime";
 
 type UserStory = Pick<
   Database["public"]["Tables"]["user_stories"]["Row"],
-  "id" | "title" | "logline" | "cover_url" | "body_text" | "character_card" | "updated_at"
->;
+  "id" | "title" | "logline" | "cover_url" | "character_card" | "updated_at"
+> & { body_text?: string | null };
 type StoryUpdate = Database["public"]["Tables"]["user_stories"]["Update"];
 type AppRole = Database["public"]["Enums"]["app_role"];
 
@@ -17,6 +17,9 @@ export type StoryCharacter = {
   personality: string;
   relationship: string;
   speakingStyle: string;
+  replyPattern?: string;
+  llmPurpose?: string;
+  llmModel?: string;
   visualPrompt: string;
   avatarUrl: string | null;
   tags: string[];
@@ -51,6 +54,7 @@ export type CharacterStoryRow = {
     bodyChars: number;
     summary: string;
     characterAnalysisCount: number;
+    assetSlotCount: number;
   }>;
   characters: StoryCharacter[];
 };
@@ -225,6 +229,9 @@ function normalizeCharacter(character: Record<string, any>, index: number): Stor
     personality: asString(character.personality),
     relationship: asString(character.relationship ?? character.relation),
     speakingStyle: asString(character.speakingStyle ?? character.speaking_style),
+    replyPattern: asString(character.replyPattern ?? character.reply_pattern ?? character.chatGuidance ?? character.chat_guidance),
+    llmPurpose: asString(character.llmPurpose ?? character.llm_purpose, "chat"),
+    llmModel: asString(character.llmModel ?? character.llm_model),
     visualPrompt: asString(character.visualPrompt ?? character.visual_prompt ?? character.appearance),
     avatarUrl: asString(character.avatarUrl ?? character.avatar_url) || null,
     tags: asStringArray(character.tags),
@@ -389,6 +396,7 @@ function toStoryRow(story: UserStory): CharacterStoryRow {
       bodyChars: asString(chapter.body).length,
       summary: asString(chapter.summary),
       characterAnalysisCount: Array.isArray(chapter.characterAnalysis) ? chapter.characterAnalysis.length : 0,
+      assetSlotCount: Array.isArray(chapter.assetSlots) ? chapter.assetSlots.length : 0,
     })),
     characters,
   };
@@ -472,11 +480,11 @@ export const listPublicChatCharacters = createServerFn({ method: "GET" }).handle
   async (): Promise<PublicChatCharacterRow[]> => {
     const { data, error } = await supabase
       .from("user_stories")
-      .select("id,title,logline,cover_url,body_text,character_card,updated_at,is_public,is_listed")
+      .select("id,title,logline,cover_url,character_card,updated_at,is_public,is_listed")
       .eq("is_public", true)
       .eq("is_listed", true)
       .order("updated_at", { ascending: false })
-      .limit(500);
+      .limit(120);
 
     if (error) throw new Error(error.message);
 

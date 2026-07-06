@@ -418,7 +418,7 @@ function AdminStoryRpgPage() {
 
   const [sourceStoryId, setSourceStoryId] = useState("");
   const [q, setQ] = useState("");
-  const [maxScenes, setMaxScenes] = useState(18);
+  const [maxScenes, setMaxScenes] = useState(48);
   const [selectedRpgId, setSelectedRpgId] = useState("");
   const [activeStoryId, setActiveStoryId] = useState<string | null>(null);
   const [titleDraft, setTitleDraft] = useState("");
@@ -834,14 +834,14 @@ function AdminStoryRpgPage() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <label className="text-xs text-muted-foreground">생성 장면 수</label>
+            <label className="text-xs text-muted-foreground">목표 장면 수</label>
             <Input
               type="number"
-              min={6}
-              max={30}
+              min={12}
+              max={96}
               className="w-24"
               value={maxScenes}
-              onChange={(event) => setMaxScenes(Math.max(6, Math.min(30, Number(event.target.value) || 18)))}
+              onChange={(event) => setMaxScenes(Math.max(12, Math.min(96, Number(event.target.value) || 48)))}
             />
           </div>
         </div>

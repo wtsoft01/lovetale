@@ -41,11 +41,6 @@ function defaultImageModel(provider: string, configuredModel?: string | null) {
 
 function providerCanGenerateImages(provider: string, configuredModel?: string | null) {
   if (provider === "google") return true;
-  if (provider === "openai") return true;
-  if (provider === "openrouter") return /image|dall|gpt-image|imagen|flux|stable|sd/i.test(configuredModel ?? "");
-  if (provider === "custom" || provider === "lovable") {
-    return /image|dall|gpt-image|imagen|flux|stable|sd/i.test(configuredModel ?? "");
-  }
   return false;
 }
 
@@ -108,11 +103,10 @@ async function handlePost(request: Request) {
   );
   if (!providers.length) {
     return jsonError(
-      "이미지 생성용 LLM API가 없습니다. 관리자 LLM API 관리에서 Gemini Imagen 또는 OpenAI 이미지 모델을 image_generation 용도로 활성화해 주세요.",
+      "이미지 생성은 관리자 LLM API에 등록된 Gemini 이미지 API만 사용합니다. Google provider를 image_generation 용도로 활성화해 주세요.",
       503,
     );
   }
-
   let lastError = "";
   for (const row of providers) {
     const model = defaultImageModel(row.provider, row.model);

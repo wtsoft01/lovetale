@@ -88,7 +88,7 @@ const PROVIDER_PRESETS: Array<{
     baseUrl: "https://api.openai.com/v1",
     keyHint: "sk-...",
     priority: 100,
-    usagePurposes: ["general_chat", "image_generation"],
+    usagePurposes: ["general_chat"],
   },
   {
     label: "Google Gemini",

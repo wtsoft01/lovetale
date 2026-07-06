@@ -54,6 +54,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { resolveStoryMediaSource } from "@/lib/story-media-url";
 import { cn } from "@/lib/utils";
 import charEden from "@/assets/char-eden.jpg";
 import charHayoung from "@/assets/char-hayoung.jpg";
@@ -464,18 +465,19 @@ function TextBlock({
 function useSignedMedia(path: string | null) {
   const [url, setUrl] = useState<string | null>(null);
   useEffect(() => {
-    if (!path) {
+    const source = resolveStoryMediaSource(path);
+    if (!source) {
       setUrl(null);
       return;
     }
-    if (/^(https?:|data:|blob:|\/)/.test(path)) {
-      setUrl(path);
+    if (source.kind === "direct") {
+      setUrl(source.url);
       return;
     }
     let cancelled = false;
     supabase.storage
       .from("story-media")
-      .createSignedUrl(path, 60 * 60)
+      .createSignedUrl(source.path, 60 * 60)
       .then(({ data }) => !cancelled && setUrl(data?.signedUrl ?? null))
       .catch(() => !cancelled && setUrl(null));
     return () => {

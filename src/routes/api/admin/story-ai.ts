@@ -247,6 +247,93 @@ function collectGroundedCharacterNames(row: any, chapter: ReturnType<typeof buil
   return names;
 }
 
+function excerptAroundOffset(text: string, offset: unknown, radius = 180) {
+  const point = Math.max(0, Math.min(text.length, Number(offset) || 0));
+  const start = Math.max(0, point - radius);
+  const end = Math.min(text.length, point + radius);
+  return text.slice(start, end).replace(/\s+/g, " ").trim();
+}
+
+function assetTierMinAffection(tier: string) {
+  if (tier === "warm") return 25;
+  if (tier === "spicy") return 50;
+  if (tier === "steamy") return 75;
+  if (tier === "premium") return 90;
+  return 0;
+}
+
+function buildCharacterAssetContext(chapter: ReturnType<typeof buildChaptersFromRow>[number]) {
+  const body = String(chapter.body ?? "");
+  return (Array.isArray(chapter.assetSlots) ? chapter.assetSlots : [])
+    .map((slot, index) => ({
+      slotId: String(slot.id || `slot_${index + 1}`),
+      offset: Math.max(0, Number(slot.offset) || 0),
+      heatTier: normalizeTier(slot.heat_tier),
+      mediaUrl: typeof slot.media_url === "string" ? slot.media_url : null,
+      mediaAssetId: typeof slot.media_asset_id === "string" ? slot.media_asset_id : null,
+      mediaType: slot.media_type === "video" ? "video" : "image",
+      caption: compactText(slot.caption, 180),
+      sceneDescription: compactText(slot.scene_description, 320),
+      source: slot.source,
+      textAround: excerptAroundOffset(body, slot.offset),
+    }))
+    .filter((slot) => slot.mediaUrl || slot.mediaAssetId || slot.sceneDescription || slot.caption)
+    .slice(0, 80);
+}
+
+function assetSlotToShowcaseAsset(slot: Record<string, any>, reason = "") {
+  const mediaUrl = compactText(slot.mediaUrl ?? slot.media_url ?? slot.mediaAssetId ?? slot.media_asset_id, 500);
+  const mediaType = slot.mediaType === "video" || slot.media_type === "video" ? "video" : "image";
+  const tier = normalizeTier(slot.heatTier ?? slot.heat_tier);
+  return {
+    id: compactText(slot.slotId ?? slot.id, 120) || newId("char_asset"),
+    tier,
+    minAffection: assetTierMinAffection(tier),
+    mediaUrl: mediaUrl || null,
+    mediaType,
+    caption:
+      compactText(slot.caption, 160) ||
+      compactText(slot.sceneDescription ?? slot.scene_description, 160) ||
+      compactText(reason, 160) ||
+      "캐릭터 에셋",
+  };
+}
+
+function mergeCharacterShowcaseAssets(currentAssets: unknown, analyzedAssets: unknown, matchedSlots: Record<string, any>[]) {
+  const map = new Map<string, Record<string, any>>();
+  for (const asset of safeArray(currentAssets)) {
+    const row = recordOf(asset);
+    const key = compactText(row.mediaUrl ?? row.media_url ?? row.id, 500);
+    if (key) map.set(key, row);
+  }
+  for (const asset of safeArray(analyzedAssets)) {
+    const row = recordOf(asset);
+    const normalized = assetSlotToShowcaseAsset(row, compactText(row.reason, 160));
+    const key = compactText(normalized.mediaUrl ?? normalized.id, 500);
+    if (key && !map.has(key)) map.set(key, normalized);
+  }
+  for (const slot of matchedSlots) {
+    const normalized = assetSlotToShowcaseAsset(slot);
+    const key = compactText(normalized.mediaUrl ?? normalized.id, 500);
+    if (key && !map.has(key)) map.set(key, normalized);
+  }
+  return [...map.values()].slice(0, 20);
+}
+
+function matchSlotsForCharacter(name: string, assetContext: Record<string, any>[], assetHints: unknown) {
+  const key = normalizeNameKey(name);
+  const hintedIds = new Set(
+    safeArray(assetHints)
+      .map((hint) => compactText(recordOf(hint).slotId ?? recordOf(hint).id, 120))
+      .filter(Boolean),
+  );
+  return assetContext.filter((slot) => {
+    if (hintedIds.has(compactText(slot.slotId, 120))) return true;
+    const haystack = `${slot.caption ?? ""} ${slot.sceneDescription ?? ""} ${slot.textAround ?? ""}`;
+    return key && normalizeNameKey(haystack).includes(key);
+  });
+}
+
 function hasGroundedCharacterEvidence(character: Record<string, any>, groundedNames: Set<string>, chapterBody: string) {
   const name = normalizeCharacterName(character.name);
   const key = normalizeNameKey(name);
@@ -285,6 +372,21 @@ function normalizeCharacterResult(item: Record<string, any>, index: number) {
     traits,
     evidence: compactText(item.evidence, 280),
     chatGuidance: compactText(item.chatGuidance, 900),
+    assetHints: safeArray(item.assetHints ?? item.asset_hints)
+      .map((hint) => {
+        const row = recordOf(hint);
+        return {
+          slotId: compactText(row.slotId ?? row.id, 120),
+          reason: compactText(row.reason, 240),
+          usage: compactText(row.usage, 120),
+        };
+      })
+      .filter((hint) => hint.slotId || hint.reason)
+      .slice(0, 12),
+    showcaseAssets: safeArray(item.showcaseAssets ?? item.showcase_assets ?? item.visualAssets)
+      .map((asset) => assetSlotToShowcaseAsset(recordOf(asset), compactText(recordOf(asset).reason, 160)))
+      .filter((asset) => asset.mediaUrl)
+      .slice(0, 12),
   };
 }
 
@@ -294,6 +396,7 @@ function normalizeNameKey(name: string) {
 
 function mergeAnalyzedCharactersIntoCard(card: Record<string, any>, chapter: any, result: Awaited<ReturnType<typeof analyzeCharactersWithLlm>>) {
   const existing = Array.isArray(card.characters) ? card.characters : [];
+  const assetContext = Array.isArray(result.assetContext) ? result.assetContext : [];
   const byName = new Map<string, any>();
   for (const character of existing) {
     const name = compactText(character?.name ?? character?.title, 80);
@@ -307,6 +410,7 @@ function mergeAnalyzedCharactersIntoCard(card: Record<string, any>, chapter: any
     const current = byName.get(key) ?? {};
     const matchingInsight =
       result.characterAnalysis.find((item) => normalizeNameKey(String(item.name ?? "")) === key) ?? analyzed;
+    const matchedSlots = matchSlotsForCharacter(name, assetContext, analyzed.assetHints);
     const chapterInsights = Array.isArray(current.chapterInsights) ? current.chapterInsights : [];
     const nextInsights = [
       ...chapterInsights.filter((item: any) => item.chapterId !== chapter.id),
@@ -320,6 +424,7 @@ function mergeAnalyzedCharactersIntoCard(card: Record<string, any>, chapter: any
         relationship: matchingInsight.relationship,
         evidence: matchingInsight.evidence,
         chatGuidance: matchingInsight.chatGuidance,
+        assetHints: analyzed.assetHints ?? [],
       },
     ].slice(-20);
 
@@ -336,6 +441,7 @@ function mergeAnalyzedCharactersIntoCard(card: Record<string, any>, chapter: any
       visualPrompt: current.visualPrompt || analyzed.visualPrompt,
       appearance: current.appearance || current.visualPrompt || analyzed.visualPrompt,
       avatarUrl: current.avatarUrl || analyzed.avatarUrl || null,
+      showcaseAssets: mergeCharacterShowcaseAssets(current.showcaseAssets, analyzed.showcaseAssets, matchedSlots),
       chatEnabled: current.chatEnabled ?? true,
       reusable: current.reusable ?? true,
       chapterInsights: nextInsights,
@@ -371,6 +477,7 @@ async function analyzeCharactersWithLlm(row: any, chapter: ReturnType<typeof bui
   const existingCharacters = Array.isArray(card.characters) ? card.characters : [];
   const groundedNames = collectGroundedCharacterNames(row, chapter);
   if (!groundedNames.size) return { characterAnalysis: [], characters: [] };
+  const assetContext = buildCharacterAssetContext(chapter);
   const { chatWithRotation } = await import("@/lib/llm-router.server");
   const result = await chatWithRotation({
     purpose: "summary",
@@ -382,6 +489,7 @@ async function analyzeCharactersWithLlm(row: any, chapter: ReturnType<typeof bui
         content: [
           "You are Lovetale's character continuity analyst.",
           "Read Korean web-novel chapters and extract only important recurring or scene-driving characters.",
+          "Use both text evidence and already-inserted image/video asset slots as production evidence.",
           "Return ONLY valid JSON. No markdown. No commentary.",
           "Never invent character names. Use only names explicitly grounded in the chapter text or existing character list.",
           "If the chapter has no grounded character names, return empty arrays.",
@@ -393,16 +501,19 @@ async function analyzeCharactersWithLlm(row: any, chapter: ReturnType<typeof bui
         role: "user",
         content: [
           "Return JSON object with fields:",
-          "characters: array of objects {id,name,role,persona,personality,relationship,speakingStyle,visualPrompt,tags,isPrimary,chatEnabled,reusable,emotion,attitude,traits,evidence,chatGuidance}",
-          "characterAnalysis: array of objects {id,name,role,emotion,attitude,traits,relationship,evidence,chatGuidance}",
+          "characters: array of objects {id,name,role,persona,personality,relationship,speakingStyle,visualPrompt,tags,isPrimary,chatEnabled,reusable,emotion,attitude,traits,evidence,chatGuidance,assetHints,showcaseAssets}",
+          "characterAnalysis: array of objects {id,name,role,emotion,attitude,traits,relationship,evidence,chatGuidance,assetHints}",
           "",
           "Rules:",
           "- Analyze the actual chapter text, dialogue labels, honorifics, actions, and relationships.",
+          "- Analyze ASSET_SLOTS_JSON too. Slot textAround, caption, sceneDescription, and heatTier can reveal which character the asset belongs to.",
           "- A valid name must appear in a dialogue label, direct address, speech attribution, existing registered character data, or the chapter body.",
           "- evidence must quote or closely paraphrase the exact sentence that proves this character appears or speaks.",
+          "- assetHints must be an array of {slotId, reason, usage}. Only reference slotIds that exist in ASSET_SLOTS_JSON.",
+          "- showcaseAssets must be an array of {id,mediaUrl,mediaType,tier,minAffection,caption}. Use existing mediaUrl/mediaAssetId from ASSET_SLOTS_JSON when the slot visually belongs to the character.",
           "- persona: stable backstory, desire, emotional wound, relationship to the reader/protagonist.",
           "- speakingStyle: concrete Korean speaking rules, tone, sentence length, honorific/plain speech tendency.",
-          "- visualPrompt: concise image generation prompt for an adult manga/webtoon-style portrait; include hair, face, mood, clothes if grounded.",
+          "- visualPrompt: concise image generation prompt for an adult manga/webtoon-style portrait; include hair, face, body impression, mood, clothes, and asset-consistent visual details if grounded.",
           "- chatGuidance: how the character should answer the user in this exact episode context.",
           "- Keep output Korean except technical ids.",
           "- Maximum 6 characters. Put the main chat partner first.",
@@ -412,6 +523,7 @@ async function analyzeCharactersWithLlm(row: any, chapter: ReturnType<typeof bui
           `STORY_OVERVIEW: ${card.storyOverview ?? ""}`,
           `EXISTING_CHARACTERS_JSON: ${JSON.stringify(existingCharacters).slice(0, 5000)}`,
           `GROUNDED_NAME_CANDIDATES: ${JSON.stringify([...groundedNames])}`,
+          `ASSET_SLOTS_JSON: ${JSON.stringify(assetContext).slice(0, 20000)}`,
           `CHAPTER: ${chapter.episodeNumber}화 ${chapter.title}`,
           `CHAPTER_SUMMARY: ${chapter.summary ?? ""}`,
           "",
@@ -443,6 +555,7 @@ async function analyzeCharactersWithLlm(row: any, chapter: ReturnType<typeof bui
         relationship: source.relationship,
         evidence: source.evidence,
         chatGuidance: source.chatGuidance,
+        assetHints: source.assetHints ?? [],
       };
     })
     .filter(Boolean) as Array<Record<string, any>>;
@@ -460,8 +573,188 @@ async function analyzeCharactersWithLlm(row: any, chapter: ReturnType<typeof bui
           relationship: character.relationship,
           evidence: character.evidence,
           chatGuidance: character.chatGuidance,
+          assetHints: character.assetHints ?? [],
         })),
     characters,
+    providerLabel: result.providerLabel,
+    model: result.model,
+    tokensUsed: result.tokensUsed,
+    assetContext,
+  };
+}
+
+async function generateSingleCharacterWithLlm(
+  row: any,
+  chapter: ReturnType<typeof buildChaptersFromRow>[number],
+  draftCharactersInput: unknown,
+) {
+  const body = String(chapter.body ?? "").trim();
+  if (body.length < 80) return { character: null, reason: "본문이 짧아 캐릭터를 추출할 수 없습니다." };
+
+  const card = recordOf(row?.character_card);
+  const registeredCharacters = Array.isArray(card.characters) ? card.characters : [];
+  const draftCharacters = safeArray(draftCharactersInput).map(recordOf);
+  const existingCharacters = [...registeredCharacters, ...draftCharacters]
+    .map((character) => ({
+      id: compactText(character.id, 120),
+      name: compactText(character.name ?? character.title, 80),
+      role: compactText(character.role, 120),
+      relationship: compactText(character.relationship, 220),
+      persona: compactText(character.persona ?? character.personality ?? character.notes, 420),
+    }))
+    .filter((character) => character.name);
+  const existingNameKeys = new Set(existingCharacters.map((character) => normalizeNameKey(character.name)));
+  const groundedNames = collectGroundedCharacterNames(row, chapter);
+  const assetContext = buildCharacterAssetContext(chapter);
+  const { chatWithRotation } = await import("@/lib/llm-router.server");
+
+  const result = await chatWithRotation({
+    purpose: "summary",
+    temperature: 0.12,
+    maxTokens: 1800,
+    messages: [
+      {
+        role: "system",
+        content: [
+          "You are Lovetale's senior character bible editor.",
+          "Your task is to create exactly one high-confidence character profile from a Korean story chapter.",
+          "Return ONLY valid JSON. No markdown. No commentary.",
+          "Never invent names, jobs, relationships, or visual details. Every important field must be grounded in the story text, existing character data, or asset slot context.",
+          "Prefer a named character who appears, speaks, is addressed, or drives the scene.",
+          "Do not return generic labels as names: 주인공, 상대주인공, 캐릭터, 등장인물, 남자, 여자, 그, 그녀, CEO, 상사, 비서, 회장, 사장.",
+          "If every suitable character is already in EXISTING_CHARACTERS_JSON, return {\"character\": null, \"reason\": \"...\"}.",
+        ].join("\n"),
+      },
+      {
+        role: "user",
+        content: [
+          "Choose ONE character only.",
+          "Return JSON object:",
+          "{",
+          '  "character": {',
+          '    "id": string,',
+          '    "name": string,',
+          '    "role": string,',
+          '    "persona": string,',
+          '    "personality": string,',
+          '    "relationship": string,',
+          '    "speakingStyle": string,',
+          '    "visualPrompt": string,',
+          '    "tags": string[],',
+          '    "isPrimary": boolean,',
+          '    "chatEnabled": true,',
+          '    "reusable": true,',
+          '    "emotion": string,',
+          '    "attitude": string,',
+          '    "traits": string[],',
+          '    "evidence": string,',
+          '    "chatGuidance": string,',
+          '    "assetHints": [{"slotId": string, "reason": string, "usage": string}],',
+          '    "showcaseAssets": [{"id": string, "mediaUrl": string, "mediaType": "image"|"video", "tier": string, "minAffection": number, "caption": string}]',
+          "  },",
+          '  "characterAnalysis": {"id": string, "name": string, "role": string, "emotion": string, "attitude": string, "traits": string[], "relationship": string, "evidence": string, "chatGuidance": string, "assetHints": []},',
+          '  "reason": string',
+          "}",
+          "",
+          "Selection rules:",
+          "- Exclude names already listed in EXISTING_CHARACTERS_JSON unless no other grounded character exists.",
+          "- If several candidates exist, choose the one most useful for AI chat: strongest relationship tension, recurring role, distinctive voice, or clear emotional agenda.",
+          "- name must appear in CHAPTER_TEXT, GROUNDED_NAME_CANDIDATES, or EXISTING_CHARACTERS_JSON.",
+          "- role must be story-specific, not generic. Example: '주인공의 계약상 상사이자 감정적으로 압박하는 남자 주인공'.",
+          "- relationship must describe the relation to the protagonist/user and the current emotional power balance.",
+          "- persona must include desire, wound/fear, behavioral pattern, and boundary for staying in character.",
+          "- speakingStyle must be concrete Korean chat rules: 존댓말/반말, sentence length, teasing/directness, taboo words or habits.",
+          "- visualPrompt must be an adult original manga/webtoon portrait prompt with grounded hair, face, build, clothes, mood, and no copyrighted/person references.",
+          "- evidence must quote or closely paraphrase the exact proof from the chapter.",
+          "- Keep all prose Korean except ids.",
+          "",
+          `STORY_TITLE: ${row.title ?? ""}`,
+          `STORY_LOGLINE: ${row.logline ?? ""}`,
+          `STORY_OVERVIEW: ${card.storyOverview ?? ""}`,
+          `EXISTING_CHARACTERS_JSON: ${JSON.stringify(existingCharacters).slice(0, 8000)}`,
+          `GROUNDED_NAME_CANDIDATES: ${JSON.stringify([...groundedNames])}`,
+          `ASSET_SLOTS_JSON: ${JSON.stringify(assetContext).slice(0, 16000)}`,
+          `CHAPTER: ${chapter.episodeNumber} ${chapter.title}`,
+          `CHAPTER_SUMMARY: ${chapter.summary ?? ""}`,
+          "",
+          "CHAPTER_TEXT:",
+          body.slice(0, 32000),
+        ].join("\n"),
+      },
+    ],
+  });
+
+  const parsed = parseJsonObject(result.text);
+  const rawCharacter = recordOf(parsed.character ?? parsed);
+  if (!rawCharacter.name) {
+    return {
+      character: null,
+      reason: compactText(parsed.reason, 240) || "새로 추가할 만한 캐릭터를 찾지 못했습니다.",
+      providerLabel: result.providerLabel,
+      model: result.model,
+      tokensUsed: result.tokensUsed,
+    };
+  }
+
+  const character = normalizeCharacterResult(rawCharacter, 0);
+  if (!character) {
+    return {
+      character: null,
+      reason: "AI가 반환한 이름이 캐릭터 이름으로 적합하지 않습니다.",
+      providerLabel: result.providerLabel,
+      model: result.model,
+      tokensUsed: result.tokensUsed,
+    };
+  }
+
+  const name = String(character.name ?? "");
+  const nameKey = normalizeNameKey(name);
+  const isExisting = existingNameKeys.has(nameKey);
+  const groundedByCandidate = [...groundedNames].some((candidate) => normalizeNameKey(candidate) === nameKey);
+  const groundedByBody = Boolean(name && body.includes(name));
+  if (!isExisting && !groundedByCandidate && !groundedByBody) {
+    return {
+      character: null,
+      reason: "본문에서 검증되는 캐릭터 이름을 찾지 못했습니다.",
+      providerLabel: result.providerLabel,
+      model: result.model,
+      tokensUsed: result.tokensUsed,
+    };
+  }
+  if (isExisting) {
+    return {
+      character: null,
+      reason: `${name}은 이미 캐릭터 목록에 있습니다. 다른 회차를 선택하거나 기존 캐릭터를 저장해 주세요.`,
+      providerLabel: result.providerLabel,
+      model: result.model,
+      tokensUsed: result.tokensUsed,
+    };
+  }
+
+  const matchedSlots = matchSlotsForCharacter(name, assetContext, character.assetHints);
+  const normalizedCharacter = {
+    ...character,
+    id: character.id || newId("char"),
+    showcaseAssets: mergeCharacterShowcaseAssets(character.showcaseAssets, [], matchedSlots),
+  };
+  const analysisSource = recordOf(parsed.characterAnalysis);
+  const normalizedAnalysis = {
+    id: compactText(analysisSource.id, 120) || `char_insight_${chapter.id}_${normalizedCharacter.id}`,
+    name: normalizedCharacter.name,
+    role: compactText(analysisSource.role, 120) || normalizedCharacter.role,
+    emotion: compactText(analysisSource.emotion, 160) || normalizedCharacter.emotion,
+    attitude: compactText(analysisSource.attitude, 240) || normalizedCharacter.attitude,
+    traits: safeArray(analysisSource.traits).length ? safeArray(analysisSource.traits) : normalizedCharacter.traits,
+    relationship: compactText(analysisSource.relationship, 500) || normalizedCharacter.relationship,
+    evidence: compactText(analysisSource.evidence, 280) || normalizedCharacter.evidence,
+    chatGuidance: compactText(analysisSource.chatGuidance, 900) || normalizedCharacter.chatGuidance,
+    assetHints: safeArray(analysisSource.assetHints).length ? safeArray(analysisSource.assetHints) : normalizedCharacter.assetHints ?? [],
+  };
+
+  return {
+    character: normalizedCharacter,
+    characterAnalysis: normalizedAnalysis,
+    reason: compactText(parsed.reason, 240),
     providerLabel: result.providerLabel,
     model: result.model,
     tokensUsed: result.tokensUsed,
@@ -599,7 +892,14 @@ async function generateAsset(request: Request, userId: string, body: Record<stri
 
   const { chapter } = await getStoryAndChapter(storyId, chapterId);
   const { listActiveAdminProviders, recordAdminUsage } = await import("@/lib/admin-ai-provider.server");
-  const providers = await listActiveAdminProviders(purposeForKind(kind));
+  const providers = (await listActiveAdminProviders(purposeForKind(kind))).filter((row) => row.provider === "google");
+  if (!providers.length) {
+    throw new Error(
+      kind === "video"
+        ? "영상 생성은 관리자 LLM API에 등록된 Gemini/Veo API만 사용합니다. Google provider를 video_generation 용도로 활성화해 주세요."
+        : "이미지 생성은 관리자 LLM API에 등록된 Gemini 이미지 API만 사용합니다. Google provider를 image_generation 용도로 활성화해 주세요.",
+    );
+  }
   if (!providers.length) throw new Error("사용 가능한 이미지/영상 생성 API가 없습니다. /admin/llm에서 사용처를 확인하세요.");
 
   let generatedPath: string | null = null;
@@ -787,6 +1087,12 @@ function compactStoryRpgText(value: unknown, maxChars = 1200) {
   return String(value ?? "").replace(/\s+/g, " ").trim().slice(0, maxChars);
 }
 
+function estimateStoryRpgSceneBudget(chapters: ReturnType<typeof buildStoryRpgChapters>, requestedScenes: number) {
+  const totalBodyLength = chapters.reduce((sum, chapter) => sum + chapter.body.length, 0);
+  const sourceDrivenMinimum = Math.max(chapters.length * 3, Math.ceil(totalBodyLength / 3500));
+  return Math.max(24, Math.min(96, Math.max(requestedScenes, sourceDrivenMinimum)));
+}
+
 function buildStoryRpgChapters(row: any) {
   return buildChaptersFromRow(row)
     .map((chapter) => ({
@@ -832,7 +1138,7 @@ function buildCompactStoryRpgBriefs(chapters: ReturnType<typeof buildStoryRpgCha
     title: chapter.title,
     currentSummary: chapter.summary,
     bodyLength: chapter.body.length,
-    sourceExcerpt: balancedStoryRpgExcerpt(chapter.body, 2600),
+    sourceExcerpt: balancedStoryRpgExcerpt(chapter.body, 9000),
   }));
 }
 
@@ -880,7 +1186,9 @@ function storyRpgSystemPrompt() {
     "You are Lovetale's StoryRPG scenario director.",
     "Your job is to convert a registered Korean adult-romance web-novel into an interactive story game driven by user choices.",
     "Keep the original tone, relationship tension, character motives, speaking style, pacing, and emotional stakes.",
-    "Do not copy long passages verbatim. Recompose the material into game scenes and choice branches.",
+    "Do not arbitrarily shorten, summarize away, or skip important source events. Preserve the full story arc and transform it into playable branches.",
+    "Do not use episode/chapter structure as the game structure. Episode numbers are source metadata only; the player experiences one continuous scenario.",
+    "Do not copy long passages verbatim. Recompose the material into game scenes and choice branches while keeping the source amount, mood, and dramatic density.",
     "Adult themes may be represented as mature tension, desire, jealousy, power dynamics, and consequences, but do not create illegal, underage, coercive, or graphic sexual abuse content.",
     "Return only valid JSON. No markdown, no commentary.",
   ].join("\n");
@@ -927,7 +1235,7 @@ async function generateContinuousStoryRpgScenario(
 ) {
   const result = await callStoryRpgProvider(provider, {
     temperature: 0.78,
-    maxTokens: 5000,
+    maxTokens: 16000,
     messages: [
       { role: "system", content: storyRpgSystemPrompt() },
       {
@@ -935,10 +1243,13 @@ async function generateContinuousStoryRpgScenario(
         content: [
           "Create one continuous StoryRPG scenario from the whole story analysis.",
           "Do not divide the game by the original episode numbers. The player should move from opening to endings through choices.",
+          "Do not reduce the registered story into a short digest. The scenario must feel like a full-length playable adaptation.",
+          "Use the requested scene budget as a planning target, not as an excuse to cut the story. Cover all major source beats, character shifts, conflicts, clues, emotional reversals, and payoff scenes.",
+          "For each important choice, write enough follow-up scenario content so each branch feels like a real route, not a one-line consequence.",
           "Make the story exciting, emotionally sticky, and provocative in tone while preserving the registered story's atmosphere.",
-          "Each scene text should be around 350-900 Korean characters.",
+          "Each scene text should usually be 900-2200 Korean characters. Climactic or route-defining scenes may be longer.",
           "Each non-ending scene should have 2-3 choices, and every choice must point to an existing nextSceneId.",
-          `Create up to ${maxScenes} scenes, covering opening, escalation, crisis, relationship shift, and at least 2 endings.`,
+          `Create around ${maxScenes} scenes when the story volume supports it, covering opening, escalation, crisis, relationship shift, branch routes, and at least 2 endings.`,
           "",
           "Return JSON:",
           "{",
@@ -970,6 +1281,8 @@ async function generateContinuousStoryRpgScenario(
           "- Use only character names grounded in the registered story analysis.",
           "- End scenes may have an empty choices array.",
           "- Choice result must be a short hook that makes the next scene feel meaningful.",
+          "- Do not expose episode labels such as '1화' or 'Episode' as route structure.",
+          "- If the source excerpt is long, prioritize continuity and route volume over short summaries.",
           "",
           `STORY_ID: ${row.id}`,
           `STORY_TITLE: ${row.title ?? ""}`,
@@ -977,7 +1290,7 @@ async function generateContinuousStoryRpgScenario(
           `CHAPTER_COUNT: ${chapters.length}`,
           "",
           "WHOLE_STORY_BRIEFS_JSON:",
-          JSON.stringify(briefs).slice(0, 70000),
+          JSON.stringify(briefs).slice(0, 200000),
         ].join("\n"),
       },
     ],
@@ -989,9 +1302,9 @@ function normalizeStoryRpgChoice(choice: unknown, index: number, fallbackNextSce
   const source = recordOf(choice);
   return {
     label: compactStoryRpgText(source.label, 80) || `${index + 1}번 선택`,
-    effect: compactStoryRpgText(source.effect, 80) || "관계 변화",
+    effect: compactStoryRpgText(source.effect, 120) || "관계 변화",
     tone: compactStoryRpgText(source.tone, 40) || "선택",
-    result: compactStoryRpgText(source.result, 500) || "선택에 따라 다음 장면의 분위기가 달라집니다.",
+    result: compactStoryRpgText(source.result, 1200) || "선택에 따라 다음 장면의 분위기가 달라집니다.",
     routeHint: compactStoryRpgText(source.routeHint || source.route, 80) || "Main Route",
     nextSceneId: compactStoryRpgText(source.nextSceneId || source.nextScene, 80) || fallbackNextSceneId || undefined,
     affectionDelta: clampStoryRpgDelta(source.affectionDelta, 1),
@@ -1018,10 +1331,10 @@ function normalizeStoryRpgScenario(
     return {
       id,
       title: compactStoryRpgText(source.title, 100) || `장면 ${index + 1}`,
-      text: compactStoryRpgText(source.text || source.body, 1800) || "다음 선택을 기다리는 장면입니다.",
-      partnerLine: compactStoryRpgText(source.partnerLine || source.line, 300) || "지금 네 선택을 기다리고 있어.",
-      goal: compactStoryRpgText(source.goal, 180) || undefined,
-      mood: compactStoryRpgText(source.mood, 120) || undefined,
+      text: compactStoryRpgText(source.text || source.body, 7000) || "다음 선택을 기다리는 장면입니다.",
+      partnerLine: compactStoryRpgText(source.partnerLine || source.line, 700) || "지금 네 선택을 기다리고 있어.",
+      goal: compactStoryRpgText(source.goal, 260) || undefined,
+      mood: compactStoryRpgText(source.mood, 180) || undefined,
       choices: safeArray(source.choices).slice(0, 4).map((choice, choiceIndex) => normalizeStoryRpgChoice(choice, choiceIndex, nextFallback)),
     };
   });
@@ -1108,17 +1421,28 @@ function buildLocalStoryRpgScenario(row: any, chapters: ReturnType<typeof buildS
   const card = recordOf(row.character_card);
   const characters = safeArray(card.characters);
   const primary = recordOf(characters[0]);
-  const sceneSources = chapters.slice(0, Math.max(4, Math.min(maxScenes, 14)));
-  const scenes = sceneSources.map((chapter, index) => {
+  const sceneSources = chapters
+    .flatMap((chapter) => {
+      const chunkCount = Math.max(1, Math.ceil(chapter.body.length / 7000));
+      const chunkSize = Math.ceil(chapter.body.length / chunkCount);
+      return Array.from({ length: chunkCount }, (_, chunkIndex) => ({
+        chapter,
+        chunkIndex,
+        chunkCount,
+        excerpt: balancedStoryRpgExcerpt(chapter.body.slice(chunkIndex * chunkSize, (chunkIndex + 1) * chunkSize), 1800),
+      }));
+    })
+    .slice(0, maxScenes);
+  const scenes = sceneSources.map((source, index) => {
+    const chapter = source.chapter;
     const id = index === 0 ? "opening-awakening" : `scene-${index + 1}`;
     const nextId = index < sceneSources.length - 1 ? `scene-${index + 2}` : undefined;
-    const excerpt = balancedStoryRpgExcerpt(chapter.body, 900);
     return {
       id,
       title: chapter.title || `장면 ${index + 1}`,
       goal: index === 0 ? "상황을 파악하고 첫 선택을 한다" : "관계의 다음 균열을 선택한다",
       mood: index % 3 === 0 ? "낯섦과 긴장" : index % 3 === 1 ? "위험한 끌림" : "흔들리는 신뢰",
-      text: excerpt,
+      text: source.excerpt,
       partnerLine:
         index === 0
           ? `${compactStoryRpgText(primary.name, 40) || "상대"}가 당신의 반응을 조용히 기다린다.`
@@ -1189,9 +1513,11 @@ function buildLocalStoryRpgScenario(row: any, chapters: ReturnType<typeof buildS
 
 async function generateAndSaveStoryRpgScenario(row: any, maxScenesInput: unknown) {
   const maxScenesNumber = Number(maxScenesInput);
-  const maxScenes = Number.isFinite(maxScenesNumber) && maxScenesNumber > 8 ? Math.min(36, Math.floor(maxScenesNumber)) : 24;
+  const requestedScenes = Number.isFinite(maxScenesNumber) && maxScenesNumber > 8 ? Math.floor(maxScenesNumber) : 48;
   const chapters = buildStoryRpgChapters(row);
   if (!chapters.length) throw new Error("StoryRPG로 변환할 회차 본문이 없습니다.");
+
+  const maxScenes = estimateStoryRpgSceneBudget(chapters, requestedScenes);
 
   const provider = await selectDeepSeekStoryRpgProvider();
   const briefs = buildCompactStoryRpgBriefs(chapters);
@@ -1202,7 +1528,7 @@ async function generateAndSaveStoryRpgScenario(row: any, maxScenesInput: unknown
   try {
     const generated = await withTimeout(
       generateContinuousStoryRpgScenario(provider, row, chapters, briefs, maxScenes),
-      45000,
+      90000,
       "DeepSeek StoryRPG generation",
     );
     parsed = generated.parsed;
@@ -1314,6 +1640,12 @@ async function handlePost(request: Request) {
       } as any)
       .eq("id", storyId);
     if (error) throw new Error(error.message);
+    return Response.json({ ok: true, ...result });
+  }
+
+  if (action === "generate_single_character") {
+    const { row, chapter } = await getStoryAndChapter(storyId, chapterId);
+    const result = await generateSingleCharacterWithLlm(row, chapter, body.existingCharacters);
     return Response.json({ ok: true, ...result });
   }
 

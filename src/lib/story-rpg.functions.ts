@@ -1,6 +1,6 @@
 ﻿import { createServerFn } from "@/lib/_mock/runtime";
 import { supabase } from "@/integrations/supabase/client";
-import { storyRpgFallbackImages, type StoryRpg, type StoryRpgChoice, type StoryRpgScene } from "@/lib/story-rpg-data";
+import { storyRpgFallbackImages, type StoryRpg, type StoryRpgAsset, type StoryRpgChoice, type StoryRpgScene } from "@/lib/story-rpg-data";
 
 type ApiPayload<T> = { ok: true } & T;
 
@@ -49,6 +49,52 @@ function normalizeChoice(value: Record<string, any>, index: number): StoryRpgCho
     tensionDelta: asNumber(value.tensionDelta, 0),
     trustDelta: asNumber(value.trustDelta, 1),
   };
+}
+
+const TIER_MIN_AFFECTION: Record<StoryRpgAsset["tier"], number> = {
+  soft: 0,
+  warm: 35,
+  spicy: 65,
+  steamy: 85,
+  premium: 95,
+};
+
+function normalizeAsset(value: Record<string, any>, index: number, fallbackTier: StoryRpgAsset["tier"] = "soft"): StoryRpgAsset | null {
+  const url = asText(value.media_url, asText(value.mediaUrl, asText(value.url)));
+  if (!url) return null;
+  const tierValue = asText(value.heat_tier, asText(value.tier, fallbackTier)) as StoryRpgAsset["tier"];
+  const tier: StoryRpgAsset["tier"] = ["soft", "warm", "spicy", "steamy", "premium"].includes(tierValue)
+    ? tierValue
+    : fallbackTier;
+  return {
+    id: asText(value.id, `asset-${index + 1}`),
+    url,
+    type: value.media_type === "video" || value.mediaType === "video" ? "video" : "image",
+    tier,
+    minAffection: clamp(value.minAffection ?? value.min_affection, TIER_MIN_AFFECTION[tier]),
+    caption: asText(value.caption, tier === "soft" ? "기본 해금 이미지" : "호감도 해금 이미지"),
+  };
+}
+
+function visualAssetsFromStory(row: any, card: Record<string, any>, characters: Record<string, any>[]): StoryRpgAsset[] {
+  const chapterAssets = arrayOf<Record<string, any>>(card.chapters).flatMap((chapter) =>
+    arrayOf<Record<string, any>>(chapter.assetSlots),
+  );
+  const rootAssets = arrayOf<Record<string, any>>(row?.asset_slots);
+  const characterAssets = characters.flatMap((character) =>
+    arrayOf<Record<string, any>>(character.showcaseAssets ?? character.showcase_assets ?? character.visualAssets),
+  );
+  const seen = new Set<string>();
+  return [...chapterAssets, ...rootAssets, ...characterAssets]
+    .map((asset, index) => normalizeAsset(asset, index))
+    .filter((asset): asset is StoryRpgAsset => Boolean(asset))
+    .filter((asset) => {
+      const key = `${asset.url}:${asset.tier}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 18);
 }
 
 function normalizeScene(value: Record<string, any>, index: number, fallbackChoices: StoryRpgChoice[]): StoryRpgScene {
@@ -177,6 +223,7 @@ export function toStoryRpg(row: any, index = 0): StoryRpg {
     chapters,
     choices: normalizedChoices,
   });
+  const visualAssets = visualAssetsFromStory(row, card, characters);
 
   return {
     id: asText(row?.id, `story-rpg-${index + 1}`),
@@ -201,9 +248,10 @@ export function toStoryRpg(row: any, index = 0): StoryRpg {
       total: Math.max(1, Math.floor(asNumber(storyRpg.endingsTotal, 5))),
     },
     images: {
-      unlocked: Math.max(0, Math.floor(asNumber(storyRpg.imagesUnlocked, 1))),
-      locked: Math.max(0, Math.floor(asNumber(storyRpg.imagesLocked, 4))),
+      unlocked: Math.max(visualAssets.filter((asset) => asset.minAffection <= clamp(storyRpg.initialAffection, 0)).length, Math.floor(asNumber(storyRpg.imagesUnlocked, 1))),
+      locked: Math.max(visualAssets.filter((asset) => asset.minAffection > clamp(storyRpg.initialAffection, 0)).length, Math.floor(asNumber(storyRpg.imagesLocked, 4))),
     },
+    visualAssets,
     routes: routes.length
       ? routes.map((route) => ({
           name: asText(route.name, "Main Route"),

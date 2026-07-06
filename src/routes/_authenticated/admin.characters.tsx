@@ -30,6 +30,7 @@ import {
 } from "@/lib/admin-characters.functions";
 import { analyzeStoryCharacters } from "@/lib/admin-story-ai.functions";
 import { ensureStoryMediaBucket } from "@/lib/storage.functions";
+import { resolveStoryMediaSource } from "@/lib/story-media-url";
 import { supabase } from "@/integrations/supabase/client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -68,19 +69,39 @@ function CharactersPage() {
   const [drafts, setDrafts] = useState<CharacterDraft[]>([]);
   const [selectedCharacterId, setSelectedCharacterId] = useState("");
   const [analysisChapterId, setAnalysisChapterId] = useState("");
+  const [contentFilter, setContentFilter] = useState<"all" | "story" | "story_rpg">("all");
+  const [topicFilter, setTopicFilter] = useState("all");
   const [bulkAnalysis, setBulkAnalysis] = useState({ running: false, done: 0, total: 0 });
 
   const storiesQ = useQuery({ queryKey: ["admin_character_stories"], queryFn: () => list() });
 
   const stories = storiesQ.data ?? [];
+  const topicOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const story of stories) {
+      for (const character of story.characters) {
+        for (const tag of character.tags ?? []) set.add(tag);
+        if (character.role) set.add(character.role);
+      }
+    }
+    return [...set].filter(Boolean).sort((a, b) => a.localeCompare(b, "ko")).slice(0, 40);
+  }, [stories]);
   const filteredStories = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    if (!needle) return stories;
     return stories.filter((story) => {
-      const characters = story.characters.map((character) => `${character.name} ${character.role}`).join(" ");
-      return `${story.storyTitle} ${story.logline} ${characters}`.toLowerCase().includes(needle);
+      if (contentFilter !== "all" && story.contentType !== contentFilter) return false;
+      const characters = story.characters
+        .map((character) => `${character.name} ${character.role} ${character.tags?.join(" ") ?? ""}`)
+        .join(" ");
+      const matchesSearch = !needle || `${story.storyTitle} ${story.logline} ${characters}`.toLowerCase().includes(needle);
+      const matchesTopic =
+        topicFilter === "all" ||
+        story.characters.some(
+          (character) => character.role === topicFilter || character.tags?.some((tag) => tag === topicFilter),
+        );
+      return matchesSearch && matchesTopic;
     });
-  }, [q, stories]);
+  }, [contentFilter, q, stories, topicFilter]);
 
   const selectedStory =
     stories.find((story) => story.storyId === selectedStoryId) ??
@@ -136,6 +157,11 @@ function CharactersPage() {
       toast.success("캐릭터 설정을 저장했습니다.");
       qc.invalidateQueries({ queryKey: ["admin_character_stories"] });
       qc.invalidateQueries({ queryKey: ["admin_stories"] });
+      qc.invalidateQueries({ queryKey: ["public_chat_characters"] });
+      if (selectedStory?.storyId) {
+        qc.invalidateQueries({ queryKey: ["character_chat_story", selectedStory.storyId] });
+        qc.invalidateQueries({ queryKey: ["user_story_unified", selectedStory.storyId] });
+      }
     },
     onError: (error: Error) => toast.error(error.message || "캐릭터 저장에 실패했습니다."),
   });
@@ -149,6 +175,11 @@ function CharactersPage() {
       toast.success(`캐릭터 분석을 반영했습니다. ${result.characters?.length ?? 0}명 감지`);
       qc.invalidateQueries({ queryKey: ["admin_character_stories"] });
       qc.invalidateQueries({ queryKey: ["admin_stories"] });
+      qc.invalidateQueries({ queryKey: ["public_chat_characters"] });
+      if (selectedStory?.storyId) {
+        qc.invalidateQueries({ queryKey: ["character_chat_story", selectedStory.storyId] });
+        qc.invalidateQueries({ queryKey: ["user_story_unified", selectedStory.storyId] });
+      }
     },
     onError: (error: Error) => toast.error(error.message || "캐릭터 분석에 실패했습니다."),
   });
@@ -170,6 +201,9 @@ function CharactersPage() {
       toast.success(`전체 회차 캐릭터 분석을 완료했습니다. ${chapters.length}개 회차`);
       qc.invalidateQueries({ queryKey: ["admin_character_stories"] });
       qc.invalidateQueries({ queryKey: ["admin_stories"] });
+      qc.invalidateQueries({ queryKey: ["public_chat_characters"] });
+      qc.invalidateQueries({ queryKey: ["character_chat_story", selectedStory.storyId] });
+      qc.invalidateQueries({ queryKey: ["user_story_unified", selectedStory.storyId] });
     } catch (error: any) {
       toast.error(error?.message ?? "전체 회차 분석 중 오류가 발생했습니다.");
     } finally {
@@ -243,11 +277,10 @@ function CharactersPage() {
         </div>
       </header>
 
-      <section className="grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)] 2xl:grid-cols-[340px_minmax(0,1fr)_320px]">
+      <section className="grid gap-4 xl:grid-cols-[310px_minmax(0,1fr)] 2xl:grid-cols-[320px_minmax(0,1fr)_420px]">
         <Card className="self-start">
-          <CardHeader>
-            <CardTitle>콘텐츠 선택</CardTitle>
-            <CardDescription>스토리와 스토리게임의 캐릭터를 분리해 관리합니다.</CardDescription>
+          <CardHeader className="pb-3">
+            <CardTitle>콘텐츠</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="relative">
@@ -259,6 +292,36 @@ function CharactersPage() {
                 className="pl-9"
               />
             </div>
+            <div className="grid grid-cols-3 gap-1 rounded-lg border border-border bg-background p-1">
+              {[
+                ["all", "전체"],
+                ["story", "스토리"],
+                ["story_rpg", "게임"],
+              ].map(([value, label]) => (
+                <button
+                  type="button"
+                  key={value}
+                  onClick={() => setContentFilter(value as typeof contentFilter)}
+                  className={`h-8 rounded-md text-xs transition ${
+                    contentFilter === value ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <select
+              value={topicFilter}
+              onChange={(event) => setTopicFilter(event.target.value)}
+              className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm"
+            >
+              <option value="all">전체 주제</option>
+              {topicOptions.map((topic) => (
+                <option key={topic} value={topic}>
+                  {topic}
+                </option>
+              ))}
+            </select>
             {storiesQ.isLoading && (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Loader2 className="size-4 animate-spin" />
@@ -300,19 +363,6 @@ function CharactersPage() {
                         <Badge variant="secondary">{story.characters.length}</Badge>
                       </div>
                     </div>
-                    {story.logline && (
-                      <p
-                        className="mt-2 text-xs leading-5 text-muted-foreground"
-                        style={{
-                          display: "-webkit-box",
-                          WebkitLineClamp: 2,
-                          WebkitBoxOrient: "vertical",
-                          overflow: "hidden",
-                        }}
-                      >
-                        {story.logline}
-                      </p>
-                    )}
                   </button>
                 );
               })}
@@ -327,13 +377,10 @@ function CharactersPage() {
 
         <main className="space-y-4">
           <Card>
-            <CardHeader className="gap-3">
+            <CardHeader className="gap-3 pb-3">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <CardTitle>{selectedStory?.storyTitle ?? "스토리를 선택하세요"}</CardTitle>
-                  <CardDescription>
-                    대표 캐릭터는 사용자 리더 화면과 채팅 기본 상대방으로 사용됩니다.
-                  </CardDescription>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <select
@@ -351,11 +398,11 @@ function CharactersPage() {
                   </select>
                   <Button variant="outline" onClick={() => analyzeM.mutate()} disabled={!analysisChapter || analyzeM.isPending}>
                     {analyzeM.isPending ? <Loader2 className="mr-2 size-4 animate-spin" /> : <Wand2 className="mr-2 size-4" />}
-                    AI 분석
+                    본문+에셋 분석
                   </Button>
                   <Button variant="outline" onClick={analyzeAllChapters} disabled={!selectedStory?.chapters.length || bulkAnalysis.running || analyzeM.isPending}>
                     {bulkAnalysis.running ? <Loader2 className="mr-2 size-4 animate-spin" /> : <Bot className="mr-2 size-4" />}
-                    전체 분석
+                    전체 회차 분석
                   </Button>
                   <Button variant="outline" onClick={() => addCharacter()} disabled={!selectedStory}>
                     <Plus className="mr-2 size-4" />
@@ -370,9 +417,10 @@ function CharactersPage() {
             </CardHeader>
             <CardContent className="space-y-4">
               {analysisChapter && (
-                <div className="grid gap-2 rounded-lg border border-border bg-background p-3 text-xs text-muted-foreground sm:grid-cols-3">
+                <div className="grid gap-2 rounded-lg border border-border bg-background p-3 text-xs text-muted-foreground sm:grid-cols-4">
                   <div><span className="text-foreground">분석회차</span> · {analysisChapter.title}</div>
                   <div><span className="text-foreground">본문</span> · {analysisChapter.bodyChars.toLocaleString()}자</div>
+                  <div><span className="text-foreground">삽입에셋</span> · {analysisChapter.assetSlotCount.toLocaleString()}개</div>
                   <div><span className="text-foreground">기존분석</span> · {analysisChapter.characterAnalysisCount}개</div>
                 </div>
               )}
@@ -390,17 +438,7 @@ function CharactersPage() {
                   </div>
                 </div>
               )}
-              <div className="space-y-2">
-                <Label>스토리/관계 요약</Label>
-                <Textarea
-                  value={storyOverview}
-                  onChange={(event) => setStoryOverview(event.target.value)}
-                  className="min-h-20"
-                  placeholder="캐릭터가 이해해야 할 스토리 배경과 관계 맥락"
-                />
-              </div>
-
-              <div className="grid gap-2 md:grid-cols-2 2xl:grid-cols-3">
+              <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-3">
                 {drafts.map((character) => (
                   <CharacterSummaryCard
                     key={character.id}
@@ -413,74 +451,37 @@ function CharactersPage() {
             </CardContent>
           </Card>
 
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle>스토리 맥락</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <Textarea
+                value={storyOverview}
+                onChange={(event) => setStoryOverview(event.target.value)}
+                className="min-h-24"
+                placeholder="캐릭터가 이해해야 할 스토리 배경과 관계"
+              />
+            </CardContent>
+          </Card>
+        </main>
+
+        <aside className="space-y-4 self-start xl:col-start-2 2xl:col-start-auto">
           {selectedCharacter && (
             <CharacterEditor
               storyId={selectedStory.storyId}
               character={selectedCharacter}
               storyTitle={selectedStory.storyTitle}
               storyOverview={storyOverview}
+              reusableCharacters={reusableCharacters}
               onPatch={(patch) => patchCharacter(selectedCharacter.id, patch)}
               onPrimary={() => setPrimaryCharacter(selectedCharacter.id)}
               onDuplicate={() => copyCharacter(fromDraft(selectedCharacter))}
+              onCopyCharacter={(character) => copyCharacter(character)}
               onRemove={() => removeCharacter(selectedCharacter.id)}
               canRemove={drafts.length > 1}
             />
           )}
-        </main>
-
-        <aside className="space-y-4 self-start xl:col-start-2 2xl:col-start-auto">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Bot className="size-5 text-primary" />
-                채팅 연동 기준
-              </CardTitle>
-              <CardDescription>캐릭터 설정은 사용자 채팅의 시스템 프롬프트로 전달됩니다.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3 text-sm text-muted-foreground">
-              <GuideRow label="대표 캐릭터" text="스토리 진입 시 기본 대화 상대방입니다." />
-              <GuideRow label="말투" text="응답 어휘, 존댓말, 문장 길이, 감정 표현을 고정합니다." />
-              <GuideRow label="성격/페르소나" text="DeepSeek 채팅이 캐릭터성을 유지하는 핵심 정보입니다." />
-              <GuideRow label="재사용 가능" text="사용자 제작 스토리에서 불러올 수 있는 후보로 남깁니다." />
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Library className="size-5 text-primary" />
-                재사용 라이브러리
-              </CardTitle>
-              <CardDescription>다른 스토리나 사용자 제작에 활용할 수 있는 캐릭터입니다.</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="max-h-[52vh] space-y-2 overflow-y-auto pr-1">
-                {reusableCharacters.slice(0, 80).map((character) => (
-                  <button
-                    type="button"
-                    key={`${character.storyId}-${character.id}`}
-                    onClick={() => copyCharacter(character)}
-                    disabled={!selectedStory}
-                    className="w-full rounded-lg border border-border bg-background p-3 text-left transition hover:border-primary/30 disabled:opacity-50"
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <div className="truncate text-sm font-medium">{character.name}</div>
-                        <div className="mt-1 truncate text-xs text-muted-foreground">{character.storyTitle}</div>
-                      </div>
-                      <Copy className="size-4 text-muted-foreground" />
-                    </div>
-                    <p className="mt-2 line-clamp-2 text-xs text-muted-foreground">{character.persona}</p>
-                  </button>
-                ))}
-                {!reusableCharacters.length && (
-                  <div className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
-                    재사용 가능한 캐릭터가 없습니다.
-                  </div>
-                )}
-              </div>
-            </CardContent>
-          </Card>
         </aside>
       </section>
     </div>
@@ -492,9 +493,11 @@ function CharacterEditor({
   character,
   storyTitle,
   storyOverview,
+  reusableCharacters,
   onPatch,
   onPrimary,
   onDuplicate,
+  onCopyCharacter,
   onRemove,
   canRemove,
 }: {
@@ -502,9 +505,11 @@ function CharacterEditor({
   character: CharacterDraft;
   storyTitle: string;
   storyOverview: string;
+  reusableCharacters: Array<StoryCharacter & { storyId: string; storyTitle: string }>;
   onPatch: (patch: Partial<CharacterDraft>) => void;
   onPrimary: () => void;
   onDuplicate: () => void;
+  onCopyCharacter: (character: StoryCharacter) => void;
   onRemove: () => void;
   canRemove: boolean;
 }) {
@@ -606,199 +611,205 @@ function CharacterEditor({
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <CardTitle>캐릭터 프로필 편집</CardTitle>
-            <CardDescription>저장 후 사용자 채팅과 스토리 제작에서 동일한 프로필을 사용합니다.</CardDescription>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button variant={character.isPrimary ? "default" : "outline"} onClick={onPrimary}>
-              <Star className="mr-2 size-4" />
-              대표
-            </Button>
-            <Button variant="outline" onClick={onDuplicate}>
-              <Copy className="mr-2 size-4" />
-              복제
-            </Button>
-            <Button variant="outline" className="text-destructive" onClick={onRemove} disabled={!canRemove}>
-              <Trash2 className="mr-2 size-4" />
-              삭제
-            </Button>
-          </div>
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-5">
-        <div className="grid gap-4 md:grid-cols-2">
-          <Field label="이름">
-            <Input value={character.name} onChange={(event) => onPatch({ name: event.target.value })} />
-          </Field>
-          <Field label="역할">
-            <Input
-              value={character.role}
-              onChange={(event) => onPatch({ role: event.target.value })}
-              placeholder="Main Character, Rival, Friend"
-            />
-          </Field>
-          <Field label="관계 설정">
-            <Input
-              value={character.relationship}
-              onChange={(event) => onPatch({ relationship: event.target.value })}
-              placeholder="사용자와의 관계, 숨은 감정, 갈등"
-            />
-          </Field>
-          <Field label="태그">
-            <Input
-              value={character.tagsText}
-              onChange={(event) => onPatch({ tagsText: event.target.value })}
-              placeholder="CEO, 차가움, 집착, 계약연애"
-            />
-          </Field>
-        </div>
-
-        <div className="grid gap-4 lg:grid-cols-2">
-          <Field label="페르소나">
-            <Textarea
-              value={character.persona}
-              onChange={(event) => onPatch({ persona: event.target.value })}
-              className="min-h-28"
-              placeholder="캐릭터의 배경, 욕망, 금기, 사용자를 대하는 태도"
-            />
-          </Field>
-          <Field label="성격">
-            <Textarea
-              value={character.personality}
-              onChange={(event) => onPatch({ personality: event.target.value })}
-              className="min-h-28"
-              placeholder="차갑지만 보호 본능이 강함, 질투를 숨김..."
-            />
-          </Field>
-          <Field label="말투">
-            <Textarea
-              value={character.speakingStyle}
-              onChange={(event) => onPatch({ speakingStyle: event.target.value })}
-              className="min-h-24"
-              placeholder="짧고 낮은 문장, 반말과 존댓말을 섞음, 감정은 숨김"
-            />
-          </Field>
-          <Field label="비주얼 프롬프트">
-            <Textarea
-              value={character.visualPrompt}
-              onChange={(event) => onPatch({ visualPrompt: event.target.value })}
-              className="min-h-24"
-              placeholder="외형, 의상, 분위기, 이미지 생성 기준"
-            />
-          </Field>
-        </div>
-
-        <Field label="아바타/대표 이미지 URL 또는 story-media 경로">
-          <Input
-            value={character.avatarUrl ?? ""}
-            onChange={(event) => onPatch({ avatarUrl: event.target.value || null })}
-            placeholder="assets/story/character.png"
-          />
-        </Field>
-
-        <Field label="캐릭터 이미지 등록 / AI 생성">
-          <div className="flex flex-col gap-3 rounded-lg border border-border bg-background p-3 sm:flex-row sm:items-center">
-            <div className="grid size-20 shrink-0 place-items-center overflow-hidden rounded-xl border border-border bg-muted">
-              {avatarPreview ? (
-                <img src={avatarPreview} alt={character.name} className="size-full object-cover" />
-              ) : (
-                <UserCircle2 className="size-8 text-muted-foreground" />
-              )}
-            </div>
-            <div className="min-w-0 flex-1 space-y-2">
-              <div className="text-xs leading-5 text-muted-foreground">
-                이미지는 채팅 상대 썸네일과 친구목록 프로필에 사용됩니다. 직접 등록하거나 비주얼 프롬프트를 바탕으로 AI 생성할 수 있습니다.
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <label className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-md border border-border bg-card px-3 text-sm hover:border-primary/50">
-                  {uploading ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
-                  이미지 등록
-                  <input
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    disabled={uploading}
-                    onChange={(event) => {
-                      const file = event.currentTarget.files?.[0] ?? null;
-                      event.currentTarget.value = "";
-                      void uploadAvatar(file);
-                    }}
-                  />
-                </label>
-                <Button type="button" variant="outline" size="sm" onClick={generateAvatar} disabled={generating}>
-                  {generating ? <Loader2 className="size-4 animate-spin" /> : <Wand2 className="size-4" />}
-                  AI 생성
-                </Button>
-              </div>
-            </div>
-          </div>
-        </Field>
-
-        <Field label="호감도 비주얼 슬롯">
-          <div className="space-y-3 rounded-lg border border-border bg-background p-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-xs leading-5 text-muted-foreground">
-                캐릭터 채팅과 리더 화면에서 호감도에 따라 순차 해금되는 이미지/영상입니다.
-              </p>
-              <Button type="button" variant="outline" size="sm" onClick={addVisualAsset}>
-                <Plus className="size-4" />
-                슬롯 추가
-              </Button>
-            </div>
-            {visualAssets.length === 0 ? (
-              <div className="rounded-md border border-dashed border-border p-4 text-center text-xs text-muted-foreground">
-                아직 등록된 슬롯이 없습니다. 기본 캐릭터 이미지와 스토리 에셋이 자동 노출됩니다.
-              </div>
+    <Card className="sticky top-4 max-h-[calc(100vh-2rem)] overflow-hidden">
+      <CardHeader className="border-b border-border pb-3">
+        <div className="flex items-start gap-3">
+          <div className="grid size-16 shrink-0 place-items-center overflow-hidden rounded-xl border border-border bg-muted">
+            {avatarPreview ? (
+              <img src={avatarPreview} alt={character.name} className="size-full object-cover" />
             ) : (
-              <div className="grid gap-3 md:grid-cols-2">
-                {visualAssets.map((asset) => (
-                  <CharacterVisualAssetEditor
-                    key={asset.id}
-                    asset={asset}
-                    onPatch={(patch) => patchVisualAsset(asset.id, patch)}
-                    onRemove={() => removeVisualAsset(asset.id)}
-                  />
-                ))}
-              </div>
+              <UserCircle2 className="size-8 text-muted-foreground" />
             )}
           </div>
-        </Field>
-
-        <div className="grid gap-3 md:grid-cols-3">
-          <ToggleLine
-            checked={character.chatEnabled}
-            label="채팅 상대방으로 사용"
-            text="사용자 리더 화면에서 대화 가능한 캐릭터로 표시합니다."
-            onChange={(checked) => onPatch({ chatEnabled: checked })}
-          />
-          <ToggleLine
-            checked={character.reusable}
-            label="재사용 라이브러리에 표시"
-            text="사용자 제작/다른 스토리에서 불러올 수 있게 합니다."
-            onChange={(checked) => onPatch({ reusable: checked })}
-          />
-          <div className="rounded-lg border border-border bg-background p-3">
-            <div className="flex items-center gap-2 text-sm font-medium">
-              <CheckCircle2 className="size-4 text-primary" />
-              저장 대상
+          <div className="min-w-0 flex-1">
+            <CardTitle className="truncate">{character.name || "새 캐릭터"}</CardTitle>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {character.isPrimary && <Badge>대표</Badge>}
+              {character.chatEnabled && <Badge variant="secondary">채팅</Badge>}
+              {character.reusable && <Badge variant="outline">재사용</Badge>}
             </div>
-            <p className="mt-1 text-xs text-muted-foreground">
-              스토리의 character_card에 저장되며 채팅 프롬프트와 프론트 표시가 함께 갱신됩니다.
-            </p>
           </div>
         </div>
+        <div className="mt-3 grid grid-cols-3 gap-2">
+          <Button size="sm" variant={character.isPrimary ? "default" : "outline"} onClick={onPrimary}>
+            <Star className="size-4" />
+            대표
+          </Button>
+          <Button size="sm" variant="outline" onClick={onDuplicate}>
+            <Copy className="size-4" />
+            복제
+          </Button>
+          <Button size="sm" variant="outline" className="text-destructive" onClick={onRemove} disabled={!canRemove}>
+            <Trash2 className="size-4" />
+            삭제
+          </Button>
+        </div>
+      </CardHeader>
 
-        <Field label="채팅 프롬프트 미리보기">
-          <div className="rounded-lg border border-border bg-background p-3">
-            <pre className="max-h-52 whitespace-pre-wrap break-words text-xs leading-5 text-muted-foreground">
-              {promptPreview}
-            </pre>
+      <CardContent className="max-h-[calc(100vh-12rem)] space-y-4 overflow-y-auto p-4">
+        <PanelSection title="이미지">
+          <div className="grid gap-2">
+            <Field label="대표 이미지 경로">
+              <Input
+                value={character.avatarUrl ?? ""}
+                onChange={(event) => onPatch({ avatarUrl: event.target.value || null })}
+                placeholder="story-media 경로 또는 URL"
+              />
+            </Field>
+            <div className="flex flex-wrap gap-2">
+              <label className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-md border border-border bg-card px-3 text-sm hover:border-primary/50">
+                {uploading ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
+                업로드
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  disabled={uploading}
+                  onChange={(event) => {
+                    const file = event.currentTarget.files?.[0] ?? null;
+                    event.currentTarget.value = "";
+                    void uploadAvatar(file);
+                  }}
+                />
+              </label>
+              <Button type="button" variant="outline" size="sm" onClick={generateAvatar} disabled={generating}>
+                {generating ? <Loader2 className="size-4 animate-spin" /> : <Wand2 className="size-4" />}
+                AI 생성
+              </Button>
+            </div>
           </div>
-        </Field>
+        </PanelSection>
+
+        <PanelSection title="기본정보">
+          <div className="grid gap-3">
+            <Field label="이름">
+              <Input value={character.name} onChange={(event) => onPatch({ name: event.target.value })} />
+            </Field>
+            <Field label="역할">
+              <Input value={character.role} onChange={(event) => onPatch({ role: event.target.value })} />
+            </Field>
+            <Field label="관계">
+              <Input value={character.relationship} onChange={(event) => onPatch({ relationship: event.target.value })} />
+            </Field>
+            <Field label="태그">
+              <Input value={character.tagsText} onChange={(event) => onPatch({ tagsText: event.target.value })} />
+            </Field>
+          </div>
+        </PanelSection>
+
+        <PanelSection title="성격">
+          <div className="grid gap-3">
+            <Field label="페르소나">
+              <Textarea value={character.persona} onChange={(event) => onPatch({ persona: event.target.value })} className="min-h-24" />
+            </Field>
+            <Field label="성격">
+              <Textarea value={character.personality} onChange={(event) => onPatch({ personality: event.target.value })} className="min-h-24" />
+            </Field>
+            <Field label="비주얼">
+              <Textarea value={character.visualPrompt} onChange={(event) => onPatch({ visualPrompt: event.target.value })} className="min-h-20" />
+            </Field>
+          </div>
+        </PanelSection>
+
+        <PanelSection title="답변패턴">
+          <div className="grid gap-3">
+            <Field label="말투">
+              <Textarea value={character.speakingStyle} onChange={(event) => onPatch({ speakingStyle: event.target.value })} className="min-h-20" />
+            </Field>
+            <Field label="응답 규칙">
+              <Textarea
+                value={character.replyPattern ?? ""}
+                onChange={(event) => onPatch({ replyPattern: event.target.value })}
+                className="min-h-20"
+                placeholder="대답 길이, 금지 표현, 먼저 질문하는 방식, 호감도별 태도"
+              />
+            </Field>
+          </div>
+        </PanelSection>
+
+        <PanelSection title="LLM">
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="사용처">
+              <select
+                value={character.llmPurpose ?? "chat"}
+                onChange={(event) => onPatch({ llmPurpose: event.target.value })}
+                className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+              >
+                <option value="chat">채팅</option>
+                <option value="summary">분석/요약</option>
+                <option value="image">이미지</option>
+              </select>
+            </Field>
+            <Field label="모델">
+              <Input
+                value={character.llmModel ?? ""}
+                onChange={(event) => onPatch({ llmModel: event.target.value })}
+                placeholder="기본값"
+              />
+            </Field>
+          </div>
+        </PanelSection>
+
+        <PanelSection
+          title="호감도 에셋"
+          action={
+            <Button type="button" variant="outline" size="sm" onClick={addVisualAsset}>
+              <Plus className="size-4" />
+              슬롯
+            </Button>
+          }
+        >
+          {visualAssets.length === 0 ? (
+            <div className="rounded-md border border-dashed border-border p-4 text-center text-xs text-muted-foreground">
+              등록된 에셋이 없습니다.
+            </div>
+          ) : (
+            <div className="grid gap-3">
+              {visualAssets.map((asset) => (
+                <CharacterVisualAssetEditor
+                  key={asset.id}
+                  asset={asset}
+                  onPatch={(patch) => patchVisualAsset(asset.id, patch)}
+                  onRemove={() => removeVisualAsset(asset.id)}
+                />
+              ))}
+            </div>
+          )}
+        </PanelSection>
+
+        <PanelSection title="노출">
+          <div className="grid gap-2">
+            <ToggleLine checked={character.chatEnabled} label="채팅 사용" onChange={(checked) => onPatch({ chatEnabled: checked })} />
+            <ToggleLine checked={character.reusable} label="재사용 허용" onChange={(checked) => onPatch({ reusable: checked })} />
+          </div>
+        </PanelSection>
+
+        <PanelSection title="재사용">
+          <div className="max-h-44 space-y-2 overflow-y-auto pr-1">
+            {reusableCharacters.slice(0, 30).map((item) => (
+              <button
+                type="button"
+                key={`${item.storyId}-${item.id}`}
+                onClick={() => onCopyCharacter(item)}
+                className="flex w-full items-center gap-2 rounded-lg border border-border bg-background p-2 text-left hover:border-primary/40"
+              >
+                <UserCircle2 className="size-5 shrink-0 text-muted-foreground" />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm">{item.name}</span>
+                  <span className="block truncate text-[11px] text-muted-foreground">{item.storyTitle}</span>
+                </span>
+                <Copy className="size-4 text-muted-foreground" />
+              </button>
+            ))}
+            {!reusableCharacters.length && <div className="text-xs text-muted-foreground">재사용 캐릭터 없음</div>}
+          </div>
+        </PanelSection>
+
+        <PanelSection title="프롬프트">
+          <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap rounded-lg border border-border bg-background p-3 text-xs leading-5 text-muted-foreground">
+            {promptPreview}
+          </pre>
+        </PanelSection>
       </CardContent>
     </Card>
   );
@@ -832,6 +843,7 @@ function CharacterSummaryCard({
   onClick: () => void;
 }) {
   const quality = characterQuality(character);
+  const avatarPreview = useSignedCharacterImage(character.avatarUrl);
   return (
     <button
       type="button"
@@ -842,20 +854,35 @@ function CharacterSummaryCard({
           : "border-border bg-background hover:border-primary/30"
       }`}
     >
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <div className="flex items-center gap-1.5">
-            <span className="truncate text-sm font-medium">{character.name}</span>
+      <div className="flex gap-3">
+        <div className="grid size-16 shrink-0 place-items-center overflow-hidden rounded-xl border border-border bg-muted">
+          {avatarPreview ? (
+            <img src={avatarPreview} alt={character.name} className="size-full object-cover" />
+          ) : (
+            <UserCircle2 className="size-7 text-muted-foreground" />
+          )}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center gap-1.5">
+            <span className="truncate text-sm font-semibold">{character.name || "이름 없음"}</span>
             {character.isPrimary && <Star className="size-3.5 fill-primary text-primary" />}
             {character.chatEnabled && <MessageCircle className="size-3.5 text-primary" />}
           </div>
-          <div className="mt-1 truncate text-xs text-muted-foreground">{character.role}</div>
+          <div className="mt-1 truncate text-xs text-muted-foreground">{character.role || "역할 미입력"}</div>
+          <div className="mt-2 flex flex-wrap gap-1">
+            {character.tags.slice(0, 3).map((tag) => (
+              <Badge key={tag} variant="secondary" className="px-1.5 py-0 text-[10px]">
+                {tag}
+              </Badge>
+            ))}
+            {character.reusable && (
+              <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
+                재사용
+              </Badge>
+            )}
+          </div>
         </div>
-        {character.reusable && <Badge variant="outline">재사용</Badge>}
       </div>
-      <p className="mt-2 line-clamp-2 text-xs text-muted-foreground">
-        {character.persona || character.personality || "설정이 비어 있습니다."}
-      </p>
       <div className="mt-3 flex items-center gap-2">
         <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
           <div className="h-full rounded-full bg-primary" style={{ width: `${quality.score}%` }} />
@@ -869,7 +896,7 @@ function CharacterSummaryCard({
   );
 }
 
-function characterQuality(character: Pick<CharacterDraft, "name" | "role" | "persona" | "personality" | "relationship" | "speakingStyle" | "visualPrompt" | "avatarUrl">) {
+function characterQuality(character: Pick<CharacterDraft, "name" | "role" | "persona" | "personality" | "relationship" | "speakingStyle" | "replyPattern" | "visualPrompt" | "avatarUrl">) {
   const checks = [
     ["이름", character.name],
     ["역할", character.role],
@@ -877,6 +904,7 @@ function characterQuality(character: Pick<CharacterDraft, "name" | "role" | "per
     ["성격", character.personality],
     ["관계", character.relationship],
     ["말투", character.speakingStyle],
+    ["답변", character.replyPattern],
     ["이미지", character.avatarUrl],
     ["비주얼", character.visualPrompt],
   ] as const;
@@ -903,6 +931,12 @@ function buildChatPromptPreview(storyTitle: string, storyOverview: string, chara
     "[말투]",
     character.speakingStyle || "말투 설정이 비어 있습니다.",
     "",
+    "[답변패턴]",
+    character.replyPattern || "답변 패턴이 비어 있습니다.",
+    "",
+    "[사용 LLM]",
+    `${character.llmPurpose || "chat"}${character.llmModel ? ` / ${character.llmModel}` : ""}`,
+    "",
     "[스토리 맥락]",
     storyOverview || "스토리/관계 요약이 비어 있습니다.",
     "",
@@ -910,12 +944,15 @@ function buildChatPromptPreview(storyTitle: string, storyOverview: string, chara
   ].join("\n");
 }
 
-function GuideRow({ label, text }: { label: string; text: string }) {
+function PanelSection({ title, action, children }: { title: string; action?: ReactNode; children: ReactNode }) {
   return (
-    <div className="rounded-lg border border-border bg-background p-3">
-      <div className="text-sm font-medium text-foreground">{label}</div>
-      <p className="mt-1 text-xs leading-5">{text}</p>
-    </div>
+    <section className="rounded-xl border border-border bg-card p-3">
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold">{title}</h3>
+        {action}
+      </div>
+      {children}
+    </section>
   );
 }
 
@@ -932,17 +969,18 @@ function useSignedCharacterImage(path?: string | null) {
   const [url, setUrl] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
-    if (!path) {
+    const source = resolveStoryMediaSource(path);
+    if (!source) {
       setUrl(null);
       return;
     }
-    if (/^(https?:|data:|blob:)/.test(path)) {
-      setUrl(path);
+    if (source.kind === "direct") {
+      setUrl(source.url);
       return;
     }
     supabase.storage
       .from("story-media")
-      .createSignedUrl(path, 60 * 60)
+      .createSignedUrl(source.path, 60 * 60)
       .then(({ data }) => !cancelled && setUrl(data?.signedUrl ?? null))
       .catch(() => !cancelled && setUrl(null));
     return () => {
@@ -960,7 +998,7 @@ function ToggleLine({
 }: {
   checked: boolean;
   label: string;
-  text: string;
+  text?: string;
   onChange: (checked: boolean) => void;
 }) {
   return (
@@ -968,7 +1006,7 @@ function ToggleLine({
       <Checkbox checked={checked} onCheckedChange={(value) => onChange(Boolean(value))} />
       <span>
         <span className="block text-sm font-medium">{label}</span>
-        <span className="mt-1 block text-xs leading-5 text-muted-foreground">{text}</span>
+        {text && <span className="mt-1 block text-xs leading-5 text-muted-foreground">{text}</span>}
       </span>
     </label>
   );
@@ -1064,6 +1102,9 @@ function createBlankCharacter(isPrimary: boolean): StoryCharacter {
     personality: "",
     relationship: "",
     speakingStyle: "",
+    replyPattern: "",
+    llmPurpose: "chat",
+    llmModel: "",
     visualPrompt: "",
     avatarUrl: null,
     tags: [],
@@ -1090,6 +1131,9 @@ function fromDraft(character: CharacterDraft): StoryCharacter {
     personality: character.personality,
     relationship: character.relationship,
     speakingStyle: character.speakingStyle,
+    replyPattern: character.replyPattern ?? "",
+    llmPurpose: character.llmPurpose ?? "chat",
+    llmModel: character.llmModel ?? "",
     visualPrompt: character.visualPrompt,
     avatarUrl: character.avatarUrl,
     tags: character.tagsText
