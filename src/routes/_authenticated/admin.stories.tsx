@@ -62,6 +62,7 @@ import {
 } from "@/lib/admin-story-ai.functions";
 import { listMediaAssets, registerMediaAsset, type MediaAssetRow } from "@/lib/admin-media.functions";
 import { ensureStoryMediaBucket } from "@/lib/storage.functions";
+import { fetchWithSupabaseAuth } from "@/lib/supabase-auth-fetch";
 import { resolveStoryMediaSource } from "@/lib/story-media-url";
 import { normalizeProseLineBreaks } from "@/lib/text-normalization";
 import { Input } from "@/components/ui/input";
@@ -161,26 +162,16 @@ type ImportAutomationMetadata = {
   tags?: string[];
 };
 
-async function getCurrentAccessToken() {
-  const { data, error } = await supabase.auth.getSession();
-  if (error) throw new Error(error.message);
-  const token = data.session?.access_token;
-  if (!token) throw new Error("로그인이 필요합니다.");
-  return token;
-}
-
 async function requestImportAutomation(input: {
   mode: "episode_summary" | "story_metadata";
   title: string;
   text: string;
   storyOverview?: string;
 }) {
-  const token = await getCurrentAccessToken();
-  const response = await fetch("/api/admin/import-summary", {
+  const response = await fetchWithSupabaseAuth("/api/admin/import-summary", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
     },
     body: JSON.stringify(input),
   });
@@ -1109,6 +1100,25 @@ function normalizeCharacterDrafts(card: any): CharacterEditDraft[] {
   ];
 }
 
+function buildCharacterImagePrompt(storyTitle: string, character: CharacterEditDraft) {
+  const details = [
+    character.visualPrompt && `Visual description: ${character.visualPrompt}`,
+    character.role && `Role: ${character.role}`,
+    character.relationship && `Relationship: ${character.relationship}`,
+    character.persona && `Personality and mood: ${character.persona}`,
+    character.speakingStyle && `Speaking style: ${character.speakingStyle}`,
+    character.tags?.length && `Tags: ${character.tags.join(", ")}`,
+  ].filter(Boolean);
+
+  return [
+    `Create a polished vertical character portrait for the Lovetale story "${storyTitle}".`,
+    `Character name: ${character.name}`,
+    ...details,
+    "Style: premium Korean webtoon / romantic manga character art, expressive face, clear eyes, refined linework, cinematic lighting, clean background, upper body portrait, 9:16 composition.",
+    "Keep the character adult, fully original, and visually consistent with the description. No text, logo, watermark, speech bubble, extra limbs, duplicate face, or distorted hands.",
+  ].join("\n");
+}
+
 function normalizeCharacterName(name: string) {
   return String(name || "").replace(/\s+/g, "").trim().toLowerCase();
 }
@@ -1209,6 +1219,7 @@ function StoryWorkspaceDialog({
   const [localChapters, setLocalChapters] = useState<StoryChapterSummary[]>(chapters);
   const [characterDrafts, setCharacterDrafts] = useState<CharacterEditDraft[]>([]);
   const [characterUploadingId, setCharacterUploadingId] = useState<string | null>(null);
+  const [characterGeneratingId, setCharacterGeneratingId] = useState<string | null>(null);
   const [characterAnalyzing, setCharacterAnalyzing] = useState(false);
   const [chapterDraft, setChapterDraft] = useState({
     title: "",
@@ -1551,6 +1562,43 @@ function StoryWorkspaceDialog({
       toast.error(e?.message ?? "캐릭터 이미지 업로드에 실패했습니다.");
     } finally {
       setCharacterUploadingId(null);
+    }
+  }
+
+  async function generateCharacterAvatar(character: CharacterEditDraft) {
+    if (!character.name.trim()) {
+      toast.error("캐릭터 이름을 먼저 입력해 주세요.");
+      return;
+    }
+    setCharacterGeneratingId(character.id);
+    try {
+      const storyTitle = draft.title.trim() || title;
+      const response = await fetchWithSupabaseAuth("/api/reader-profile-image", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          storyId,
+          characterId: character.id,
+          name: character.name,
+          bio: [character.role, character.relationship, character.persona, character.personality, character.speakingStyle]
+            .filter(Boolean)
+            .join("\n"),
+          prompt: buildCharacterImagePrompt(storyTitle, character),
+        }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !payload?.ok) {
+        throw new Error(payload?.message || payload?.reason || "AI 이미지 생성에 실패했습니다.");
+      }
+      updateCharacterDraft(character.id, { avatarUrl: payload.storagePath || payload.signedUrl || "" });
+      const modelInfo = [payload.providerLabel, payload.model].filter(Boolean).join(" / ");
+      toast.success(`AI 캐릭터 이미지가 생성되었습니다.${modelInfo ? ` (${modelInfo})` : ""} DB 저장을 눌러 반영해 주세요.`);
+    } catch (e: any) {
+      toast.error(e?.message ?? "AI 이미지 생성에 실패했습니다.");
+    } finally {
+      setCharacterGeneratingId(null);
     }
   }
 
@@ -2538,21 +2586,34 @@ function StoryWorkspaceDialog({
                             onChange={(event) => updateCharacterDraft(character.id, { avatarUrl: event.target.value })}
                             placeholder="이미지 URL 또는 storage path"
                           />
-                          <label className="inline-flex h-9 w-full cursor-pointer items-center justify-center gap-1 rounded-md border border-border bg-background px-3 text-sm hover:border-primary/50">
-                            {characterUploadingId === character.id ? <Loader2 className="size-3 animate-spin" /> : <Upload className="size-3" />}
-                            이미지 업로드
-                            <input
-                              type="file"
-                              accept="image/*"
-                              className="hidden"
-                              disabled={characterUploadingId === character.id}
-                              onChange={(event) => {
-                                const file = event.currentTarget.files?.[0];
-                                event.currentTarget.value = "";
-                                if (file) void uploadCharacterAvatar(character.id, file);
-                              }}
-                            />
-                          </label>
+                          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
+                            <label className="inline-flex h-9 w-full cursor-pointer items-center justify-center gap-1 rounded-md border border-border bg-background px-3 text-sm hover:border-primary/50">
+                              {characterUploadingId === character.id ? <Loader2 className="size-3 animate-spin" /> : <Upload className="size-3" />}
+                              이미지 업로드
+                              <input
+                                type="file"
+                                accept="image/*"
+                                className="hidden"
+                                disabled={characterUploadingId === character.id || characterGeneratingId === character.id}
+                                onChange={(event) => {
+                                  const file = event.currentTarget.files?.[0];
+                                  event.currentTarget.value = "";
+                                  if (file) void uploadCharacterAvatar(character.id, file);
+                                }}
+                              />
+                            </label>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="h-9 w-full"
+                              onClick={() => void generateCharacterAvatar(character)}
+                              disabled={Boolean(characterGeneratingId) || characterUploadingId === character.id}
+                            >
+                              {characterGeneratingId === character.id ? <Loader2 className="size-3 animate-spin" /> : <Wand2 className="size-3" />}
+                              AI 이미지 생성
+                            </Button>
+                          </div>
                         </div>
                       </div>
 

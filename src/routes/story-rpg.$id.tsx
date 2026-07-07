@@ -8,7 +8,7 @@ import {
   ChevronRight,
   Image as ImageIcon,
   Loader2,
-  Map,
+  Map as MapIcon,
   MessageCircle,
   RotateCcw,
   Send,
@@ -231,12 +231,15 @@ function StoryRpgPlay() {
   const readingSegments = useMemo(() => {
     const firstScene = scenes[0];
     if (!firstScene) return [];
-    const byId = new Map(scenes.map((scene) => [scene.id, scene]));
+    const byId = scenes.reduce<Record<string, StoryRpgScene>>((acc, scene) => {
+      acc[scene.id] = scene;
+      return acc;
+    }, {});
     const segments: Array<{ scene: StoryRpgScene; choice: StoryRpgChoice | null }> = [
       { scene: firstScene, choice: null },
     ];
     for (const choice of choiceHistory) {
-      const next = choice.nextSceneId ? byId.get(choice.nextSceneId) : null;
+      const next = choice.nextSceneId ? byId[choice.nextSceneId] : null;
       if (next) segments.push({ scene: next, choice });
     }
     return segments;
@@ -479,7 +482,7 @@ function StoryRpgPlay() {
           <div className="mt-4 rounded-2xl border border-white/10 bg-white/7 p-3">
             <div className="flex items-center justify-between gap-3 text-xs text-white/58">
               <span className="inline-flex items-center gap-1.5">
-                <Map className="size-3.5 text-primary" />
+                <MapIcon className="size-3.5 text-primary" />
                 {currentScene?.title ?? game.currentChapter}
               </span>
               <span>{progressValue}%</span>
@@ -504,6 +507,8 @@ function StoryRpgPlay() {
                   choice={segment.choice}
                   leadName={game.leadName}
                   asset={inlineAsset}
+                  choiceAssets={unlockedAssets.length ? unlockedAssets : game.visualAssets}
+                  fallbackImage={game.cover || game.background}
                   isLast={isLast}
                   selectedChoice={selectedChoice}
                   nextScene={nextScene}
@@ -615,20 +620,6 @@ function clampStat(value: number) {
   return Math.max(0, Math.min(100, value));
 }
 
-function formatChoiceDelta(choice: StoryRpgChoice) {
-  const parts = [
-    choice.affectionDelta ? `호감 ${formatSignedNumber(choice.affectionDelta)}` : "",
-    choice.tensionDelta ? `긴장 ${formatSignedNumber(choice.tensionDelta)}` : "",
-    choice.trustDelta ? `신뢰 ${formatSignedNumber(choice.trustDelta)}` : "",
-  ].filter(Boolean);
-
-  return parts.length ? parts.join(" · ") : choice.effect;
-}
-
-function formatSignedNumber(value: number) {
-  return value > 0 ? `+${value}` : String(value);
-}
-
 function StatusChip({ label }: { label: string }) {
   return (
     <span className="rounded-full border border-white/10 bg-white/7 px-2.5 py-1 text-white/72">
@@ -642,6 +633,8 @@ function StorySegment({
   choice,
   leadName,
   asset,
+  choiceAssets,
+  fallbackImage,
   isLast,
   selectedChoice,
   nextScene,
@@ -653,6 +646,8 @@ function StorySegment({
   choice: StoryRpgChoice | null;
   leadName: string;
   asset?: StoryRpgAsset | null;
+  choiceAssets: StoryRpgAsset[];
+  fallbackImage: string;
   isLast: boolean;
   selectedChoice: StoryRpgChoice | null;
   nextScene?: StoryRpgScene;
@@ -683,6 +678,8 @@ function StorySegment({
       {isLast ? (
         <ChoiceBlock
           scene={scene}
+          choiceAssets={choiceAssets}
+          fallbackImage={fallbackImage}
           selectedChoice={selectedChoice}
           nextScene={nextScene}
           onClearSelected={onClearSelected}
@@ -696,6 +693,8 @@ function StorySegment({
 
 function ChoiceBlock({
   scene,
+  choiceAssets,
+  fallbackImage,
   selectedChoice,
   nextScene,
   onClearSelected,
@@ -703,6 +702,8 @@ function ChoiceBlock({
   onSelectChoice,
 }: {
   scene: StoryRpgScene;
+  choiceAssets: StoryRpgAsset[];
+  fallbackImage: string;
   selectedChoice: StoryRpgChoice | null;
   nextScene?: StoryRpgScene;
   onClearSelected: () => void;
@@ -721,28 +722,37 @@ function ChoiceBlock({
       </div>
       {scene.choices.length ? (
         <div className="grid gap-2 lg:grid-cols-3">
-          {scene.choices.map((choice, index) => (
-            <button
-              key={`${scene.id}-${choice.label}`}
-              type="button"
-              onClick={() => onSelectChoice(choice)}
-              className={`group rounded-2xl border p-3 text-left transition ${
-                selectedChoice?.label === choice.label
-                  ? "border-primary/60 bg-primary/18 shadow-[0_0_35px_rgba(236,72,153,.12)]"
-                  : "border-white/10 bg-black/24 hover:border-primary/45 hover:bg-white/7"
-              }`}
-            >
-              <div className="flex items-center justify-between gap-2">
-                <div className="min-w-0 text-sm font-semibold">
-                  <span className="mr-2 text-primary">{index + 1}</span>
-                  {choice.label}
+          {scene.choices.map((choice, index) => {
+            const asset = choiceAssets.length ? choiceAssets[index % choiceAssets.length] : null;
+            const choiceImage = choice.image ?? asset?.url ?? fallbackImage;
+            return (
+              <button
+                key={`${scene.id}-${choice.label}`}
+                type="button"
+                onClick={() => onSelectChoice(choice)}
+                className={`group overflow-hidden rounded-2xl border text-left transition ${
+                  selectedChoice?.label === choice.label
+                    ? "border-primary/60 bg-primary/18 shadow-[0_0_35px_rgba(236,72,153,.12)]"
+                    : "border-white/10 bg-black/24 hover:border-primary/45 hover:bg-white/7"
+                }`}
+              >
+                <div className="relative aspect-[16/9] bg-black/35">
+                  <CoverImage src={choiceImage} alt={choice.label} className="size-full object-cover opacity-90 transition group-hover:scale-[1.03]" />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/72 via-black/10 to-transparent" />
+                  <span className="absolute left-3 top-3 grid size-7 place-items-center rounded-full bg-black/60 text-xs font-semibold text-primary backdrop-blur">
+                    {index + 1}
+                  </span>
                 </div>
-                <ChevronRight className="size-4 shrink-0 text-white/28 transition group-hover:text-primary" />
-              </div>
-              <div className="mt-2 text-xs text-white/52">{choice.tone}</div>
-              <div className="mt-2 text-[11px] text-white/42">{formatChoiceDelta(choice)}</div>
-            </button>
-          ))}
+                <div className="p-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 text-sm font-semibold leading-6 text-white/88">{choice.label}</div>
+                    <ChevronRight className="mt-1 size-4 shrink-0 text-white/28 transition group-hover:text-primary" />
+                  </div>
+                  <div className="mt-2 text-xs text-white/52">{choice.tone}</div>
+                </div>
+              </button>
+            );
+          })}
         </div>
       ) : (
         <div className="rounded-2xl border border-primary/25 bg-primary/12 p-4 text-sm leading-6 text-white/78">

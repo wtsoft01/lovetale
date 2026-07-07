@@ -1,23 +1,13 @@
-import { supabase } from "@/integrations/supabase/client";
 import { createServerFn } from "@/lib/_mock/runtime";
+import { fetchWithSupabaseAuth } from "@/lib/supabase-auth-fetch";
 import type { AssetSlot } from "@/lib/admin-stories-compose.functions";
 
 type ApiOk<T> = { ok: true } & T;
 
-async function getAccessToken() {
-  const { data, error } = await supabase.auth.getSession();
-  if (error) throw new Error(error.message);
-  const token = data.session?.access_token;
-  if (!token) throw new Error("Unauthorized");
-  return token;
-}
-
 async function storyAiApi<T>(payload: Record<string, unknown>): Promise<T> {
-  const token = await getAccessToken();
-  const res = await fetch("/api/admin/story-ai", {
+  const res = await fetchWithSupabaseAuth("/api/admin/story-ai", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(payload),
@@ -93,10 +83,11 @@ export const generateStoryAsset = createServerFn({ method: "POST" })
   });
 
 export const analyzeStoryCharacters = createServerFn({ method: "POST" })
-  .inputValidator((i: unknown) => i as { storyId: string; chapterId: string })
+  .inputValidator((i: unknown) => i as { storyId: string; chapterId?: string; scope?: "chapter" | "story" })
   .handler(async ({ data }) => {
     return storyAiApi<
       ApiOk<{
+        scope?: "chapter" | "story";
         characterAnalysis: Array<Record<string, unknown>>;
         characters: Array<Record<string, unknown>>;
         providerLabel?: string;
@@ -107,6 +98,7 @@ export const analyzeStoryCharacters = createServerFn({ method: "POST" })
       action: "analyze_characters",
       storyId: data.storyId,
       chapterId: data.chapterId,
+      scope: data.scope,
     });
   });
 

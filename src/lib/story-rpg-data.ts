@@ -9,6 +9,7 @@ export type StoryRpgChoice = {
   tone: string;
   result: string;
   routeHint: string;
+  image?: string;
   nextSceneId?: string;
   affectionDelta: number;
   tensionDelta: number;

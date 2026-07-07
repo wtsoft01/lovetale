@@ -1,5 +1,5 @@
-import { supabase } from "@/integrations/supabase/client";
 import { createServerFn } from "@/lib/_mock/runtime";
+import { fetchWithSupabaseAuth } from "@/lib/supabase-auth-fetch";
 
 type ApiPayload<T> = { ok: true } & T;
 
@@ -23,20 +23,8 @@ export type MediaAssetRow = {
   updated_at: string;
 };
 
-async function getAccessToken() {
-  const { data, error } = await supabase.auth.getSession();
-  if (error) throw new Error(error.message);
-  const token = data.session?.access_token;
-  if (!token) throw new Error("Unauthorized");
-  return token;
-}
-
 async function adminMediaApi<T>(path: string, init?: RequestInit): Promise<T> {
-  const token = await getAccessToken();
-  const headers = new Headers(init?.headers);
-  headers.set("Authorization", `Bearer ${token}`);
-
-  const res = await fetch(`/api/admin/media${path}`, { ...init, headers });
+  const res = await fetchWithSupabaseAuth(`/api/admin/media${path}`, init);
   if (!res.ok) {
     const contentType = res.headers.get("content-type") ?? "";
     const raw = await res.text().catch(() => "");

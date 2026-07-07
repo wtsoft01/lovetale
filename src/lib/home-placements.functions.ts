@@ -1,6 +1,6 @@
-import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
 import { createServerFn } from "@/lib/_mock/runtime";
+import { fetchWithSupabaseAuth } from "@/lib/supabase-auth-fetch";
 
 export type HomeSlot = Database["public"]["Enums"]["home_slot"];
 
@@ -40,14 +40,6 @@ export type AdminHomePlacementRow = {
 
 type ApiPayload<T> = { ok: true } & T;
 
-async function getAccessToken() {
-  const { data, error } = await supabase.auth.getSession();
-  if (error) throw new Error(error.message);
-  const token = data.session?.access_token;
-  if (!token) throw new Error("Unauthorized");
-  return token;
-}
-
 async function readError(res: Response) {
   const contentType = res.headers.get("content-type") ?? "";
   const raw = await res.text().catch(() => "");
@@ -76,10 +68,7 @@ async function publicPlacementsApi<T>(slot: HomeSlot): Promise<T> {
 }
 
 async function adminPlacementsApi<T>(path: string, init?: RequestInit): Promise<T> {
-  const token = await getAccessToken();
-  const headers = new Headers(init?.headers);
-  headers.set("Authorization", `Bearer ${token}`);
-  const res = await fetch(`/api/admin/placements${path}`, { ...init, headers });
+  const res = await fetchWithSupabaseAuth(`/api/admin/placements${path}`, init);
   if (!res.ok) throw new Error(`Admin placements API failed (${res.status}): ${await readError(res)}`);
   return (await res.json()) as T;
 }

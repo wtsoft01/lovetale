@@ -29,15 +29,25 @@ export type RewardCenter = {
     streakDays: number;
     baseCredits: number;
     nextBonusText: string;
+    calendar: {
+      monthLabel: string;
+      startWeekday: number;
+      days: Array<{
+        dateKey: string;
+        day: number;
+        claimed: boolean;
+        isToday: boolean;
+        isFuture: boolean;
+      }>;
+    };
   };
   missions: RewardMission[];
 };
 
-const DAILY_ATTENDANCE_CREDITS = 30;
-const STREAK_BONUSES = [
-  { days: 3, credits: 100 },
-  { days: 7, credits: 300 },
-] as const;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const DAILY_ATTENDANCE_CREDITS = 20;
+const WEEKLY_STREAK_DAYS = 7;
+const WEEKLY_STREAK_BONUS_CREDITS = 100;
 
 const ONCE_REWARDS: Array<Omit<RewardMission, "claimed" | "canClaim"> & { reason: string }> = [
   {
@@ -76,6 +86,13 @@ const ONCE_REWARDS: Array<Omit<RewardMission, "claimed" | "canClaim"> & { reason
   },
 ];
 
+type RewardProfile = {
+  id: string;
+  display_name: string | null;
+  avatar_url: string | null;
+  credits: number;
+};
+
 function getKstDateKey(date = new Date()) {
   const kst = new Date(date.getTime() + 9 * 60 * 60 * 1000);
   return kst.toISOString().slice(0, 10);
@@ -88,6 +105,15 @@ function getKstDayBounds(date = new Date()) {
   return { key, startIso: start.toISOString(), endIso: end.toISOString() };
 }
 
+function getKstMonthStartIso(key: string) {
+  return new Date(`${key.slice(0, 7)}-01T00:00:00.000+09:00`).toISOString();
+}
+
+function getKstWeekday(key: string) {
+  const date = new Date(`${key}T00:00:00.000+09:00`);
+  return new Date(date.getTime() + 9 * 60 * 60 * 1000).getUTCDay();
+}
+
 function getPreviousKstDateKey(key: string, daysBack: number) {
   const base = new Date(`${key}T00:00:00.000+09:00`);
   base.setUTCDate(base.getUTCDate() - daysBack);
@@ -96,7 +122,7 @@ function getPreviousKstDateKey(key: string, daysBack: number) {
 
 function countAttendanceStreak(todayKey: string, claimedKeys: Set<string>) {
   let streak = 0;
-  for (let offset = 0; offset < 30; offset += 1) {
+  for (let offset = 0; offset < 370; offset += 1) {
     const key = getPreviousKstDateKey(todayKey, offset);
     if (!claimedKeys.has(key)) break;
     streak += 1;
@@ -104,23 +130,79 @@ function countAttendanceStreak(todayKey: string, claimedKeys: Set<string>) {
   return streak;
 }
 
+function buildAttendanceCalendar(todayKey: string, claimedKeys: Set<string>) {
+  const monthKey = todayKey.slice(0, 7);
+  const year = Number(monthKey.slice(0, 4));
+  const month = Number(monthKey.slice(5, 7));
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+
+  return {
+    monthLabel: `${year}년 ${month}월`,
+    startWeekday: getKstWeekday(`${monthKey}-01`),
+    days: Array.from({ length: daysInMonth }, (_, index) => {
+      const day = index + 1;
+      const dateKey = `${monthKey}-${String(day).padStart(2, "0")}`;
+      return {
+        dateKey,
+        day,
+        claimed: claimedKeys.has(dateKey),
+        isToday: dateKey === todayKey,
+        isFuture: dateKey > todayKey,
+      };
+    }),
+  };
+}
+
+function weeklyBonusText(streakDays: number, claimedToday: boolean) {
+  const streakAfterNextClaim = streakDays + 1;
+  if (streakAfterNextClaim % WEEKLY_STREAK_DAYS === 0) {
+    return `${claimedToday ? "내일" : "오늘"} 출석하면 +${WEEKLY_STREAK_BONUS_CREDITS}cr`;
+  }
+
+  const remainingDays = WEEKLY_STREAK_DAYS - (streakAfterNextClaim % WEEKLY_STREAK_DAYS);
+  return `주간 보너스까지 ${remainingDays}일`;
+}
+
+async function ensureRewardProfile(userId: string): Promise<RewardProfile> {
+  const selectColumns = "id, display_name, avatar_url, credits";
+  const existing = await supabaseAdmin
+    .from("profiles")
+    .select(selectColumns)
+    .eq("id", userId)
+    .maybeSingle();
+  if (existing.error) throw new Error(existing.error.message);
+  if (existing.data) return existing.data as RewardProfile;
+
+  const inserted = await supabaseAdmin
+    .from("profiles")
+    .upsert({ id: userId }, { onConflict: "id" })
+    .select(selectColumns)
+    .maybeSingle();
+  if (inserted.error) throw new Error(inserted.error.message);
+  if (inserted.data) return inserted.data as RewardProfile;
+
+  return {
+    id: userId,
+    display_name: null,
+    avatar_url: null,
+    credits: 100,
+  };
+}
+
 async function getRewardState(userId: string) {
-  const { key: todayKey, startIso, endIso } = getKstDayBounds();
-  const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const { key: todayKey } = getKstDayBounds();
+  const monthStartIso = getKstMonthStartIso(todayKey);
+  const streakStartIso = new Date(Date.now() - 370 * MS_PER_DAY).toISOString();
+  const since = monthStartIso < streakStartIso ? monthStartIso : streakStartIso;
 
   const [
-    profileResult,
+    profile,
     ledgerResult,
     attendanceResult,
-    todayAttendanceResult,
     sessionCountResult,
     storyCountResult,
   ] = await Promise.all([
-    supabaseAdmin
-      .from("profiles")
-      .select("id, display_name, avatar_url, credits")
-      .eq("id", userId)
-      .single(),
+    ensureRewardProfile(userId),
     supabaseAdmin
       .from("credit_ledger")
       .select("reason, created_at")
@@ -134,14 +216,6 @@ async function getRewardState(userId: string) {
       .gte("created_at", since)
       .order("created_at", { ascending: false }),
     supabaseAdmin
-      .from("credit_ledger")
-      .select("id")
-      .eq("user_id", userId)
-      .eq("reason", "reward_daily_attendance")
-      .gte("created_at", startIso)
-      .lt("created_at", endIso)
-      .maybeSingle(),
-    supabaseAdmin
       .from("story_sessions")
       .select("id", { count: "exact", head: true })
       .eq("user_id", userId),
@@ -151,20 +225,17 @@ async function getRewardState(userId: string) {
       .eq("user_id", userId),
   ]);
 
-  if (profileResult.error) throw new Error(profileResult.error.message);
   if (ledgerResult.error) throw new Error(ledgerResult.error.message);
   if (attendanceResult.error) throw new Error(attendanceResult.error.message);
-  if (todayAttendanceResult.error && todayAttendanceResult.error.code !== "PGRST116") {
-    throw new Error(todayAttendanceResult.error.message);
-  }
   if (sessionCountResult.error) throw new Error(sessionCountResult.error.message);
   if (storyCountResult.error) throw new Error(storyCountResult.error.message);
 
   const claimedReasons = new Set((ledgerResult.data ?? []).map((row) => row.reason));
   const attendanceKeys = new Set((attendanceResult.data ?? []).map((row) => getKstDateKey(new Date(row.created_at))));
-  const claimedToday = Boolean(todayAttendanceResult.data);
-  const streakDays = countAttendanceStreak(todayKey, attendanceKeys);
-  const profile = profileResult.data;
+  const claimedToday = attendanceKeys.has(todayKey);
+  const streakAnchorKey = claimedToday ? todayKey : getPreviousKstDateKey(todayKey, 1);
+  const streakDays = countAttendanceStreak(streakAnchorKey, attendanceKeys);
+  const calendar = buildAttendanceCalendar(todayKey, attendanceKeys);
 
   const conditionById: Record<Exclude<RewardId, "daily_attendance">, boolean> = {
     welcome_bonus: true,
@@ -191,8 +262,10 @@ async function getRewardState(userId: string) {
   return {
     profile,
     todayKey,
+    attendanceKeys,
     claimedToday,
     streakDays,
+    calendar,
     missions,
   };
 }
@@ -206,12 +279,7 @@ async function addRewardCredits({
 }) {
   if (awards.length === 0) return { creditsAwarded: 0, balanceAfter: 0 };
 
-  const { data: profile, error: profileError } = await supabaseAdmin
-    .from("profiles")
-    .select("credits")
-    .eq("id", userId)
-    .single();
-  if (profileError) throw new Error(profileError.message);
+  const profile = await ensureRewardProfile(userId);
 
   const currentCredits = Math.max(0, Number(profile?.credits ?? 0));
   const creditsAwarded = awards.reduce((sum, award) => sum + award.credits, 0);
@@ -249,7 +317,6 @@ export const getRewardCenter = createServerFn({ method: "GET" })
   .handler(async ({ context }): Promise<RewardCenter> => {
     const userId = (context as any).userId as string;
     const state = await getRewardState(userId);
-    const nextBonus = STREAK_BONUSES.find((bonus) => state.streakDays < bonus.days);
 
     return {
       credits: Math.max(0, Number(state.profile.credits ?? 0)),
@@ -258,9 +325,8 @@ export const getRewardCenter = createServerFn({ method: "GET" })
         claimedToday: state.claimedToday,
         streakDays: state.streakDays,
         baseCredits: DAILY_ATTENDANCE_CREDITS,
-        nextBonusText: nextBonus
-          ? `${nextBonus.days}일 연속 출석 시 +${nextBonus.credits}cr`
-          : "7일 연속 보상까지 완료했어요",
+        nextBonusText: weeklyBonusText(state.streakDays, state.claimedToday),
+        calendar: state.calendar,
       },
       missions: state.missions,
     };
@@ -279,22 +345,7 @@ export const claimReward = createServerFn({ method: "POST" })
     if (rewardId === "daily_attendance") {
       if (state.claimedToday) throw new Error("오늘 출석 보상은 이미 받았습니다.");
 
-      const attendanceKeys = new Set<string>();
-      for (let offset = 1; offset < 30; offset += 1) {
-        const key = getPreviousKstDateKey(state.todayKey, offset);
-        const { startIso, endIso } = getKstDayBounds(new Date(`${key}T12:00:00.000+09:00`));
-        const { data: existing, error } = await supabaseAdmin
-          .from("credit_ledger")
-          .select("id")
-          .eq("user_id", userId)
-          .eq("reason", "reward_daily_attendance")
-          .gte("created_at", startIso)
-          .lt("created_at", endIso)
-          .maybeSingle();
-        if (error && error.code !== "PGRST116") throw new Error(error.message);
-        if (!existing) break;
-        attendanceKeys.add(key);
-      }
+      const attendanceKeys = new Set(state.attendanceKeys);
       attendanceKeys.add(state.todayKey);
       const streakDays = countAttendanceStreak(state.todayKey, attendanceKeys);
       const awards = [
@@ -305,12 +356,11 @@ export const claimReward = createServerFn({ method: "POST" })
         },
       ];
 
-      for (const bonus of STREAK_BONUSES) {
-        if (streakDays !== bonus.days) continue;
+      if (streakDays > 0 && streakDays % WEEKLY_STREAK_DAYS === 0) {
         awards.push({
-          reason: `reward_attendance_streak_${bonus.days}`,
+          reason: "reward_attendance_streak_7",
           refId: state.todayKey,
-          credits: bonus.credits,
+          credits: WEEKLY_STREAK_BONUS_CREDITS,
         });
       }
 

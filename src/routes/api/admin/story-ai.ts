@@ -142,6 +142,42 @@ async function getStoryAndChapter(storyId: string, chapterId?: string) {
   return { row, chapter, chapters };
 }
 
+function buildWholeStoryChapter(row: any, chapters: ReturnType<typeof buildChaptersFromRow>) {
+  let body = "";
+  const assetSlots: AssetSlot[] = [];
+  for (const chapter of chapters) {
+    const chapterBody = String(chapter.body ?? "").trim();
+    const chapterSummary = String(chapter.summary ?? "").trim();
+    if (!chapterBody && !chapterSummary) continue;
+
+    const headerLines = [`[${chapter.episodeNumber}화 ${chapter.title}]`, chapterSummary ? `요약: ${chapterSummary}` : ""].filter(Boolean);
+    const header = `${body ? "\n\n" : ""}${headerLines.join("\n")}\n`;
+    const bodyOffset = body.length + header.length;
+    body += `${header}${chapterBody}`;
+
+    for (const slot of Array.isArray(chapter.assetSlots) ? chapter.assetSlots : []) {
+      assetSlots.push({
+        ...slot,
+        id: `${chapter.id}:${slot.id}`,
+        offset: bodyOffset + Math.max(0, Number(slot.offset) || 0),
+        caption: [chapter.title, slot.caption].filter(Boolean).join(" · "),
+      } as AssetSlot);
+    }
+  }
+
+  return {
+    id: "story_all",
+    title: "전체 스토리",
+    episodeNumber: 0,
+    isFree: true,
+    priceCredits: 0,
+    summary: String(recordOf(row?.character_card).storyOverview ?? row?.logline ?? ""),
+    body: body.trim(),
+    assetSlots: assetSlots.slice(0, 120),
+    characterAnalysis: safeArray(recordOf(row?.character_card).characterAnalysis),
+  };
+}
+
 async function translateChapter(body: string) {
   if (!body.trim()) throw new Error("번역할 본문이 없습니다.");
   const chunks = splitTextForTranslation(body);
@@ -366,6 +402,9 @@ function normalizeCharacterResult(item: Record<string, any>, index: number) {
       .slice(0, 8),
     isPrimary: Boolean(item.isPrimary ?? index === 0),
     chatEnabled: item.chatEnabled !== false,
+    visibleInFrontend: Boolean(
+      item.visibleInFrontend ?? item.publicVisible ?? item.showInFrontend ?? item.exposeInFrontend ?? item.chatEnabled !== false,
+    ),
     reusable: item.reusable !== false,
     emotion: compactText(item.emotion, 160),
     attitude: compactText(item.attitude, 240),
@@ -443,6 +482,13 @@ function mergeAnalyzedCharactersIntoCard(card: Record<string, any>, chapter: any
       avatarUrl: current.avatarUrl || analyzed.avatarUrl || null,
       showcaseAssets: mergeCharacterShowcaseAssets(current.showcaseAssets, analyzed.showcaseAssets, matchedSlots),
       chatEnabled: current.chatEnabled ?? true,
+      visibleInFrontend:
+        current.visibleInFrontend ??
+        current.publicVisible ??
+        current.showInFrontend ??
+        current.exposeInFrontend ??
+        analyzed.visibleInFrontend ??
+        true,
       reusable: current.reusable ?? true,
       chapterInsights: nextInsights,
     });
@@ -488,11 +534,11 @@ async function analyzeCharactersWithLlm(row: any, chapter: ReturnType<typeof bui
         role: "system",
         content: [
           "You are Lovetale's character continuity analyst.",
-          "Read Korean web-novel chapters and extract only important recurring or scene-driving characters.",
+          "Read Korean web-novel text and extract only important recurring or scene-driving characters.",
           "Use both text evidence and already-inserted image/video asset slots as production evidence.",
           "Return ONLY valid JSON. No markdown. No commentary.",
-          "Never invent character names. Use only names explicitly grounded in the chapter text or existing character list.",
-          "If the chapter has no grounded character names, return empty arrays.",
+          "Never invent character names. Use only names explicitly grounded in the provided story text or existing character list.",
+          "If the provided text has no grounded character names, return empty arrays.",
           "Do not use placeholders such as 상대 주인공, 주인공, 캐릭터1, 남자, 여자, CEO, 대표 as names.",
           "Each character must be usable as an AI chat persona.",
         ].join("\n"),
@@ -501,13 +547,13 @@ async function analyzeCharactersWithLlm(row: any, chapter: ReturnType<typeof bui
         role: "user",
         content: [
           "Return JSON object with fields:",
-          "characters: array of objects {id,name,role,persona,personality,relationship,speakingStyle,visualPrompt,tags,isPrimary,chatEnabled,reusable,emotion,attitude,traits,evidence,chatGuidance,assetHints,showcaseAssets}",
+          "characters: array of objects {id,name,role,persona,personality,relationship,speakingStyle,visualPrompt,tags,isPrimary,chatEnabled,visibleInFrontend,reusable,emotion,attitude,traits,evidence,chatGuidance,assetHints,showcaseAssets}",
           "characterAnalysis: array of objects {id,name,role,emotion,attitude,traits,relationship,evidence,chatGuidance,assetHints}",
           "",
           "Rules:",
-          "- Analyze the actual chapter text, dialogue labels, honorifics, actions, and relationships.",
+          "- Analyze the actual story text, dialogue labels, honorifics, actions, and relationships.",
           "- Analyze ASSET_SLOTS_JSON too. Slot textAround, caption, sceneDescription, and heatTier can reveal which character the asset belongs to.",
-          "- A valid name must appear in a dialogue label, direct address, speech attribution, existing registered character data, or the chapter body.",
+          "- A valid name must appear in a dialogue label, direct address, speech attribution, existing registered character data, or the story body.",
           "- evidence must quote or closely paraphrase the exact sentence that proves this character appears or speaks.",
           "- assetHints must be an array of {slotId, reason, usage}. Only reference slotIds that exist in ASSET_SLOTS_JSON.",
           "- showcaseAssets must be an array of {id,mediaUrl,mediaType,tier,minAffection,caption}. Use existing mediaUrl/mediaAssetId from ASSET_SLOTS_JSON when the slot visually belongs to the character.",
@@ -524,11 +570,12 @@ async function analyzeCharactersWithLlm(row: any, chapter: ReturnType<typeof bui
           `EXISTING_CHARACTERS_JSON: ${JSON.stringify(existingCharacters).slice(0, 5000)}`,
           `GROUNDED_NAME_CANDIDATES: ${JSON.stringify([...groundedNames])}`,
           `ASSET_SLOTS_JSON: ${JSON.stringify(assetContext).slice(0, 20000)}`,
-          `CHAPTER: ${chapter.episodeNumber}화 ${chapter.title}`,
-          `CHAPTER_SUMMARY: ${chapter.summary ?? ""}`,
+          `ANALYSIS_SCOPE: ${chapter.id === "story_all" ? "whole_story" : "chapter"}`,
+          `SECTION: ${chapter.episodeNumber ? `${chapter.episodeNumber}화 ` : ""}${chapter.title}`,
+          `SECTION_SUMMARY: ${chapter.summary ?? ""}`,
           "",
-          "CHAPTER_TEXT:",
-          body.slice(0, 26000),
+          "STORY_TEXT:",
+          body.slice(0, chapter.id === "story_all" ? 42000 : 26000),
         ].join("\n"),
       },
     ],
@@ -1613,23 +1660,39 @@ async function handlePost(request: Request) {
   }
 
   if (action === "analyze_characters") {
+    const scope = body.scope === "story" || !chapterId ? "story" : "chapter";
     const { row, chapter, chapters } = await getStoryAndChapter(storyId, chapterId);
-    const result = await analyzeCharactersWithLlm(row, chapter);
+    const targetChapter = scope === "story" ? buildWholeStoryChapter(row, chapters) : chapter;
+    const result = await analyzeCharactersWithLlm(row, targetChapter);
     const card = recordOf(row.character_card);
-    const nextChapters = chapters.map((item) =>
-      item.id === chapter.id
-        ? {
-            ...item,
-            characterAnalysis: result.characterAnalysis,
-          }
-        : item,
-    );
+    const nextChapters =
+      scope === "story"
+        ? chapters
+        : chapters.map((item) =>
+            item.id === chapter.id
+              ? {
+                  ...item,
+                  characterAnalysis: result.characterAnalysis,
+                }
+              : item,
+          );
     const nextCard = mergeAnalyzedCharactersIntoCard(
       {
         ...card,
         chapters: nextChapters,
+        ...(scope === "story"
+          ? {
+              characterAnalysis: result.characterAnalysis,
+              storyCharacterAnalysis: {
+                updatedAt: new Date().toISOString(),
+                providerLabel: result.providerLabel,
+                model: result.model,
+                tokensUsed: result.tokensUsed,
+              },
+            }
+          : {}),
       },
-      chapter,
+      targetChapter,
       result,
     );
     const { error } = await supabaseAdmin
@@ -1640,7 +1703,7 @@ async function handlePost(request: Request) {
       } as any)
       .eq("id", storyId);
     if (error) throw new Error(error.message);
-    return Response.json({ ok: true, ...result });
+    return Response.json({ ok: true, scope, ...result });
   }
 
   if (action === "generate_single_character") {

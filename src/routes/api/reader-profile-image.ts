@@ -21,6 +21,15 @@ async function getUser(request: Request) {
   return data.user;
 }
 
+async function requireStaffUser(userId: string) {
+  const { data, error } = await supabaseAdmin.from("user_roles").select("role").eq("user_id", userId);
+  if (error) throw new Error(error.message);
+  const roles = (data ?? []).map((row) => String(row.role));
+  if (!roles.includes("admin") && !roles.includes("editor")) {
+    throw new Error("forbidden");
+  }
+}
+
 async function ensureStoryMediaBucket() {
   const { data: buckets, error: listError } = await supabaseAdmin.storage.listBuckets();
   if (listError) throw new Error(listError.message);
@@ -41,7 +50,108 @@ function defaultImageModel(provider: string, configuredModel?: string | null) {
 
 function providerCanGenerateImages(provider: string, configuredModel?: string | null) {
   if (provider === "google") return true;
-  return false;
+  if (provider === "openai") return true;
+  return /image|dall|gpt-image|imagen/i.test(configuredModel ?? "");
+}
+
+function openAiCompatibleBases(rawBase: string): string[] {
+  const base = rawBase.replace(/\/$/, "");
+  const bases = [base];
+  if (!/\/v\d+(?:\/)?$/i.test(base)) bases.push(`${base}/v1`);
+  return [...new Set(bases)];
+}
+
+function imageAuthHeaders(provider: string, apiKey: string): Record<string, string> {
+  if (provider === "lovable") return { "Lovable-API-Key": apiKey };
+  return { Authorization: `Bearer ${apiKey}` };
+}
+
+function imageRequestBody(model: string, prompt: string) {
+  const body: Record<string, unknown> = {
+    model,
+    prompt,
+    n: 1,
+    size: "1024x1024",
+  };
+
+  if (/^dall-e/i.test(model)) {
+    body.response_format = "b64_json";
+  } else if (/^gpt-image/i.test(model)) {
+    body.output_format = "png";
+  }
+
+  return body;
+}
+
+async function readImageResponse(res: Response) {
+  const contentType = res.headers.get("content-type") ?? "image/png";
+  const buffer = await res.arrayBuffer();
+  return {
+    bytes: new Uint8Array(buffer),
+    mimeType: contentType.split(";")[0] || "image/png",
+  };
+}
+
+async function generateOpenAiCompatibleImage({
+  provider,
+  baseUrl,
+  apiKey,
+  model,
+  prompt,
+}: {
+  provider: string;
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  prompt: string;
+}) {
+  let lastError = "";
+  for (const base of openAiCompatibleBases(baseUrl)) {
+    const res = await fetch(`${base}/images/generations`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...imageAuthHeaders(provider, apiKey),
+      },
+      body: JSON.stringify(imageRequestBody(model, prompt)),
+    });
+
+    const contentType = res.headers.get("content-type") ?? "";
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      lastError = `HTTP ${res.status}: ${text.slice(0, 500)}`;
+      continue;
+    }
+    if (!contentType.includes("application/json")) {
+      lastError = `HTTP ${res.status}: image endpoint returned ${contentType || "unknown content type"}`;
+      continue;
+    }
+
+    const json: any = await res.json();
+    const image = json?.data?.[0];
+    const b64 = image?.b64_json;
+    if (typeof b64 === "string" && b64) {
+      return {
+        bytes: new Uint8Array(Buffer.from(b64, "base64")),
+        mimeType: `image/${json?.output_format || "png"}`,
+        tokens: Number(json?.usage?.total_tokens ?? 0),
+      };
+    }
+
+    if (typeof image?.url === "string" && image.url) {
+      const imageRes = await fetch(image.url);
+      if (!imageRes.ok) throw new Error(`Generated image download failed: HTTP ${imageRes.status}`);
+      const downloaded = await readImageResponse(imageRes);
+      return {
+        ...downloaded,
+        tokens: Number(json?.usage?.total_tokens ?? 0),
+      };
+    }
+
+    lastError = "image endpoint did not return b64_json or url";
+  }
+
+  throw new Error(lastError || "OpenAI-compatible image generation failed");
 }
 
 async function uploadProfileImage({
@@ -85,6 +195,14 @@ async function handlePost(request: Request) {
   const userPrompt = String(body.prompt ?? "").trim().slice(0, 700);
   const storyId = String(body.storyId ?? "").trim();
   const characterId = String(body.characterId ?? "").trim();
+  if (storyId || characterId) {
+    try {
+      await requireStaffUser(user.id);
+    } catch (error) {
+      if (error instanceof Error && error.message === "forbidden") return jsonError("forbidden", 403);
+      throw error;
+    }
+  }
   const prompt = [
     "Create a tasteful manga-style profile portrait for a romantic interactive story app.",
     "Portrait should be suitable as a small chat avatar.",
@@ -103,7 +221,7 @@ async function handlePost(request: Request) {
   );
   if (!providers.length) {
     return jsonError(
-      "이미지 생성은 관리자 LLM API에 등록된 Gemini 이미지 API만 사용합니다. Google provider를 image_generation 용도로 활성화해 주세요.",
+      "이미지 생성에 사용할 수 있는 관리자 LLM API가 없습니다. /admin/llm에서 Google Imagen 또는 OpenAI gpt-image/dall-e 계열 provider를 image_generation 용도로 활성화해 주세요.",
       503,
     );
   }
@@ -138,27 +256,21 @@ async function handlePost(request: Request) {
         return Response.json({ ok: true, ...uploaded, providerLabel: row.label, model });
       }
 
-      const { createOpenAICompatible } = await import("@ai-sdk/openai-compatible");
-      const compat = createOpenAICompatible({
-        name: `reader-profile-${row.provider}`,
-        baseURL: (row.base_url?.trim() || DEFAULT_BASE_URLS[row.provider] || DEFAULT_BASE_URLS.openai).replace(/\/$/, ""),
-        headers: { Authorization: `Bearer ${row.api_key ?? ""}` },
-      });
-      const result = await generateImage({
-        model: compat.imageModel(model),
+      const result = await generateOpenAiCompatibleImage({
+        provider: row.provider,
+        baseUrl: (row.base_url?.trim() || DEFAULT_BASE_URLS[row.provider] || DEFAULT_BASE_URLS.openai).replace(/\/$/, ""),
+        apiKey: row.api_key ?? "",
+        model,
         prompt,
-        n: 1,
-        aspectRatio: "1:1",
-        maxRetries: 0,
       });
       const uploaded = await uploadProfileImage({
         userId: user.id,
-        bytes: result.image.uint8Array,
-        mimeType: result.image.mediaType || "image/png",
+        bytes: result.bytes,
+        mimeType: result.mimeType || "image/png",
         storyId,
         characterId,
       });
-      await recordAdminUsage(row.id, 0, true, "image_generation");
+      await recordAdminUsage(row.id, result.tokens ?? 0, true, "image_generation");
       return Response.json({ ok: true, ...uploaded, providerLabel: row.label, model });
     } catch (error: any) {
       lastError = String(error?.message ?? error);

@@ -1,5 +1,6 @@
 import { supabase } from "@/integrations/supabase/client";
 import { createServerFn } from "@/lib/_mock/runtime";
+import { fetchWithSupabaseAuth } from "@/lib/supabase-auth-fetch";
 
 const DEFAULT_SHARE_PERCENT = 70;
 
@@ -17,23 +18,8 @@ export type CreatorRevenueRule = {
   updatedAt: string | null;
 };
 
-async function getAccessToken() {
-  const { data, error } = await supabase.auth.getSession();
-  if (error) throw new Error(error.message);
-  const token = data.session?.access_token;
-  if (!token) throw new Error("Unauthorized");
-  return token;
-}
-
 async function revenueRulesApi<T>(init?: RequestInit): Promise<T> {
-  const token = await getAccessToken();
-  const res = await fetch("/api/admin/revenue-rules", {
-    ...init,
-    headers: {
-      ...(init?.headers ?? {}),
-      Authorization: `Bearer ${token}`,
-    },
-  });
+  const res = await fetchWithSupabaseAuth("/api/admin/revenue-rules", init);
   if (!res.ok) {
     const contentType = res.headers.get("content-type") ?? "";
     const raw = await res.text().catch(() => "");

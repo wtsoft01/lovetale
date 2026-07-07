@@ -1,6 +1,7 @@
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
 import { createServerFn } from "@/lib/_mock/runtime";
+import { getFreshAccessToken } from "@/lib/supabase-auth-fetch";
 
 type UserStory = Pick<
   Database["public"]["Tables"]["user_stories"]["Row"],
@@ -25,6 +26,7 @@ export type StoryCharacter = {
   tags: string[];
   isPrimary: boolean;
   chatEnabled: boolean;
+  visibleInFrontend: boolean;
   reusable: boolean;
   showcaseAssets?: CharacterVisualAsset[];
 };
@@ -221,6 +223,14 @@ function createVirtualAvatarDataUrl(
 
 function normalizeCharacter(character: Record<string, any>, index: number): StoryCharacter {
   const primary = Boolean(character.isPrimary ?? character.primary ?? index === 0);
+  const chatEnabled = character.chatEnabled !== false;
+  const visibleInFrontend = Boolean(
+    character.visibleInFrontend ??
+      character.publicVisible ??
+      character.showInFrontend ??
+      character.exposeInFrontend ??
+      chatEnabled,
+  );
   return {
     id: asString(character.id, newId("char")),
     name: asString(character.name),
@@ -236,7 +246,8 @@ function normalizeCharacter(character: Record<string, any>, index: number): Stor
     avatarUrl: asString(character.avatarUrl ?? character.avatar_url) || null,
     tags: asStringArray(character.tags),
     isPrimary: primary,
-    chatEnabled: character.chatEnabled !== false,
+    chatEnabled,
+    visibleInFrontend,
     reusable: character.reusable !== false,
     showcaseAssets: normalizeVisualAssets(character.showcaseAssets ?? character.showcase_assets ?? character.visualAssets),
   };
@@ -260,6 +271,7 @@ function charactersFromCard(card: Record<string, any>): StoryCharacter[] {
             tags: card.tags ?? [],
             isPrimary: true,
             chatEnabled: true,
+            visibleInFrontend: true,
             reusable: true,
           },
         ]
@@ -402,7 +414,7 @@ function toStoryRow(story: UserStory): CharacterStoryRow {
   };
 }
 
-function sanitizeCharacters(characters: StoryCharacter[], storyId = "") {
+function sanitizeCharacters(characters: StoryCharacter[]) {
   const rows = characters
     .map((character, index) =>
       normalizeCharacter(
@@ -422,11 +434,11 @@ function sanitizeCharacters(characters: StoryCharacter[], storyId = "") {
   return rows.map((character, index) => ({
     ...character,
     isPrimary: index === primaryIndex,
-    avatarUrl: character.avatarUrl || createVirtualAvatarDataUrl(character, storyId),
   }));
 }
 
 async function requireStaff(): Promise<string> {
+  await getFreshAccessToken();
   const { data: authData, error: authError } = await supabase.auth.getUser();
   if (authError || !authData.user) throw new Error("Unauthorized");
 
@@ -492,31 +504,20 @@ export const listPublicChatCharacters = createServerFn({ method: "GET" }).handle
       const row = toStoryRow(story as UserStory);
       const storyText = storyTextForCharacterRanking(story as UserStory);
       const ranked = row.characters
-        .filter((character) => character.chatEnabled)
+        .filter((character) => character.chatEnabled && character.visibleInFrontend)
         .map((character, index) => ({
           character,
           ...characterImportance(character, storyText, index),
         }))
-        .filter(
-          (item) =>
-            item.dialogueCount > 0 ||
-            item.mentionCount >= 2 ||
-            item.character.isPrimary ||
-            Boolean(item.character.avatarUrl),
-        )
         .sort((a, b) => {
           const imageDelta = Number(Boolean(b.character.avatarUrl)) - Number(Boolean(a.character.avatarUrl));
           if (imageDelta !== 0) return imageDelta;
           return b.mainScore - a.mainScore;
-        })
-        .slice(0, 5)
-        .sort((a, b) => b.mainScore - a.mainScore)
-        .slice(0, Math.max(2, Math.min(5, row.characters.length)));
+        });
 
-      return row.characters
-        .filter((character) => ranked.some((item) => item.character.id === character.id))
-        .map((character) => {
-          const score = ranked.find((item) => item.character.id === character.id);
+      return ranked
+        .map((score, index) => {
+          const { character } = score;
           const avatarIsVirtual = !character.avatarUrl;
           return {
             ...withVirtualAvatar(character, row.storyId),
@@ -529,7 +530,7 @@ export const listPublicChatCharacters = createServerFn({ method: "GET" }).handle
             mainScore: score?.mainScore ?? 0,
             dialogueCount: score?.dialogueCount ?? 0,
             mentionCount: score?.mentionCount ?? 0,
-            rankInStory: ranked.findIndex((item) => item.character.id === character.id) + 1,
+            rankInStory: index + 1,
           };
         });
     });
@@ -553,7 +554,7 @@ export const saveStoryCharacters = createServerFn({ method: "POST" })
     await requireStaff();
     const story = await loadStory(data.storyId);
     const card = recordOf(story.character_card);
-    const characters = sanitizeCharacters(data.characters, story.id);
+    const characters = sanitizeCharacters(data.characters);
     const primary = characters.find((character) => character.isPrimary) ?? characters[0];
 
     const patch: StoryUpdate = {

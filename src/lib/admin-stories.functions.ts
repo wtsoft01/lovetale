@@ -1,12 +1,8 @@
 import { createServerFn } from "@/lib/_mock/runtime";
-import { createServerFn as createTanStackServerFn } from "@tanstack/react-start";
-import { supabase } from "@/integrations/supabase/client";
-import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { fetchWithSupabaseAuth } from "@/lib/supabase-auth-fetch";
 import type { Database, Json } from "@/integrations/supabase/types";
 
 type UserStory = Database["public"]["Tables"]["user_stories"]["Row"];
-type StaffRole = "admin" | "editor" | "moderator";
 type HomePlacement = Pick<
   Database["public"]["Tables"]["home_placements"]["Row"],
   "slot" | "sort_order" | "is_active"
@@ -71,116 +67,14 @@ export type AdminStoryRow = {
   }>;
 };
 
-const SUPER_ADMIN_EMAIL = "admin@lovetale.org";
-const STAFF_ROLES: StaffRole[] = ["admin", "editor", "moderator"];
-
-function recordOf(value: unknown): Record<string, any> {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, any>) : {};
-}
-
-async function ensureSuperAdminRoles(userId: string) {
-  const { error } = await supabaseAdmin.from("user_roles").upsert(
-    STAFF_ROLES.map((role) => ({ user_id: userId, role })),
-    { onConflict: "user_id,role" },
-  );
-  if (error) throw new Error(error.message);
-}
-
-async function requireStoryManager(context: any) {
-  const userId = String(context?.userId ?? "");
-  const email = String(context?.claims?.email ?? "").trim().toLowerCase();
-  if (!userId) throw new Error("Unauthorized");
-  if (email === SUPER_ADMIN_EMAIL) await ensureSuperAdminRoles(userId);
-
-  const { data, error } = await supabaseAdmin.from("user_roles").select("role").eq("user_id", userId);
-  if (error) throw new Error(error.message);
-  const roles = (data ?? []).map((row) => row.role as StaffRole).filter((role): role is StaffRole => STAFF_ROLES.includes(role));
-  if (!roles.includes("admin") && !roles.includes("editor")) throw new Error("Forbidden");
-}
-
-function toAdminStoryRow(row: UserStory): AdminStoryRow {
-  const card = recordOf(row.character_card);
-  const storyRpg = recordOf(card.storyRpg);
-  const chapters = Array.isArray(card.chapters) ? card.chapters : [];
-  const characters = Array.isArray(card.characters) ? card.characters : [];
-  const rpgScenes = Array.isArray(storyRpg.scenes) ? storyRpg.scenes : [];
-  const rawContentType = String(card.contentType ?? "web_novel");
-  const sourceStoryId = String(storyRpg.sourceStoryId || card.sourceStoryId || "").trim() || null;
-  const hasStoryRpgWork =
-    Boolean(sourceStoryId) || storyRpg.enabled === true || Boolean(storyRpg.generatedFrom) || rpgScenes.length > 0;
-  const contentType =
-    rawContentType === "story_rpg" && hasStoryRpgWork
-      ? "story_rpg"
-      : rawContentType === "story_rpg"
-        ? String(card.sourceContentType || storyRpg.sourceContentType || "web_novel")
-        : rawContentType;
-  const chapterRows = chapters.map((chapter: any, index: number) => {
-    const body = typeof chapter?.body === "string" ? chapter.body : "";
-    const assetSlots = Array.isArray(chapter?.assetSlots) ? chapter.assetSlots : [];
-    return {
-      id: String(chapter?.id ?? `chapter-${index + 1}`),
-      title: String(chapter?.title ?? `Episode ${index + 1}`),
-      episodeNumber: Number(chapter?.episodeNumber ?? index + 1),
-      summary: String(chapter?.summary ?? ""),
-      isFree: Boolean(chapter?.isFree ?? index === 0),
-      priceCredits: Math.max(0, Number(chapter?.priceCredits ?? 0)),
-      bodyChars: body.length,
-      assetSlotsCount: assetSlots.length,
-    };
-  });
-
-  return {
-    id: row.id,
-    title: row.title,
-    logline: row.logline,
-    cover_url: row.cover_url,
-    status: row.status,
-    is_public: row.is_public,
-    is_listed: row.is_listed,
-    price_credits: row.price_credits,
-    audience: row.audience,
-    max_heat: row.max_heat,
-    tags: row.tags ?? [],
-    content_type: contentType,
-    source_story_id: sourceStoryId,
-    source_title: String(storyRpg.sourceTitle || card.sourceTitle || "").trim() || null,
-    rpg_scenes_count: rpgScenes.length,
-    rpg_endings_total: Math.max(0, Number(storyRpg.endingsTotal ?? 0) || 0),
-    story_overview: String(card.storyOverview ?? row.logline ?? ""),
-    chapters: chapterRows,
-    chapters_count: chapterRows.length,
-    free_chapters_count: chapterRows.filter((chapter) => chapter.isFree).length,
-    characters_count: characters.length || (card.name ? 1 : 0),
-    body_chars: typeof row.body_text === "string" ? row.body_text.length : 0,
-    asset_slots_count: Array.isArray(row.asset_slots) ? row.asset_slots.length : 0,
-    user_id: row.user_id,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-    beats_count: Array.isArray(row.beats) ? row.beats.length : 0,
-  };
-}
-
-async function getAccessToken() {
-  const { data, error } = await supabase.auth.getSession();
-  if (error) throw new Error(error.message);
-  const token = data.session?.access_token;
-  if (!token) throw new Error("Unauthorized");
-  return token;
-}
-
 async function adminStoriesApi<T>(path: string, init?: RequestInit): Promise<T> {
-  const token = await getAccessToken();
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), 25_000);
   let res: Response;
   try {
-    res = await fetch(`/api/admin/stories${path}`, {
+    res = await fetchWithSupabaseAuth(`/api/admin/stories${path}`, {
       ...init,
       signal: init?.signal ?? controller.signal,
-      headers: {
-        ...(init?.headers ?? {}),
-        Authorization: `Bearer ${token}`,
-      },
     });
   } catch (error: any) {
     if (error?.name === "AbortError") {
@@ -212,31 +106,21 @@ async function adminStoriesApi<T>(path: string, init?: RequestInit): Promise<T> 
   return (await res.json()) as T;
 }
 
-export const listAdminStories = createTanStackServerFn({ method: "GET" })
-  .middleware([requireSupabaseAuth])
+export const listAdminStories = createServerFn({ method: "GET" })
   .inputValidator(
     (input: any) =>
       (input ?? {}) as { q?: string; status?: "all" | "draft" | "published"; contentType?: string },
   )
-  .handler(async ({ data, context }): Promise<AdminStoryRow[]> => {
-    await requireStoryManager(context);
+  .handler(async ({ data }): Promise<AdminStoryRow[]> => {
+    const params = new URLSearchParams();
+    if (data.q) params.set("q", data.q);
+    if (data.status) params.set("status", data.status);
+    if (data.contentType) params.set("contentType", data.contentType);
 
-    const { data: rowsData, error } = await supabaseAdmin
-      .from("user_stories")
-      .select("*")
-      .order("updated_at", { ascending: false })
-      .limit(300);
-    if (error) throw new Error(error.message);
-
-    let rows = (rowsData ?? []).map((row) => toAdminStoryRow(row as UserStory));
-    if (data.status === "published") rows = rows.filter((row) => row.is_public && row.is_listed);
-    if (data.status === "draft") rows = rows.filter((row) => !row.is_public || !row.is_listed);
-    if (data.contentType && data.contentType !== "all") rows = rows.filter((row) => row.content_type === data.contentType);
-    const q = String(data.q ?? "").trim().toLowerCase();
-    if (q) {
-      rows = rows.filter((row) => `${row.title} ${row.logline ?? ""} ${row.story_overview}`.toLowerCase().includes(q));
-    }
-    return rows;
+    const payload = await adminStoriesApi<{ ok: true; rows: AdminStoryRow[] }>(
+      params.toString() ? `?${params.toString()}` : "",
+    );
+    return payload.rows;
   });
 
 export const getAdminStory = createServerFn({ method: "GET" })

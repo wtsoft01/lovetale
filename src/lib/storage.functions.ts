@@ -1,19 +1,9 @@
 import { createServerFn } from "@/lib/_mock/runtime";
-import { supabase } from "@/integrations/supabase/client";
-
-async function getAccessToken() {
-  const { data, error } = await supabase.auth.getSession();
-  if (error) throw new Error(error.message);
-  const token = data.session?.access_token;
-  if (!token) throw new Error("Unauthorized");
-  return token;
-}
+import { fetchWithSupabaseAuth } from "@/lib/supabase-auth-fetch";
 
 export async function ensureStoryMediaBucket() {
-  const token = await getAccessToken();
-  const res = await fetch("/api/storage/ensure-story-media", {
+  const res = await fetchWithSupabaseAuth("/api/storage/ensure-story-media", {
     method: "POST",
-    headers: { Authorization: `Bearer ${token}` },
   });
   if (!res.ok) {
     const raw = await res.text().catch(() => "");

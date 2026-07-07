@@ -1,5 +1,5 @@
-import { supabase } from "@/integrations/supabase/client";
 import { createServerFn } from "@/lib/_mock/runtime";
+import { fetchWithSupabaseAuth } from "@/lib/supabase-auth-fetch";
 
 export type StaffRole = "admin" | "editor" | "moderator";
 
@@ -11,23 +11,8 @@ export type StaffUserRow = {
   createdAt: string;
 };
 
-async function getAccessToken() {
-  const { data, error } = await supabase.auth.getSession();
-  if (error) throw new Error(error.message);
-  const token = data.session?.access_token;
-  if (!token) throw new Error("Unauthorized");
-  return token;
-}
-
 async function staffApi<T>(init?: RequestInit): Promise<T> {
-  const token = await getAccessToken();
-  const res = await fetch("/api/admin/staff", {
-    ...init,
-    headers: {
-      ...(init?.headers ?? {}),
-      Authorization: `Bearer ${token}`,
-    },
-  });
+  const res = await fetchWithSupabaseAuth("/api/admin/staff", init);
   if (!res.ok) {
     const contentType = res.headers.get("content-type") ?? "";
     const raw = await res.text().catch(() => "");

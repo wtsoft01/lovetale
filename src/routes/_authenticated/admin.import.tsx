@@ -20,10 +20,10 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { supabase } from "@/integrations/supabase/client";
 import { useServerFn } from "@/lib/_mock/runtime";
 import { createDraftStory, listAdminStories } from "@/lib/admin-stories.functions";
 import { ensureStoryMediaBucket } from "@/lib/storage.functions";
+import { fetchWithSupabaseAuth } from "@/lib/supabase-auth-fetch";
 import { normalizeProseLineBreaks } from "@/lib/text-normalization";
 import { cn } from "@/lib/utils";
 
@@ -75,26 +75,16 @@ type AiMetadataResult = {
   tags?: string[];
 };
 
-async function getAccessToken() {
-  const { data, error } = await supabase.auth.getSession();
-  if (error) throw new Error(error.message);
-  const token = data.session?.access_token;
-  if (!token) throw new Error("로그인이 필요합니다.");
-  return token;
-}
-
 async function requestImportAi(input: {
   mode: "episode_summary" | "story_metadata";
   title: string;
   text: string;
   storyOverview?: string;
 }) {
-  const token = await getAccessToken();
-  const response = await fetch("/api/admin/import-summary", {
+  const response = await fetchWithSupabaseAuth("/api/admin/import-summary", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
     },
     body: JSON.stringify(input),
   });

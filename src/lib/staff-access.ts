@@ -1,4 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
+import { fetchWithSupabaseAuth } from "@/lib/supabase-auth-fetch";
 
 const STAFF_ROLES = ["admin", "editor", "moderator"] as const;
 const SUPER_ADMIN_EMAIL = "admin@lovetale.org";
@@ -32,12 +33,11 @@ function toStaffAccess(roles: StaffRole[]): StaffAccess {
 }
 
 async function getServerStaffAccess(accessToken?: string): Promise<StaffAccess | null> {
-  const token = accessToken ?? (await supabase.auth.getSession()).data.session?.access_token;
-  if (!token) return null;
-
-  const response = await fetch("/api/auth/staff-access", {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  const response = accessToken
+    ? await fetch("/api/auth/staff-access", {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      }).then((res) => (res.status === 401 ? fetchWithSupabaseAuth("/api/auth/staff-access") : res))
+    : await fetchWithSupabaseAuth("/api/auth/staff-access");
   if (!response.ok) return null;
 
   const result = await response.json().catch(() => null);

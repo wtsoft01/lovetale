@@ -44,6 +44,7 @@ function normalizeChoice(value: Record<string, any>, index: number): StoryRpgCho
     tone: asText(value.tone, "선택"),
     result: asText(value.result, "선택에 따라 다음 장면의 분위기가 달라집니다."),
     routeHint: asText(value.routeHint, asText(value.route, "Main Route")),
+    image: asText(value.image, asText(value.imageUrl, asText(value.image_url, asText(value.mediaUrl, asText(value.media_url))))) || undefined,
     nextSceneId: asText(value.nextSceneId, asText(value.nextScene, "")) || undefined,
     affectionDelta: asNumber(value.affectionDelta, 1),
     tensionDelta: asNumber(value.tensionDelta, 0),
@@ -108,36 +109,102 @@ function normalizeScene(value: Record<string, any>, index: number, fallbackChoic
   };
 }
 
-function defaultChoices(currentRoute: string): StoryRpgChoice[] {
+const GENERIC_CHOICE_PATTERNS = [
+  /조심스럽게/,
+  /상황을.*살핀다/,
+  /상황을.*이해/,
+  /상대의 감정/,
+  /직접적인 질문/,
+  /^\d+번 선택지$/,
+];
+
+function isGenericChoice(choice: StoryRpgChoice) {
+  return GENERIC_CHOICE_PATTERNS.some((pattern) => pattern.test(choice.label));
+}
+
+function shouldUseContextChoices(choices: StoryRpgChoice[]) {
+  if (!choices.length) return true;
+  const labels = choices.map((choice) => choice.label.trim()).filter(Boolean);
+  if (new Set(labels).size < labels.length) return true;
+  return choices.filter(isGenericChoice).length >= Math.ceil(choices.length / 2);
+}
+
+function cleanChoiceFocus(value: string, fallback: string) {
+  const firstSentence = compactText(value, fallback)
+    .replace(/[“”"']/g, "")
+    .split(/[.!?。？！\n]/)[0]
+    ?.trim();
+  const withoutSpeaker = (firstSentence || fallback).replace(/^[가-힣A-Za-z0-9_\-\s]{1,12}\s*[:：]\s*/, "");
+  const clipped = withoutSpeaker
+    .replace(/[()[\]{}<>]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 18)
+    .trim();
+  return clipped || fallback;
+}
+
+function objectParticle(value: string) {
+  const last = value.trim().at(-1);
+  if (!last) return "을";
+  const code = last.charCodeAt(0);
+  if (code < 0xac00 || code > 0xd7a3) return "을";
+  return (code - 0xac00) % 28 === 0 ? "를" : "을";
+}
+
+function chapterAssetUrl(chapter: Record<string, any>) {
+  const asset = arrayOf<Record<string, any>>(chapter.assetSlots ?? chapter.asset_slots)[0] ?? {};
+  return asText(asset.media_url, asText(asset.mediaUrl, asText(asset.url))) || undefined;
+}
+
+function buildContextChoices(input: {
+  currentRoute: string;
+  leadName: string;
+  sceneText: string;
+  chapters: Record<string, any>[];
+}): StoryRpgChoice[] {
+  const chapterOne = input.chapters[0] ?? {};
+  const chapterTwo = input.chapters[1] ?? chapterOne;
+  const chapterThree = input.chapters[2] ?? chapterTwo;
+  const sourceOne = chapterTitle(chapterOne, "첫 장면") || input.sceneText;
+  const sourceTwo = chapterBody(chapterTwo) || chapterTitle(chapterTwo, "상대의 반응") || input.sceneText;
+  const sourceThree = chapterBody(chapterThree) || chapterTitle(chapterThree, "갈등의 단서") || input.sceneText;
+  const clueFocus = cleanChoiceFocus(sourceOne, "눈앞의 단서");
+  const emotionFocus = cleanChoiceFocus(sourceTwo, `${input.leadName}의 반응`);
+  const decisionFocus = cleanChoiceFocus(sourceThree, "위험한 판단");
+
   return [
     {
-      label: "조심스럽게 상황을 이해한다",
-      effect: "+2 신뢰",
-      tone: "관찰",
-      result: "감정보다 단서를 먼저 따라가며 관계의 균형을 지키는 선택입니다.",
-      routeHint: currentRoute,
+      label: `${clueFocus}${objectParticle(clueFocus)} 확인한다`,
+      effect: "단서 확보",
+      tone: "조사",
+      result: `${clueFocus}${objectParticle(clueFocus)} 천천히 확인하며 다음 장면의 실마리를 잡습니다.`,
+      routeHint: input.currentRoute,
+      image: chapterAssetUrl(chapterOne),
       nextSceneId: "scene-observe",
       affectionDelta: 1,
-      tensionDelta: -1,
+      tensionDelta: 0,
       trustDelta: 2,
     },
     {
-      label: "상대의 감정에 한 걸음 다가간다",
-      effect: "+3 호감도",
-      tone: "몰입",
-      result: "상대의 반응이 가까이 피어오르며 감정선이 깊어집니다.",
-      routeHint: currentRoute,
+      label: `${input.leadName}에게 ${emotionFocus}에 대해 묻는다`,
+      effect: "감정 확인",
+      tone: "대화",
+      result: `${input.leadName}의 반응을 직접 확인하며 관계의 방향을 정합니다.`,
+      routeHint: input.currentRoute,
+      image: chapterAssetUrl(chapterTwo),
       nextSceneId: "scene-approach",
-      affectionDelta: 3,
+      affectionDelta: 2,
       tensionDelta: 1,
       trustDelta: 1,
     },
     {
-      label: "직접적인 질문으로 흔든다",
-      effect: "+3 긴장도",
-      tone: "직진",
-      result: "숨겨진 갈등이 빠르게 드러나며 장면의 긴장감이 높아집니다.",
+      label: `${decisionFocus}${objectParticle(decisionFocus)} 감수하고 움직인다`,
+      effect: "분기 선택",
+      tone: "판단",
+      result: `${decisionFocus}${objectParticle(decisionFocus)} 외면하지 않고 선택하면서 장면의 긴장감이 달라집니다.`,
       routeHint: "Tension Route",
+      image: chapterAssetUrl(chapterThree),
       nextSceneId: "scene-confront",
       affectionDelta: 0,
       tensionDelta: 3,
@@ -212,7 +279,8 @@ export function toStoryRpg(row: any, index = 0): StoryRpg {
   const sceneText = asText(storyRpg.startSceneText, excerpt(chapterBody(firstChapter) || compactText(row?.body_text, logline), 900));
   const partnerLine = asText(storyRpg.partnerLine, `${leadName}이(가) 당신의 선택을 기다립니다.`);
   const configuredChoices = arrayOf<Record<string, any>>(storyRpg.choices).map(normalizeChoice);
-  const normalizedChoices = configuredChoices.length ? configuredChoices : defaultChoices(currentRoute);
+  const contextChoices = buildContextChoices({ currentRoute, leadName, sceneText, chapters });
+  const normalizedChoices = shouldUseContextChoices(configuredChoices) ? contextChoices : configuredChoices;
   const configuredScenes = arrayOf<Record<string, any>>(storyRpg.scenes);
   const routes = arrayOf<Record<string, any>>(storyRpg.routes);
   const generatedScenes = buildGeneratedScenes({

@@ -3,10 +3,10 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@/lib/_mock/runtime";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Bot,
   BookOpen,
   CheckCircle2,
   Copy,
+  Eye,
   Gamepad2,
   Library,
   Loader2,
@@ -30,6 +30,7 @@ import {
 } from "@/lib/admin-characters.functions";
 import { analyzeStoryCharacters } from "@/lib/admin-story-ai.functions";
 import { ensureStoryMediaBucket } from "@/lib/storage.functions";
+import { fetchWithSupabaseAuth } from "@/lib/supabase-auth-fetch";
 import { resolveStoryMediaSource } from "@/lib/story-media-url";
 import { supabase } from "@/integrations/supabase/client";
 import { Badge } from "@/components/ui/badge";
@@ -68,10 +69,8 @@ function CharactersPage() {
   const [storyOverview, setStoryOverview] = useState("");
   const [drafts, setDrafts] = useState<CharacterDraft[]>([]);
   const [selectedCharacterId, setSelectedCharacterId] = useState("");
-  const [analysisChapterId, setAnalysisChapterId] = useState("");
   const [contentFilter, setContentFilter] = useState<"all" | "story" | "story_rpg">("all");
   const [topicFilter, setTopicFilter] = useState("all");
-  const [bulkAnalysis, setBulkAnalysis] = useState({ running: false, done: 0, total: 0 });
 
   const storiesQ = useQuery({ queryKey: ["admin_character_stories"], queryFn: () => list() });
 
@@ -118,14 +117,19 @@ function CharactersPage() {
       .map((character) => ({ ...character, storyId: story.storyId, storyTitle: story.storyTitle })),
   );
   const chatEnabledCount = drafts.filter((character) => character.chatEnabled).length;
+  const frontendVisibleCount = drafts.filter((character) => character.chatEnabled && character.visibleInFrontend).length;
   const completeCount = drafts.filter((character) => characterQuality(character).score >= 80).length;
   const storyCount = stories.filter((story) => story.contentType !== "story_rpg").length;
   const storyGameCount = stories.filter((story) => story.contentType === "story_rpg").length;
-  const analysisChapter =
-    selectedStory?.chapters.find((chapter) => chapter.id === analysisChapterId) ??
-    selectedStory?.chapters.find((chapter) => chapter.bodyChars > 0) ??
-    selectedStory?.chapters[0] ??
-    null;
+  const selectedStoryStats = useMemo(() => {
+    const chapters = selectedStory?.chapters ?? [];
+    return {
+      chapterCount: chapters.length,
+      bodyChars: chapters.reduce((sum, chapter) => sum + chapter.bodyChars, 0),
+      assetSlotCount: chapters.reduce((sum, chapter) => sum + chapter.assetSlotCount, 0),
+      characterAnalysisCount: chapters.reduce((sum, chapter) => sum + chapter.characterAnalysisCount, 0),
+    };
+  }, [selectedStory]);
 
   useEffect(() => {
     if (!selectedStoryId && selectedStory) {
@@ -141,7 +145,6 @@ function CharactersPage() {
       : [toDraft(createBlankCharacter(true))];
     setDrafts(nextDrafts);
     setSelectedCharacterId(nextDrafts[0]?.id ?? "");
-    setAnalysisChapterId(selectedStory.chapters.find((chapter) => chapter.bodyChars > 0)?.id ?? selectedStory.chapters[0]?.id ?? "");
   }, [selectedStory?.storyId]);
 
   const saveM = useMutation({
@@ -168,11 +171,12 @@ function CharactersPage() {
 
   const analyzeM = useMutation({
     mutationFn: () => {
-      if (!selectedStory?.storyId || !analysisChapter?.id) throw new Error("분석할 회차가 없습니다.");
-      return analyzeCharacters({ data: { storyId: selectedStory.storyId, chapterId: analysisChapter.id } });
+      if (!selectedStory?.storyId) throw new Error("분석할 스토리가 없습니다.");
+      if (selectedStoryStats.bodyChars < 80) throw new Error("분석할 본문이 충분하지 않습니다.");
+      return analyzeCharacters({ data: { storyId: selectedStory.storyId, scope: "story" } });
     },
     onSuccess: (result) => {
-      toast.success(`캐릭터 분석을 반영했습니다. ${result.characters?.length ?? 0}명 감지`);
+      toast.success(`전체 스토리 기준 캐릭터 분석을 반영했습니다. ${result.characters?.length ?? 0}명 감지`);
       qc.invalidateQueries({ queryKey: ["admin_character_stories"] });
       qc.invalidateQueries({ queryKey: ["admin_stories"] });
       qc.invalidateQueries({ queryKey: ["public_chat_characters"] });
@@ -183,33 +187,6 @@ function CharactersPage() {
     },
     onError: (error: Error) => toast.error(error.message || "캐릭터 분석에 실패했습니다."),
   });
-
-  async function analyzeAllChapters() {
-    if (!selectedStory?.storyId) return;
-    const chapters = selectedStory.chapters.filter((chapter) => chapter.bodyChars > 0);
-    if (!chapters.length) {
-      toast.error("분석할 본문이 있는 회차가 없습니다.");
-      return;
-    }
-    setBulkAnalysis({ running: true, done: 0, total: chapters.length });
-    try {
-      for (let index = 0; index < chapters.length; index += 1) {
-        const chapter = chapters[index];
-        await analyzeCharacters({ data: { storyId: selectedStory.storyId, chapterId: chapter.id } });
-        setBulkAnalysis({ running: true, done: index + 1, total: chapters.length });
-      }
-      toast.success(`전체 회차 캐릭터 분석을 완료했습니다. ${chapters.length}개 회차`);
-      qc.invalidateQueries({ queryKey: ["admin_character_stories"] });
-      qc.invalidateQueries({ queryKey: ["admin_stories"] });
-      qc.invalidateQueries({ queryKey: ["public_chat_characters"] });
-      qc.invalidateQueries({ queryKey: ["character_chat_story", selectedStory.storyId] });
-      qc.invalidateQueries({ queryKey: ["user_story_unified", selectedStory.storyId] });
-    } catch (error: any) {
-      toast.error(error?.message ?? "전체 회차 분석 중 오류가 발생했습니다.");
-    } finally {
-      setBulkAnalysis((current) => ({ ...current, running: false }));
-    }
-  }
 
   function patchCharacter(id: string, patch: Partial<CharacterDraft>) {
     setDrafts((current) =>
@@ -273,6 +250,7 @@ function CharactersPage() {
           <StatusPill icon={Gamepad2} label="스토리게임" value={storyGameCount} />
           <StatusPill icon={Library} label="재사용 캐릭터" value={reusableCharacters.length} />
           <StatusPill icon={MessageCircle} label="대화 가능" value={chatEnabledCount} />
+          <StatusPill icon={Eye} label="프론트 노출" value={frontendVisibleCount} />
           <StatusPill icon={CheckCircle2} label="프로필 완성" value={completeCount} />
         </div>
       </header>
@@ -383,26 +361,13 @@ function CharactersPage() {
                   <CardTitle>{selectedStory?.storyTitle ?? "스토리를 선택하세요"}</CardTitle>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <select
-                    value={analysisChapterId}
-                    onChange={(event) => setAnalysisChapterId(event.target.value)}
-                    disabled={!selectedStory?.chapters.length || analyzeM.isPending}
-                    className="h-10 rounded-md border border-border bg-background px-3 text-sm"
+                  <Button
+                    variant="outline"
+                    onClick={() => analyzeM.mutate()}
+                    disabled={!selectedStory || selectedStoryStats.bodyChars < 80 || analyzeM.isPending}
                   >
-                    {!selectedStory?.chapters.length && <option value="">회차 없음</option>}
-                    {selectedStory?.chapters.map((chapter) => (
-                      <option key={chapter.id} value={chapter.id}>
-                        {chapter.episodeNumber}화 · {chapter.title}
-                      </option>
-                    ))}
-                  </select>
-                  <Button variant="outline" onClick={() => analyzeM.mutate()} disabled={!analysisChapter || analyzeM.isPending}>
                     {analyzeM.isPending ? <Loader2 className="mr-2 size-4 animate-spin" /> : <Wand2 className="mr-2 size-4" />}
-                    본문+에셋 분석
-                  </Button>
-                  <Button variant="outline" onClick={analyzeAllChapters} disabled={!selectedStory?.chapters.length || bulkAnalysis.running || analyzeM.isPending}>
-                    {bulkAnalysis.running ? <Loader2 className="mr-2 size-4 animate-spin" /> : <Bot className="mr-2 size-4" />}
-                    전체 회차 분석
+                    전체 스토리 분석
                   </Button>
                   <Button variant="outline" onClick={() => addCharacter()} disabled={!selectedStory}>
                     <Plus className="mr-2 size-4" />
@@ -416,26 +381,12 @@ function CharactersPage() {
               </div>
             </CardHeader>
             <CardContent className="space-y-4">
-              {analysisChapter && (
+              {selectedStory && (
                 <div className="grid gap-2 rounded-lg border border-border bg-background p-3 text-xs text-muted-foreground sm:grid-cols-4">
-                  <div><span className="text-foreground">분석회차</span> · {analysisChapter.title}</div>
-                  <div><span className="text-foreground">본문</span> · {analysisChapter.bodyChars.toLocaleString()}자</div>
-                  <div><span className="text-foreground">삽입에셋</span> · {analysisChapter.assetSlotCount.toLocaleString()}개</div>
-                  <div><span className="text-foreground">기존분석</span> · {analysisChapter.characterAnalysisCount}개</div>
-                </div>
-              )}
-              {bulkAnalysis.running && (
-                <div className="rounded-lg border border-primary/30 bg-primary/10 p-3 text-xs">
-                  <div className="flex items-center justify-between gap-3">
-                    <span>전체 회차 분석 중</span>
-                    <span>{bulkAnalysis.done}/{bulkAnalysis.total}</span>
-                  </div>
-                  <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-background">
-                    <div
-                      className="h-full rounded-full bg-primary transition-all"
-                      style={{ width: `${bulkAnalysis.total ? Math.round((bulkAnalysis.done / bulkAnalysis.total) * 100) : 0}%` }}
-                    />
-                  </div>
+                  <div><span className="text-foreground">분석범위</span> · 전체 {selectedStoryStats.chapterCount.toLocaleString()}회차</div>
+                  <div><span className="text-foreground">본문</span> · {selectedStoryStats.bodyChars.toLocaleString()}자</div>
+                  <div><span className="text-foreground">삽입에셋</span> · {selectedStoryStats.assetSlotCount.toLocaleString()}개</div>
+                  <div><span className="text-foreground">기존분석</span> · {selectedStoryStats.characterAnalysisCount.toLocaleString()}개</div>
                 </div>
               )}
               <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-3">
@@ -550,21 +501,18 @@ function CharacterEditor({
     }
     setGenerating(true);
     try {
-      const { data, error } = await supabase.auth.getSession();
-      if (error) throw error;
-      const token = data.session?.access_token;
-      if (!token) throw new Error("로그인이 필요합니다.");
-      const response = await fetch("/api/reader-profile-image", {
+      const response = await fetchWithSupabaseAuth("/api/reader-profile-image", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
           storyId,
           characterId: character.id,
           name: character.name,
-          bio: [character.role, character.persona, character.personality, character.relationship].filter(Boolean).join("\n"),
+          bio: [character.role, character.persona, character.personality, character.relationship, character.speakingStyle]
+            .filter(Boolean)
+            .join("\n"),
           prompt:
             character.visualPrompt ||
             "romantic manga style character portrait, expressive face, polished webtoon character profile",
@@ -575,7 +523,8 @@ function CharacterEditor({
         throw new Error(payload?.message || payload?.reason || "AI 이미지 생성에 실패했습니다.");
       }
       onPatch({ avatarUrl: payload.storagePath || payload.signedUrl || null });
-      toast.success("AI 캐릭터 이미지가 생성되었습니다. 저장 버튼을 눌러 반영해주세요.");
+      const modelInfo = [payload.providerLabel, payload.model].filter(Boolean).join(" / ");
+      toast.success(`AI 캐릭터 이미지가 생성되었습니다.${modelInfo ? ` (${modelInfo})` : ""} 저장 버튼을 눌러 반영해주세요.`);
     } catch (error: any) {
       toast.error(error?.message ?? "AI 이미지 생성에 실패했습니다.");
     } finally {
@@ -625,6 +574,7 @@ function CharacterEditor({
             <CardTitle className="truncate">{character.name || "새 캐릭터"}</CardTitle>
             <div className="mt-2 flex flex-wrap gap-1.5">
               {character.isPrimary && <Badge>대표</Badge>}
+              {character.visibleInFrontend && <Badge variant="secondary">프론트</Badge>}
               {character.chatEnabled && <Badge variant="secondary">채팅</Badge>}
               {character.reusable && <Badge variant="outline">재사용</Badge>}
             </div>
@@ -672,7 +622,7 @@ function CharacterEditor({
                   }}
                 />
               </label>
-              <Button type="button" variant="outline" size="sm" onClick={generateAvatar} disabled={generating}>
+              <Button type="button" variant="outline" size="sm" onClick={generateAvatar} disabled={generating || uploading}>
                 {generating ? <Loader2 className="size-4 animate-spin" /> : <Wand2 className="size-4" />}
                 AI 생성
               </Button>
@@ -779,7 +729,18 @@ function CharacterEditor({
 
         <PanelSection title="노출">
           <div className="grid gap-2">
-            <ToggleLine checked={character.chatEnabled} label="채팅 사용" onChange={(checked) => onPatch({ chatEnabled: checked })} />
+            <ToggleLine
+              checked={character.visibleInFrontend}
+              label="프론트 캐릭터 노출"
+              text="사용자 캐릭터/채팅 목록에 이 캐릭터를 표시합니다."
+              onChange={(checked) => onPatch({ visibleInFrontend: checked })}
+            />
+            <ToggleLine
+              checked={character.chatEnabled}
+              label="채팅 사용"
+              text="끄면 프론트 노출이 켜져 있어도 채팅 후보에서는 제외됩니다."
+              onChange={(checked) => onPatch({ chatEnabled: checked })}
+            />
             <ToggleLine checked={character.reusable} label="재사용 허용" onChange={(checked) => onPatch({ reusable: checked })} />
           </div>
         </PanelSection>
@@ -866,6 +827,7 @@ function CharacterSummaryCard({
           <div className="flex min-w-0 items-center gap-1.5">
             <span className="truncate text-sm font-semibold">{character.name || "이름 없음"}</span>
             {character.isPrimary && <Star className="size-3.5 fill-primary text-primary" />}
+            {character.visibleInFrontend && <Eye className="size-3.5 text-primary" />}
             {character.chatEnabled && <MessageCircle className="size-3.5 text-primary" />}
           </div>
           <div className="mt-1 truncate text-xs text-muted-foreground">{character.role || "역할 미입력"}</div>
@@ -878,6 +840,11 @@ function CharacterSummaryCard({
             {character.reusable && (
               <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
                 재사용
+              </Badge>
+            )}
+            {character.visibleInFrontend && (
+              <Badge variant="secondary" className="px-1.5 py-0 text-[10px]">
+                프론트
               </Badge>
             )}
           </div>
@@ -1110,6 +1077,7 @@ function createBlankCharacter(isPrimary: boolean): StoryCharacter {
     tags: [],
     isPrimary,
     chatEnabled: true,
+    visibleInFrontend: true,
     reusable: true,
     showcaseAssets: [],
   };
@@ -1118,6 +1086,7 @@ function createBlankCharacter(isPrimary: boolean): StoryCharacter {
 function toDraft(character: StoryCharacter): CharacterDraft {
   return {
     ...character,
+    visibleInFrontend: character.visibleInFrontend ?? character.chatEnabled,
     tagsText: character.tags.join(", "),
   };
 }
@@ -1143,6 +1112,7 @@ function fromDraft(character: CharacterDraft): StoryCharacter {
       .slice(0, 12),
     isPrimary: character.isPrimary,
     chatEnabled: character.chatEnabled,
+    visibleInFrontend: character.visibleInFrontend ?? character.chatEnabled,
     reusable: character.reusable,
     showcaseAssets: character.showcaseAssets ?? [],
   };

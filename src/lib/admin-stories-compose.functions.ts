@@ -1,6 +1,7 @@
 ﻿import { createServerFn } from "@/lib/_mock/runtime";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
+import { fetchWithSupabaseAuth, getFreshAccessToken } from "@/lib/supabase-auth-fetch";
 import { mapNormalizedProseOffset, normalizeProseLineBreaks } from "@/lib/text-normalization";
 
 export type HeatPreset = "soft" | "warm" | "spicy" | "steamy";
@@ -71,6 +72,7 @@ type StoryUpdate = Database["public"]["Tables"]["user_stories"]["Update"];
 type AppRole = Database["public"]["Enums"]["app_role"];
 
 async function requireStaff(): Promise<string> {
+  await getFreshAccessToken();
   const { data: authData, error: authError } = await supabase.auth.getUser();
   if (authError || !authData.user) throw new Error("Unauthorized");
 
@@ -86,6 +88,7 @@ async function requireStaff(): Promise<string> {
 }
 
 async function requireUserId(): Promise<string> {
+  await getFreshAccessToken();
   const { data, error } = await supabase.auth.getUser();
   if (error || !data.user) throw new Error("Unauthorized");
   return data.user.id;
@@ -1142,15 +1145,8 @@ export const getUnifiedReaderStory = createServerFn({ method: "POST" })
     if (!story) {
       if (directError) console.warn("[reader-story] direct Supabase read failed", directError.message);
 
-      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-      if (sessionError) throw new Error(sessionError.message);
-      const token = sessionData.session?.access_token;
-      if (!token) throw new Error("Unauthorized");
-
       const params = new URLSearchParams({ id: data.id });
-      const res = await fetch(`/api/reader-story?${params.toString()}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await fetchWithSupabaseAuth(`/api/reader-story?${params.toString()}`);
       if (!res.ok) {
         const payload = await res.json().catch(() => null);
         throw new Error(payload?.message || payload?.reason || `Reader API failed (${res.status})`);

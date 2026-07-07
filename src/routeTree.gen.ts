@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as RewardsRouteImport } from './routes/rewards'
 import { Route as ProfileRouteImport } from './routes/profile'
 import { Route as PremiumRouteImport } from './routes/premium'
 import { Route as InteractiveRpgRouteImport } from './routes/interactive-rpg'
@@ -31,7 +32,6 @@ import { Route as ApiMarketplaceRouteImport } from './routes/api/marketplace'
 import { Route as ApiHomePlacementsRouteImport } from './routes/api/home-placements'
 import { Route as ApiChatRouteImport } from './routes/api/chat'
 import { Route as ApiCharacterChatRouteImport } from './routes/api/character-chat'
-import { Route as AuthenticatedRewardsRouteImport } from './routes/_authenticated/rewards'
 import { Route as AuthenticatedOrdersRouteImport } from './routes/_authenticated/orders'
 import { Route as AuthenticatedMarketplaceRouteImport } from './routes/_authenticated/marketplace'
 import { Route as AuthenticatedLibraryRouteImport } from './routes/_authenticated/library'
@@ -47,7 +47,9 @@ import { Route as ApiAdminStaffRouteImport } from './routes/api/admin/staff'
 import { Route as ApiAdminRevenueRulesRouteImport } from './routes/api/admin/revenue-rules'
 import { Route as ApiAdminPlacementsRouteImport } from './routes/api/admin/placements'
 import { Route as ApiAdminMediaRouteImport } from './routes/api/admin/media'
+import { Route as ApiAdminLlmProvidersRouteImport } from './routes/api/admin/llm-providers'
 import { Route as ApiAdminImportSummaryRouteImport } from './routes/api/admin/import-summary'
+import { Route as ApiAdminCoreRouteImport } from './routes/api/admin/core'
 import { Route as AuthenticatedMarketplaceIdRouteImport } from './routes/_authenticated/marketplace.$id'
 import { Route as AuthenticatedBuilderIdRouteImport } from './routes/_authenticated/builder.$id'
 import { Route as AuthenticatedAdminUsersRouteImport } from './routes/_authenticated/admin.users'
@@ -73,6 +75,11 @@ import { Route as AuthenticatedAdminStoriesIdComposeRouteImport } from './routes
 import { Route as AuthenticatedAdminStoriesIdBlocksRouteImport } from './routes/_authenticated/admin.stories.$id.blocks'
 import { Route as AuthenticatedAdminStoriesIdChapterChapterIdRouteImport } from './routes/_authenticated/admin.stories.$id.chapter.$chapterId'
 
+const RewardsRoute = RewardsRouteImport.update({
+  id: '/rewards',
+  path: '/rewards',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ProfileRoute = ProfileRouteImport.update({
   id: '/profile',
   path: '/profile',
@@ -182,11 +189,6 @@ const ApiCharacterChatRoute = ApiCharacterChatRouteImport.update({
   path: '/api/character-chat',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AuthenticatedRewardsRoute = AuthenticatedRewardsRouteImport.update({
-  id: '/rewards',
-  path: '/rewards',
-  getParentRoute: () => AuthenticatedRouteRoute,
-} as any)
 const AuthenticatedOrdersRoute = AuthenticatedOrdersRouteImport.update({
   id: '/orders',
   path: '/orders',
@@ -264,9 +266,19 @@ const ApiAdminMediaRoute = ApiAdminMediaRouteImport.update({
   path: '/api/admin/media',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiAdminLlmProvidersRoute = ApiAdminLlmProvidersRouteImport.update({
+  id: '/api/admin/llm-providers',
+  path: '/api/admin/llm-providers',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiAdminImportSummaryRoute = ApiAdminImportSummaryRouteImport.update({
   id: '/api/admin/import-summary',
   path: '/api/admin/import-summary',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiAdminCoreRoute = ApiAdminCoreRouteImport.update({
+  id: '/api/admin/core',
+  path: '/api/admin/core',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AuthenticatedMarketplaceIdRoute =
@@ -417,12 +429,12 @@ export interface FileRoutesByFullPath {
   '/interactive-rpg': typeof InteractiveRpgRouteWithChildren
   '/premium': typeof PremiumRoute
   '/profile': typeof ProfileRoute
+  '/rewards': typeof RewardsRoute
   '/admin': typeof AuthenticatedAdminRouteWithChildren
   '/builder': typeof AuthenticatedBuilderRouteWithChildren
   '/library': typeof AuthenticatedLibraryRoute
   '/marketplace': typeof AuthenticatedMarketplaceRouteWithChildren
   '/orders': typeof AuthenticatedOrdersRoute
-  '/rewards': typeof AuthenticatedRewardsRoute
   '/api/character-chat': typeof ApiCharacterChatRoute
   '/api/chat': typeof ApiChatRoute
   '/api/home-placements': typeof ApiHomePlacementsRoute
@@ -453,7 +465,9 @@ export interface FileRoutesByFullPath {
   '/admin/users': typeof AuthenticatedAdminUsersRoute
   '/builder/$id': typeof AuthenticatedBuilderIdRoute
   '/marketplace/$id': typeof AuthenticatedMarketplaceIdRoute
+  '/api/admin/core': typeof ApiAdminCoreRoute
   '/api/admin/import-summary': typeof ApiAdminImportSummaryRoute
+  '/api/admin/llm-providers': typeof ApiAdminLlmProvidersRoute
   '/api/admin/media': typeof ApiAdminMediaRoute
   '/api/admin/placements': typeof ApiAdminPlacementsRoute
   '/api/admin/revenue-rules': typeof ApiAdminRevenueRulesRoute
@@ -481,11 +495,11 @@ export interface FileRoutesByTo {
   '/interactive-rpg': typeof InteractiveRpgRouteWithChildren
   '/premium': typeof PremiumRoute
   '/profile': typeof ProfileRoute
+  '/rewards': typeof RewardsRoute
   '/builder': typeof AuthenticatedBuilderRouteWithChildren
   '/library': typeof AuthenticatedLibraryRoute
   '/marketplace': typeof AuthenticatedMarketplaceRouteWithChildren
   '/orders': typeof AuthenticatedOrdersRoute
-  '/rewards': typeof AuthenticatedRewardsRoute
   '/api/character-chat': typeof ApiCharacterChatRoute
   '/api/chat': typeof ApiChatRoute
   '/api/home-placements': typeof ApiHomePlacementsRoute
@@ -516,7 +530,9 @@ export interface FileRoutesByTo {
   '/admin/users': typeof AuthenticatedAdminUsersRoute
   '/builder/$id': typeof AuthenticatedBuilderIdRoute
   '/marketplace/$id': typeof AuthenticatedMarketplaceIdRoute
+  '/api/admin/core': typeof ApiAdminCoreRoute
   '/api/admin/import-summary': typeof ApiAdminImportSummaryRoute
+  '/api/admin/llm-providers': typeof ApiAdminLlmProvidersRoute
   '/api/admin/media': typeof ApiAdminMediaRoute
   '/api/admin/placements': typeof ApiAdminPlacementsRoute
   '/api/admin/revenue-rules': typeof ApiAdminRevenueRulesRoute
@@ -546,12 +562,12 @@ export interface FileRoutesById {
   '/interactive-rpg': typeof InteractiveRpgRouteWithChildren
   '/premium': typeof PremiumRoute
   '/profile': typeof ProfileRoute
+  '/rewards': typeof RewardsRoute
   '/_authenticated/admin': typeof AuthenticatedAdminRouteWithChildren
   '/_authenticated/builder': typeof AuthenticatedBuilderRouteWithChildren
   '/_authenticated/library': typeof AuthenticatedLibraryRoute
   '/_authenticated/marketplace': typeof AuthenticatedMarketplaceRouteWithChildren
   '/_authenticated/orders': typeof AuthenticatedOrdersRoute
-  '/_authenticated/rewards': typeof AuthenticatedRewardsRoute
   '/api/character-chat': typeof ApiCharacterChatRoute
   '/api/chat': typeof ApiChatRoute
   '/api/home-placements': typeof ApiHomePlacementsRoute
@@ -582,7 +598,9 @@ export interface FileRoutesById {
   '/_authenticated/admin/users': typeof AuthenticatedAdminUsersRoute
   '/_authenticated/builder/$id': typeof AuthenticatedBuilderIdRoute
   '/_authenticated/marketplace/$id': typeof AuthenticatedMarketplaceIdRoute
+  '/api/admin/core': typeof ApiAdminCoreRoute
   '/api/admin/import-summary': typeof ApiAdminImportSummaryRoute
+  '/api/admin/llm-providers': typeof ApiAdminLlmProvidersRoute
   '/api/admin/media': typeof ApiAdminMediaRoute
   '/api/admin/placements': typeof ApiAdminPlacementsRoute
   '/api/admin/revenue-rules': typeof ApiAdminRevenueRulesRoute
@@ -612,12 +630,12 @@ export interface FileRouteTypes {
     | '/interactive-rpg'
     | '/premium'
     | '/profile'
+    | '/rewards'
     | '/admin'
     | '/builder'
     | '/library'
     | '/marketplace'
     | '/orders'
-    | '/rewards'
     | '/api/character-chat'
     | '/api/chat'
     | '/api/home-placements'
@@ -648,7 +666,9 @@ export interface FileRouteTypes {
     | '/admin/users'
     | '/builder/$id'
     | '/marketplace/$id'
+    | '/api/admin/core'
     | '/api/admin/import-summary'
+    | '/api/admin/llm-providers'
     | '/api/admin/media'
     | '/api/admin/placements'
     | '/api/admin/revenue-rules'
@@ -676,11 +696,11 @@ export interface FileRouteTypes {
     | '/interactive-rpg'
     | '/premium'
     | '/profile'
+    | '/rewards'
     | '/builder'
     | '/library'
     | '/marketplace'
     | '/orders'
-    | '/rewards'
     | '/api/character-chat'
     | '/api/chat'
     | '/api/home-placements'
@@ -711,7 +731,9 @@ export interface FileRouteTypes {
     | '/admin/users'
     | '/builder/$id'
     | '/marketplace/$id'
+    | '/api/admin/core'
     | '/api/admin/import-summary'
+    | '/api/admin/llm-providers'
     | '/api/admin/media'
     | '/api/admin/placements'
     | '/api/admin/revenue-rules'
@@ -740,12 +762,12 @@ export interface FileRouteTypes {
     | '/interactive-rpg'
     | '/premium'
     | '/profile'
+    | '/rewards'
     | '/_authenticated/admin'
     | '/_authenticated/builder'
     | '/_authenticated/library'
     | '/_authenticated/marketplace'
     | '/_authenticated/orders'
-    | '/_authenticated/rewards'
     | '/api/character-chat'
     | '/api/chat'
     | '/api/home-placements'
@@ -776,7 +798,9 @@ export interface FileRouteTypes {
     | '/_authenticated/admin/users'
     | '/_authenticated/builder/$id'
     | '/_authenticated/marketplace/$id'
+    | '/api/admin/core'
     | '/api/admin/import-summary'
+    | '/api/admin/llm-providers'
     | '/api/admin/media'
     | '/api/admin/placements'
     | '/api/admin/revenue-rules'
@@ -806,6 +830,7 @@ export interface RootRouteChildren {
   InteractiveRpgRoute: typeof InteractiveRpgRouteWithChildren
   PremiumRoute: typeof PremiumRoute
   ProfileRoute: typeof ProfileRoute
+  RewardsRoute: typeof RewardsRoute
   ApiCharacterChatRoute: typeof ApiCharacterChatRoute
   ApiChatRoute: typeof ApiChatRoute
   ApiHomePlacementsRoute: typeof ApiHomePlacementsRoute
@@ -818,7 +843,9 @@ export interface RootRouteChildren {
   CharacterIdRoute: typeof CharacterIdRoute
   PlaySessionIdRoute: typeof PlaySessionIdRoute
   StoryRpgIdRoute: typeof StoryRpgIdRoute
+  ApiAdminCoreRoute: typeof ApiAdminCoreRoute
   ApiAdminImportSummaryRoute: typeof ApiAdminImportSummaryRoute
+  ApiAdminLlmProvidersRoute: typeof ApiAdminLlmProvidersRoute
   ApiAdminMediaRoute: typeof ApiAdminMediaRoute
   ApiAdminPlacementsRoute: typeof ApiAdminPlacementsRoute
   ApiAdminRevenueRulesRoute: typeof ApiAdminRevenueRulesRoute
@@ -832,6 +859,13 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/rewards': {
+      id: '/rewards'
+      path: '/rewards'
+      fullPath: '/rewards'
+      preLoaderRoute: typeof RewardsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/profile': {
       id: '/profile'
       path: '/profile'
@@ -986,13 +1020,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiCharacterChatRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/_authenticated/rewards': {
-      id: '/_authenticated/rewards'
-      path: '/rewards'
-      fullPath: '/rewards'
-      preLoaderRoute: typeof AuthenticatedRewardsRouteImport
-      parentRoute: typeof AuthenticatedRouteRoute
-    }
     '/_authenticated/orders': {
       id: '/_authenticated/orders'
       path: '/orders'
@@ -1098,11 +1125,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAdminMediaRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/admin/llm-providers': {
+      id: '/api/admin/llm-providers'
+      path: '/api/admin/llm-providers'
+      fullPath: '/api/admin/llm-providers'
+      preLoaderRoute: typeof ApiAdminLlmProvidersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/admin/import-summary': {
       id: '/api/admin/import-summary'
       path: '/api/admin/import-summary'
       fullPath: '/api/admin/import-summary'
       preLoaderRoute: typeof ApiAdminImportSummaryRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/admin/core': {
+      id: '/api/admin/core'
+      path: '/api/admin/core'
+      fullPath: '/api/admin/core'
+      preLoaderRoute: typeof ApiAdminCoreRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_authenticated/marketplace/$id': {
@@ -1387,7 +1428,6 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedLibraryRoute: typeof AuthenticatedLibraryRoute
   AuthenticatedMarketplaceRoute: typeof AuthenticatedMarketplaceRouteWithChildren
   AuthenticatedOrdersRoute: typeof AuthenticatedOrdersRoute
-  AuthenticatedRewardsRoute: typeof AuthenticatedRewardsRoute
   AuthenticatedChatsStoryIdCharacterIdRoute: typeof AuthenticatedChatsStoryIdCharacterIdRoute
   AuthenticatedPlayUserIdRoute: typeof AuthenticatedPlayUserIdRoute
 }
@@ -1398,7 +1438,6 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedLibraryRoute: AuthenticatedLibraryRoute,
   AuthenticatedMarketplaceRoute: AuthenticatedMarketplaceRouteWithChildren,
   AuthenticatedOrdersRoute: AuthenticatedOrdersRoute,
-  AuthenticatedRewardsRoute: AuthenticatedRewardsRoute,
   AuthenticatedChatsStoryIdCharacterIdRoute:
     AuthenticatedChatsStoryIdCharacterIdRoute,
   AuthenticatedPlayUserIdRoute: AuthenticatedPlayUserIdRoute,
@@ -1429,6 +1468,7 @@ const rootRouteChildren: RootRouteChildren = {
   InteractiveRpgRoute: InteractiveRpgRouteWithChildren,
   PremiumRoute: PremiumRoute,
   ProfileRoute: ProfileRoute,
+  RewardsRoute: RewardsRoute,
   ApiCharacterChatRoute: ApiCharacterChatRoute,
   ApiChatRoute: ApiChatRoute,
   ApiHomePlacementsRoute: ApiHomePlacementsRoute,
@@ -1441,7 +1481,9 @@ const rootRouteChildren: RootRouteChildren = {
   CharacterIdRoute: CharacterIdRoute,
   PlaySessionIdRoute: PlaySessionIdRoute,
   StoryRpgIdRoute: StoryRpgIdRoute,
+  ApiAdminCoreRoute: ApiAdminCoreRoute,
   ApiAdminImportSummaryRoute: ApiAdminImportSummaryRoute,
+  ApiAdminLlmProvidersRoute: ApiAdminLlmProvidersRoute,
   ApiAdminMediaRoute: ApiAdminMediaRoute,
   ApiAdminPlacementsRoute: ApiAdminPlacementsRoute,
   ApiAdminRevenueRulesRoute: ApiAdminRevenueRulesRoute,
