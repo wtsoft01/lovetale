@@ -34,7 +34,7 @@ import {
 } from "@/components/ui/sidebar";
 
 const playItems = [
-  { title: "스토리탐색", url: "/", icon: BookHeart },
+  { title: "스토리탐색", url: "/explore", icon: BookHeart },
   { title: "스토리게임", url: "/interactive-rpg", icon: Swords },
   { title: "캐릭터채팅", url: "/chats", icon: HeartHandshake },
 ];

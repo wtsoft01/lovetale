@@ -1,6 +1,11 @@
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
 import { createServerFn } from "@/lib/_mock/runtime";
+import {
+  characterNamesLikelySame,
+  normalizeCharacterNameKey,
+  preferredCharacterDisplayName,
+} from "@/lib/character-name-match";
 import { getFreshAccessToken } from "@/lib/supabase-auth-fetch";
 
 type UserStory = Pick<
@@ -74,6 +79,7 @@ export type PublicChatCharacterRow = StoryCharacter & {
   logline: string;
   coverUrl: string | null;
   updatedAt: string;
+  initialAffection: number;
   avatarIsVirtual: boolean;
   mainScore: number;
   dialogueCount: number;
@@ -109,6 +115,21 @@ function asStringArray(value: unknown) {
     .slice(0, 12);
 }
 
+function asOptionalBoolean(...values: unknown[]) {
+  for (const value of values) {
+    if (value == null) continue;
+    if (typeof value === "boolean") return value;
+    if (typeof value === "number") return value !== 0;
+    if (typeof value === "string") {
+      const text = value.trim().toLowerCase();
+      if (!text) continue;
+      if (["true", "1", "yes", "y", "on"].includes(text)) return true;
+      if (["false", "0", "no", "n", "off"].includes(text)) return false;
+    }
+  }
+  return null;
+}
+
 function normalizeVisualAssets(value: unknown): CharacterVisualAsset[] {
   if (!Array.isArray(value)) return [];
   const fallbackTiers: CharacterVisualAsset["tier"][] = ["soft", "warm", "spicy", "steamy", "premium"];
@@ -136,6 +157,16 @@ function hashText(value: string) {
     hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
   }
   return hash;
+}
+
+function clampPercent(value: unknown, fallback = 0) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(0, Math.min(100, Math.round(number)));
+}
+
+function initialAffectionFromCard(card: Record<string, any>) {
+  return clampPercent(recordOf(card.environment).initialAffection, 0);
 }
 
 function escapeXml(value: string) {
@@ -223,14 +254,20 @@ function createVirtualAvatarDataUrl(
 
 function normalizeCharacter(character: Record<string, any>, index: number): StoryCharacter {
   const primary = Boolean(character.isPrimary ?? character.primary ?? index === 0);
-  const chatEnabled = character.chatEnabled !== false;
-  const visibleInFrontend = Boolean(
-    character.visibleInFrontend ??
-      character.publicVisible ??
-      character.showInFrontend ??
-      character.exposeInFrontend ??
-      chatEnabled,
-  );
+  const chatEnabled = asOptionalBoolean(character.chatEnabled, character.chat_enabled) ?? true;
+  const visibleInFrontend =
+    asOptionalBoolean(
+      character.visibleInFrontend,
+      character.visible_in_frontend,
+      character.publicVisible,
+      character.public_visible,
+      character.showInFrontend,
+      character.show_in_frontend,
+      character.exposeInFrontend,
+      character.expose_in_frontend,
+      character.chatVisible,
+      character.chat_visible,
+    ) === true;
   return {
     id: asString(character.id, newId("char")),
     name: asString(character.name),
@@ -253,6 +290,64 @@ function normalizeCharacter(character: Record<string, any>, index: number): Stor
   };
 }
 
+function findCharacterKey(rows: Map<string, StoryCharacter>, name: string) {
+  const key = normalizeCharacterNameKey(name);
+  if (rows.has(key)) return key;
+  for (const [currentKey, character] of rows.entries()) {
+    if (characterNamesLikelySame(character.name, name)) return currentKey;
+  }
+  return key;
+}
+
+function mergeVisualAssets(a: CharacterVisualAsset[] = [], b: CharacterVisualAsset[] = []) {
+  const byKey = new Map<string, CharacterVisualAsset>();
+  for (const asset of [...a, ...b]) {
+    const key = asString(asset.mediaUrl ?? asset.id);
+    if (!key || byKey.has(key)) continue;
+    byKey.set(key, asset);
+  }
+  return [...byKey.values()].slice(0, 12);
+}
+
+function mergeCharacterRow(current: StoryCharacter, next: StoryCharacter): StoryCharacter {
+  const name = preferredCharacterDisplayName(current.name, next.name);
+  return {
+    ...next,
+    ...current,
+    id: current.id || next.id,
+    name,
+    role: current.role || next.role,
+    persona: current.persona || next.persona,
+    personality: current.personality || next.personality,
+    relationship: current.relationship || next.relationship,
+    speakingStyle: current.speakingStyle || next.speakingStyle,
+    replyPattern: current.replyPattern || next.replyPattern,
+    llmPurpose: current.llmPurpose || next.llmPurpose,
+    llmModel: current.llmModel || next.llmModel,
+    visualPrompt: current.visualPrompt || next.visualPrompt,
+    avatarUrl: current.avatarUrl || next.avatarUrl,
+    tags: [...new Set([...(current.tags ?? []), ...(next.tags ?? [])])].slice(0, 12),
+    isPrimary: current.isPrimary || next.isPrimary,
+    chatEnabled: current.chatEnabled || next.chatEnabled,
+    visibleInFrontend: current.visibleInFrontend || next.visibleInFrontend,
+    reusable: current.reusable || next.reusable,
+    showcaseAssets: mergeVisualAssets(current.showcaseAssets, next.showcaseAssets),
+  };
+}
+
+function dedupeCharactersByKoreanName(characters: StoryCharacter[]) {
+  const byName = new Map<string, StoryCharacter>();
+  for (const character of characters) {
+    const key = findCharacterKey(byName, character.name);
+    const current = byName.get(key);
+    const merged = current ? mergeCharacterRow(current, character) : character;
+    const mergedKey = normalizeCharacterNameKey(merged.name);
+    if (mergedKey && mergedKey !== key) byName.delete(key);
+    byName.set(mergedKey || key, merged);
+  }
+  return [...byName.values()];
+}
+
 function charactersFromCard(card: Record<string, any>): StoryCharacter[] {
   const rows = Array.isArray(card.characters) && card.characters.length
     ? card.characters
@@ -271,16 +366,16 @@ function charactersFromCard(card: Record<string, any>): StoryCharacter[] {
             tags: card.tags ?? [],
             isPrimary: true,
             chatEnabled: true,
-            visibleInFrontend: true,
+            visibleInFrontend: false,
             reusable: true,
           },
         ]
       : [null];
 
-  const normalized = rows
+  const normalized = dedupeCharactersByKoreanName(rows
     .filter(Boolean)
     .map((character: Record<string, any>, index: number) => normalizeCharacter(character, index))
-    .filter((character) => character.name);
+    .filter((character) => character.name));
 
   if (normalized.length && !normalized.some((character) => character.isPrimary)) {
     normalized[0] = { ...normalized[0], isPrimary: true };
@@ -428,10 +523,11 @@ function sanitizeCharacters(characters: StoryCharacter[]) {
     )
     .filter((character) => character.name.trim());
 
-  if (!rows.length) return [];
+  const dedupedRows = dedupeCharactersByKoreanName(rows);
+  if (!dedupedRows.length) return [];
 
-  const primaryIndex = Math.max(0, rows.findIndex((character) => character.isPrimary));
-  return rows.map((character, index) => ({
+  const primaryIndex = Math.max(0, dedupedRows.findIndex((character) => character.isPrimary));
+  return dedupedRows.map((character, index) => ({
     ...character,
     isPrimary: index === primaryIndex,
   }));
@@ -502,9 +598,10 @@ export const listPublicChatCharacters = createServerFn({ method: "GET" }).handle
 
     return (data ?? []).flatMap((story) => {
       const row = toStoryRow(story as UserStory);
+      const initialAffection = initialAffectionFromCard(recordOf((story as UserStory).character_card));
       const storyText = storyTextForCharacterRanking(story as UserStory);
       const ranked = row.characters
-        .filter((character) => character.chatEnabled && character.visibleInFrontend)
+        .filter((character) => character.chatEnabled === true && character.visibleInFrontend === true)
         .map((character, index) => ({
           character,
           ...characterImportance(character, storyText, index),
@@ -526,6 +623,7 @@ export const listPublicChatCharacters = createServerFn({ method: "GET" }).handle
             logline: row.logline,
             coverUrl: row.coverUrl,
             updatedAt: row.updatedAt,
+            initialAffection,
             avatarIsVirtual,
             mainScore: score?.mainScore ?? 0,
             dialogueCount: score?.dialogueCount ?? 0,

@@ -7,6 +7,10 @@ function jsonError(reason: string, status = 400) {
   return Response.json({ ok: false, reason }, { status });
 }
 
+function jsonMessageError(reason: string, message: string, status = 400) {
+  return Response.json({ ok: false, reason, message }, { status });
+}
+
 function jsonServerError(error: unknown, status = 500) {
   const message = error instanceof Error ? error.message : String(error);
   return Response.json({ ok: false, reason: "server_error", message }, { status });
@@ -48,10 +52,31 @@ function defaultImageModel(provider: string, configuredModel?: string | null) {
   return configuredModel || DEFAULT_MODELS[provider] || "gpt-image-1";
 }
 
-function providerCanGenerateImages(provider: string, configuredModel?: string | null) {
-  if (provider === "google") return true;
-  if (provider === "openai") return true;
+function hasImagePurpose(purposes?: string[] | null) {
+  return Array.isArray(purposes) && purposes.includes("image_generation");
+}
+
+function isImageModel(configuredModel?: string | null) {
   return /image|dall|gpt-image|imagen/i.test(configuredModel ?? "");
+}
+
+function providerCanGenerateImages(provider: string, configuredModel?: string | null, purposes?: string[] | null) {
+  if (provider === "google") return true;
+  if (isImageModel(configuredModel)) return true;
+  return provider === "openai" && hasImagePurpose(purposes);
+}
+
+function imageProviderPriority(row: { provider: string; model?: string | null; usage_purposes?: string[] | null }) {
+  const model = row.model ?? "";
+  if (row.provider === "google" && isImageModel(model)) return 0;
+  if (row.provider === "google") return 1;
+  if (isImageModel(model)) return 2;
+  if (hasImagePurpose(row.usage_purposes)) return 3;
+  return 9;
+}
+
+function isImagePermissionError(message: string) {
+  return /image generation is not enabled|permission_error|not enabled for this group/i.test(message);
 }
 
 function openAiCompatibleBases(rawBase: string): string[] {
@@ -216,16 +241,26 @@ async function handlePost(request: Request) {
     .join("\n");
 
   const { listActiveAdminProviders, recordAdminUsage } = await import("@/lib/admin-ai-provider.server");
-  const providers = (await listActiveAdminProviders("image_generation")).filter((row) =>
-    providerCanGenerateImages(row.provider, row.model),
-  );
+  const { listAllActiveLlmProviders } = await import("@/lib/llm-router.server");
+  const imagePurposeProviders = await listActiveAdminProviders("image_generation");
+  const allActiveProviders = await listAllActiveLlmProviders();
+  const seenProviderIds = new Set<string>();
+  const providers = [...imagePurposeProviders, ...allActiveProviders]
+    .filter((row) => {
+      if (seenProviderIds.has(row.id)) return false;
+      seenProviderIds.add(row.id);
+      return providerCanGenerateImages(row.provider, row.model, row.usage_purposes);
+    })
+    .sort((a, b) => imageProviderPriority(a) - imageProviderPriority(b));
   if (!providers.length) {
-    return jsonError(
-      "이미지 생성에 사용할 수 있는 관리자 LLM API가 없습니다. /admin/llm에서 Google Imagen 또는 OpenAI gpt-image/dall-e 계열 provider를 image_generation 용도로 활성화해 주세요.",
+    return jsonMessageError(
+      "image_generation_provider_not_found",
+      "이미지 생성에 사용할 수 있는 관리자 LLM API가 없습니다. /admin/llm에서 Google provider를 활성화하거나 Imagen/gpt-image/dall-e 계열 모델을 image_generation 용도로 등록해 주세요.",
       503,
     );
   }
   let lastError = "";
+  const failures: string[] = [];
   for (const row of providers) {
     const model = defaultImageModel(row.provider, row.model);
     try {
@@ -274,11 +309,22 @@ async function handlePost(request: Request) {
       return Response.json({ ok: true, ...uploaded, providerLabel: row.label, model });
     } catch (error: any) {
       lastError = String(error?.message ?? error);
+      failures.push(`${row.label || row.provider} / ${model}: ${lastError.slice(0, 220)}`);
       await recordAdminUsage(row.id, 0, false, "image_generation", lastError.slice(0, 500));
     }
   }
 
-  return jsonServerError(new Error(lastError || "profile_image_generation_failed"), 500);
+  const permissionBlocked = failures.some(isImagePermissionError);
+  const message = permissionBlocked
+    ? [
+        "등록된 OpenAI provider가 이미지 생성 권한이 없는 계정/그룹으로 응답했습니다.",
+        "Google Imagen 또는 실제 이미지 모델이 설정된 provider를 우선 사용하도록 시도했지만 모든 이미지 provider가 실패했습니다.",
+        failures.slice(0, 4).join(" | "),
+      ]
+        .filter(Boolean)
+        .join(" ")
+    : `이미지 생성 provider가 모두 실패했습니다. ${failures.slice(0, 4).join(" | ") || lastError || "unknown"}`;
+  return jsonMessageError("image_generation_failed", message, 503);
 }
 
 export const Route = createFileRoute("/api/reader-profile-image")({

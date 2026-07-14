@@ -2,6 +2,12 @@ import { createFileRoute } from "@tanstack/react-router";
 
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import {
+  characterNameAliasKeys,
+  characterNamesLikelySame,
+  normalizeCharacterNameKey,
+  preferredCharacterDisplayName,
+} from "@/lib/character-name-match";
+import {
   DEFAULT_BASE_URLS,
   DEFAULT_MODELS,
   callProvider,
@@ -357,7 +363,7 @@ function mergeCharacterShowcaseAssets(currentAssets: unknown, analyzedAssets: un
 }
 
 function matchSlotsForCharacter(name: string, assetContext: Record<string, any>[], assetHints: unknown) {
-  const key = normalizeNameKey(name);
+  const keys = characterNameAliasKeys(name);
   const hintedIds = new Set(
     safeArray(assetHints)
       .map((hint) => compactText(recordOf(hint).slotId ?? recordOf(hint).id, 120))
@@ -366,17 +372,18 @@ function matchSlotsForCharacter(name: string, assetContext: Record<string, any>[
   return assetContext.filter((slot) => {
     if (hintedIds.has(compactText(slot.slotId, 120))) return true;
     const haystack = `${slot.caption ?? ""} ${slot.sceneDescription ?? ""} ${slot.textAround ?? ""}`;
-    return key && normalizeNameKey(haystack).includes(key);
+    const haystackKey = normalizeNameKey(haystack);
+    return keys.some((key) => key && haystackKey.includes(key));
   });
 }
 
 function hasGroundedCharacterEvidence(character: Record<string, any>, groundedNames: Set<string>, chapterBody: string) {
   const name = normalizeCharacterName(character.name);
-  const key = normalizeNameKey(name);
   if (!name || isGenericCharacterName(name)) return false;
-  if ([...groundedNames].some((grounded) => normalizeNameKey(grounded) === key)) return true;
+  if ([...groundedNames].some((grounded) => characterNamesLikelySame(grounded, name))) return true;
   const evidence = compactText(character.evidence, 400);
-  return Boolean(evidence && evidence.includes(name) && chapterBody.includes(name));
+  const aliases = [name, ...characterNameAliasKeys(name)].filter(Boolean);
+  return aliases.some((alias) => evidence.includes(alias) && chapterBody.includes(alias));
 }
 
 function normalizeCharacterResult(item: Record<string, any>, index: number) {
@@ -430,7 +437,25 @@ function normalizeCharacterResult(item: Record<string, any>, index: number) {
 }
 
 function normalizeNameKey(name: string) {
-  return String(name || "").replace(/\s+/g, "").trim().toLowerCase();
+  return normalizeCharacterNameKey(name);
+}
+
+function findCharacterMapKey(byName: Map<string, any>, name: string) {
+  const exactKey = normalizeNameKey(name);
+  if (!exactKey) return "";
+  if (byName.has(exactKey)) return exactKey;
+  for (const [key, character] of byName.entries()) {
+    if (characterNamesLikelySame(String(character?.name ?? key), name)) return key;
+  }
+  return exactKey;
+}
+
+function commitCharacterMapEntry(byName: Map<string, any>, key: string, character: Record<string, any>) {
+  const name = compactText(character.name, 80);
+  const preferredName = preferredCharacterDisplayName(String(byName.get(key)?.name ?? ""), name) || name;
+  const preferredKey = normalizeNameKey(preferredName);
+  if (preferredKey && preferredKey !== key) byName.delete(key);
+  byName.set(preferredKey || key, { ...character, name: preferredName || name });
 }
 
 function mergeAnalyzedCharactersIntoCard(card: Record<string, any>, chapter: any, result: Awaited<ReturnType<typeof analyzeCharactersWithLlm>>) {
@@ -439,17 +464,23 @@ function mergeAnalyzedCharactersIntoCard(card: Record<string, any>, chapter: any
   const byName = new Map<string, any>();
   for (const character of existing) {
     const name = compactText(character?.name ?? character?.title, 80);
-    if (name) byName.set(normalizeNameKey(name), { ...character, name });
+    if (!name) continue;
+    const key = findCharacterMapKey(byName, name);
+    const current = byName.get(key) ?? {};
+    commitCharacterMapEntry(byName, key, { ...current, ...character, name: preferredCharacterDisplayName(current.name, name) });
   }
 
   for (const analyzed of result.characters) {
     const name = compactText(analyzed.name, 80);
     if (!name) continue;
-    const key = normalizeNameKey(name);
+    const key = findCharacterMapKey(byName, name);
     const current = byName.get(key) ?? {};
+    const displayName = preferredCharacterDisplayName(current.name, name) || name;
     const matchingInsight =
-      result.characterAnalysis.find((item) => normalizeNameKey(String(item.name ?? "")) === key) ?? analyzed;
-    const matchedSlots = matchSlotsForCharacter(name, assetContext, analyzed.assetHints);
+      result.characterAnalysis.find((item) =>
+        characterNamesLikelySame(String(item.name ?? ""), displayName),
+      ) ?? analyzed;
+    const matchedSlots = matchSlotsForCharacter(displayName, assetContext, analyzed.assetHints);
     const chapterInsights = Array.isArray(current.chapterInsights) ? current.chapterInsights : [];
     const nextInsights = [
       ...chapterInsights.filter((item: any) => item.chapterId !== chapter.id),
@@ -467,11 +498,11 @@ function mergeAnalyzedCharactersIntoCard(card: Record<string, any>, chapter: any
       },
     ].slice(-20);
 
-    byName.set(key, {
+    commitCharacterMapEntry(byName, key, {
       ...current,
       ...analyzed,
-      id: current.id || analyzed.id || `char_${name.replace(/\s+/g, "_")}`,
-      name,
+      id: current.id || analyzed.id || `char_${displayName.replace(/\s+/g, "_")}`,
+      name: displayName,
       role: current.role || analyzed.role,
       persona: current.persona || analyzed.persona || analyzed.chatGuidance,
       personality: current.personality || analyzed.personality || safeArray(analyzed.traits).join(", "),
@@ -756,9 +787,12 @@ async function generateSingleCharacterWithLlm(
 
   const name = String(character.name ?? "");
   const nameKey = normalizeNameKey(name);
-  const isExisting = existingNameKeys.has(nameKey);
-  const groundedByCandidate = [...groundedNames].some((candidate) => normalizeNameKey(candidate) === nameKey);
-  const groundedByBody = Boolean(name && body.includes(name));
+  const isExisting =
+    existingNameKeys.has(nameKey) ||
+    existingCharacters.some((existing) => characterNamesLikelySame(existing.name, name));
+  const groundedByCandidate = [...groundedNames].some((candidate) => characterNamesLikelySame(candidate, name));
+  const bodyKey = normalizeNameKey(body);
+  const groundedByBody = characterNameAliasKeys(name).some((alias) => body.includes(alias) || bodyKey.includes(alias));
   if (!isExisting && !groundedByCandidate && !groundedByBody) {
     return {
       character: null,

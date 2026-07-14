@@ -2,7 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
-import { Bookmark, Gamepad2, Heart, HeartHandshake, ImageIcon, Loader2, Lock, MessageCircle, Plus, Save, Search, Sparkles, Trash2, UserRound, Video, Wand2 } from "lucide-react";
+import { Bookmark, CheckCircle2, Gamepad2, Heart, HeartHandshake, ImageIcon, Loader2, Lock, MessageCircle, Pencil, Plus, Save, Search, Sparkles, Trash2, UserRound, Video, Wand2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -14,6 +14,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/hooks/use-auth";
 import { supabase } from "@/integrations/supabase/client";
 import { useServerFn } from "@/lib/_mock/runtime";
+import { listMyStoryAffections, type MyStoryAffectionRow } from "@/lib/affection.functions";
 import {
   listPublicChatCharacters,
   type PublicChatCharacterRow,
@@ -71,10 +72,22 @@ const GENDER_FILTERS: { value: CharacterGender; label: string }[] = [
   { value: "neutral", label: "중성" },
 ];
 
+const FRONT_MENU_QUERY_OPTIONS = {
+  staleTime: 0,
+  gcTime: 30_000,
+  refetchOnMount: "always",
+  refetchOnWindowFocus: false,
+} as const;
+
 const MY_CHARACTER_STORAGE_PREFIX = "lovetale:my-chat-characters:";
+const MY_CHARACTER_ACTIVE_STORAGE_PREFIX = "lovetale:my-chat-character-active:";
 
 function myCharacterStorageKey(userId?: string | null) {
   return `${MY_CHARACTER_STORAGE_PREFIX}${userId || "anon"}`;
+}
+
+function myCharacterActiveStorageKey(userId?: string | null) {
+  return `${MY_CHARACTER_ACTIVE_STORAGE_PREFIX}${userId || "anon"}`;
 }
 
 function loadMyCharacters(userId?: string | null): MyChatCharacter[] {
@@ -88,9 +101,24 @@ function loadMyCharacters(userId?: string | null): MyChatCharacter[] {
   }
 }
 
+function loadActiveMyCharacterId(userId?: string | null) {
+  if (typeof window === "undefined") return null;
+  return window.localStorage.getItem(myCharacterActiveStorageKey(userId));
+}
+
 function saveMyCharacters(userId: string | undefined | null, rows: MyChatCharacter[]) {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(myCharacterStorageKey(userId), JSON.stringify(rows.slice(0, 20)));
+}
+
+function saveActiveMyCharacterId(userId: string | undefined | null, id: string | null) {
+  if (typeof window === "undefined") return;
+  const key = myCharacterActiveStorageKey(userId);
+  if (id) {
+    window.localStorage.setItem(key, id);
+  } else {
+    window.localStorage.removeItem(key);
+  }
 }
 
 function timeAgo(iso: string) {
@@ -121,13 +149,17 @@ function inferGender(character: PublicChatCharacterRow): Exclude<CharacterGender
   return "neutral";
 }
 
-function getAffectionForProfile(profile: PublicChatCharacterRow, rows: Row[] | null) {
+function getAffectionForProfile(profile: PublicChatCharacterRow, rows: Row[] | null, affections: MyStoryAffectionRow[] | null) {
   const matched = (rows ?? []).filter(
     (row) => row.character_id === profile.id || row.story_id === profile.storyId,
   );
-  if (matched.length === 0) return { affection: 0, row: null as Row | null };
   const sorted = [...matched].sort((a, b) => b.affection - a.affection);
-  return { affection: sorted[0]?.affection ?? 0, row: sorted[0] ?? null };
+  const actual = (affections ?? []).find((row) => row.storyId === profile.storyId);
+  return {
+    affection: actual?.affection ?? profile.initialAffection ?? 0,
+    row: sorted[0] ?? null,
+    updatedAt: actual?.updatedAt ?? sorted[0]?.updated_at ?? null,
+  };
 }
 
 function useSignedMedia(path?: string | null) {
@@ -161,47 +193,106 @@ function Chats() {
   const { user, loading } = useAuth();
   const listSessions = useServerFn(listMySessions);
   const listCharacters = useServerFn(listPublicChatCharacters);
+  const listAffections = useServerFn(listMyStoryAffections);
   const [query, setQuery] = useState("");
   const [gender, setGender] = useState<CharacterGender>("all");
   const [storyFilter, setStoryFilter] = useState("all");
   const [creatorOpen, setCreatorOpen] = useState(false);
+  const [editingCharacter, setEditingCharacter] = useState<MyChatCharacter | null>(null);
   const [myCharacters, setMyCharacters] = useState<MyChatCharacter[]>([]);
+  const [activeMyCharacterId, setActiveMyCharacterId] = useState<string | null>(null);
 
   useEffect(() => {
-    setMyCharacters(loadMyCharacters(user?.id));
+    const loaded = loadMyCharacters(user?.id);
+    const savedActiveId = loadActiveMyCharacterId(user?.id);
+    const resolvedActiveId =
+      savedActiveId && loaded.some((character) => character.id === savedActiveId)
+        ? savedActiveId
+        : (loaded[0]?.id ?? null);
+    setMyCharacters(loaded);
+    setActiveMyCharacterId(resolvedActiveId);
+    saveActiveMyCharacterId(user?.id, resolvedActiveId);
   }, [user?.id]);
 
-  function persistMyCharacters(next: MyChatCharacter[]) {
-    setMyCharacters(next);
-    saveMyCharacters(user?.id, next);
+  function persistMyCharacters(next: MyChatCharacter[], preferredActiveId = activeMyCharacterId) {
+    const limited = next.slice(0, 20);
+    const resolvedActiveId =
+      preferredActiveId && limited.some((character) => character.id === preferredActiveId)
+        ? preferredActiveId
+        : (limited[0]?.id ?? null);
+    setMyCharacters(limited);
+    setActiveMyCharacterId(resolvedActiveId);
+    saveMyCharacters(user?.id, limited);
+    saveActiveMyCharacterId(user?.id, resolvedActiveId);
+  }
+
+  function openCharacterCreator() {
+    setEditingCharacter(null);
+    setCreatorOpen(true);
+  }
+
+  function handleCreatorOpenChange(open: boolean) {
+    setCreatorOpen(open);
+    if (!open) {
+      setEditingCharacter(null);
+    }
   }
 
   function upsertMyCharacter(character: MyChatCharacter) {
-    persistMyCharacters([character, ...myCharacters.filter((item) => item.id !== character.id)]);
+    const exists = myCharacters.some((item) => item.id === character.id);
+    const next = exists
+      ? myCharacters.map((item) => (item.id === character.id ? character : item))
+      : [character, ...myCharacters];
+    persistMyCharacters(next, exists ? activeMyCharacterId : character.id);
+  }
+
+  function editMyCharacter(character: MyChatCharacter) {
+    setEditingCharacter(character);
+    setCreatorOpen(true);
+  }
+
+  function selectMyCharacter(id: string) {
+    if (activeMyCharacterId === id) return;
+    setActiveMyCharacterId(id);
+    saveActiveMyCharacterId(user?.id, id);
+    toast.success("대표 채팅이미지로 설정했습니다.");
   }
 
   function removeMyCharacter(id: string) {
-    persistMyCharacters(myCharacters.filter((item) => item.id !== id));
+    const next = myCharacters.filter((item) => item.id !== id);
+    persistMyCharacters(next, activeMyCharacterId === id ? (next[0]?.id ?? null) : activeMyCharacterId);
   }
 
   const charactersQ = useQuery({
     queryKey: ["public_chat_characters"],
     queryFn: () => listCharacters(),
-    staleTime: 5 * 60_000,
-    gcTime: 15 * 60_000,
-    refetchOnWindowFocus: false,
+    ...FRONT_MENU_QUERY_OPTIONS,
   });
   const sessionsQ = useQuery({
     queryKey: ["my_story_sessions", user?.id ?? "anon"],
     queryFn: () => listSessions() as Promise<Row[]>,
     enabled: !loading && Boolean(user),
-    staleTime: 2 * 60_000,
-    gcTime: 10 * 60_000,
-    refetchOnWindowFocus: false,
+    ...FRONT_MENU_QUERY_OPTIONS,
+  });
+  const affectionsQ = useQuery({
+    queryKey: ["my_story_affections", user?.id ?? "anon"],
+    queryFn: () => listAffections(),
+    enabled: !loading && Boolean(user),
+    ...FRONT_MENU_QUERY_OPTIONS,
   });
 
-  const characters = charactersQ.data ?? null;
-  const rows = user ? (sessionsQ.data ?? null) : [];
+  const characters =
+    charactersQ.isFetchedAfterMount || charactersQ.isError ? (charactersQ.data ?? []) : null;
+  const rows = user
+    ? sessionsQ.isFetchedAfterMount || sessionsQ.isError
+      ? (sessionsQ.data ?? [])
+      : null
+    : [];
+  const affections = user
+    ? affectionsQ.isFetchedAfterMount || affectionsQ.isError
+      ? (affectionsQ.data ?? [])
+      : null
+    : [];
 
   const filteredProfiles = useMemo(() => {
     const keyword = query.trim().toLowerCase();
@@ -256,7 +347,7 @@ function Chats() {
           {characters ? <span className="text-xs text-muted-foreground">{filteredProfiles.length}</span> : null}
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" size="sm" className="w-fit gap-1.5 rounded-full" onClick={() => setCreatorOpen(true)}>
+          <Button variant="outline" size="sm" className="w-fit gap-1.5 rounded-full" onClick={openCharacterCreator}>
             <Plus className="size-4" />
             내 캐릭터 만들기
           </Button>
@@ -269,7 +360,14 @@ function Chats() {
         </div>
       </section>
 
-      <MyCharacterStrip rows={myCharacters} onCreate={() => setCreatorOpen(true)} onRemove={removeMyCharacter} />
+      <MyCharacterStrip
+        rows={myCharacters}
+        activeId={activeMyCharacterId}
+        onCreate={openCharacterCreator}
+        onEdit={editMyCharacter}
+        onSelect={selectMyCharacter}
+        onRemove={removeMyCharacter}
+      />
 
       <section className="space-y-3">
         <div className="relative">
@@ -347,6 +445,13 @@ function Chats() {
         </EmptyPanel>
       )}
 
+      {user && affections === null && (
+        <EmptyPanel>
+          <Loader2 className="mr-2 inline size-4 animate-spin" />
+          호감도 확인 중
+        </EmptyPanel>
+      )}
+
       {!user && !loading && (
         <EmptyPanel>
           로그인하면 호감도와 대화가 저장됩니다.{" "}
@@ -366,7 +471,7 @@ function Chats() {
             <CharacterDatingCard
               key={`${profile.storyId}-${profile.id}`}
               profile={profile}
-              affectionInfo={getAffectionForProfile(profile, rows)}
+              affectionInfo={getAffectionForProfile(profile, rows, affections)}
             />
           ))}
         </section>
@@ -374,8 +479,9 @@ function Chats() {
 
       <MyCharacterDialog
         open={creatorOpen}
-        onOpenChange={setCreatorOpen}
+        onOpenChange={handleCreatorOpenChange}
         userReady={Boolean(user)}
+        initialCharacter={editingCharacter}
         onSave={upsertMyCharacter}
       />
     </div>
@@ -384,24 +490,37 @@ function Chats() {
 
 function MyCharacterStrip({
   rows,
+  activeId,
   onCreate,
+  onEdit,
+  onSelect,
   onRemove,
 }: {
   rows: MyChatCharacter[];
+  activeId: string | null;
   onCreate: () => void;
+  onEdit: (character: MyChatCharacter) => void;
+  onSelect: (id: string) => void;
   onRemove: (id: string) => void;
 }) {
+  const activeCharacter = rows.find((character) => character.id === activeId) ?? null;
+
   return (
     <section className="rounded-2xl border border-border/60 bg-card/35 p-3">
       <div className="mb-3 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 items-center gap-2">
           <UserRound className="size-4 text-primary" />
           <h2 className="text-sm font-semibold">내 채팅 캐릭터</h2>
           <span className="text-xs text-muted-foreground">{rows.length}</span>
+          {activeCharacter ? (
+            <Badge variant="secondary" className="hidden max-w-[180px] truncate rounded-full text-[10px] sm:inline-flex">
+              사용 중: {activeCharacter.name}
+            </Badge>
+          ) : null}
         </div>
         <Button size="sm" className="h-8 rounded-full" onClick={onCreate}>
           <Plus className="size-4" />
-          만들기
+          추가
         </Button>
       </div>
       {rows.length === 0 ? (
@@ -416,7 +535,14 @@ function MyCharacterStrip({
       ) : (
         <div className="flex gap-3 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {rows.map((character) => (
-            <MyCharacterCard key={character.id} character={character} onRemove={() => onRemove(character.id)} />
+            <MyCharacterCard
+              key={character.id}
+              character={character}
+              active={character.id === activeId}
+              onSelect={() => onSelect(character.id)}
+              onEdit={() => onEdit(character)}
+              onRemove={() => onRemove(character.id)}
+            />
           ))}
         </div>
       )}
@@ -424,38 +550,67 @@ function MyCharacterStrip({
   );
 }
 
-function MyCharacterCard({ character, onRemove }: { character: MyChatCharacter; onRemove: () => void }) {
+function MyCharacterCard({
+  character,
+  active,
+  onSelect,
+  onEdit,
+  onRemove,
+}: {
+  character: MyChatCharacter;
+  active: boolean;
+  onSelect: () => void;
+  onEdit: () => void;
+  onRemove: () => void;
+}) {
   const mediaUrl = useSignedMedia(character.mediaUrl);
   return (
-    <article className="group relative w-40 shrink-0 overflow-hidden rounded-2xl border border-border/70 bg-background">
-      <div className="aspect-[4/5] bg-muted">
-        {mediaUrl ? (
-          character.mediaType === "video" ? (
-            <video src={mediaUrl} className="size-full object-cover" muted playsInline loop />
+    <article
+      className={cn(
+        "group relative w-40 shrink-0 overflow-hidden rounded-2xl border bg-background transition",
+        active ? "border-primary/70 shadow-sm ring-2 ring-primary/25" : "border-border/70 hover:border-primary/35",
+      )}
+    >
+      <button type="button" className="block w-full text-left" onClick={onSelect}>
+        <div className="relative aspect-[4/5] bg-muted">
+          {mediaUrl ? (
+            character.mediaType === "video" ? (
+              <video src={mediaUrl} className="size-full object-cover" muted playsInline loop />
+            ) : (
+              <img src={mediaUrl} alt={character.name} className="size-full object-cover" />
+            )
           ) : (
-            <img src={mediaUrl} alt={character.name} className="size-full object-cover" />
-          )
-        ) : (
-          <div className="grid size-full place-items-center bg-gradient-to-br from-primary/20 via-background to-sky-500/15">
-            <UserRound className="size-9 text-muted-foreground" />
-          </div>
-        )}
-      </div>
-      <div className="space-y-1 p-3">
-        <div className="truncate text-sm font-semibold">{character.name}</div>
-        <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
-          {character.mediaType === "video" ? <Video className="size-3" /> : <ImageIcon className="size-3" />}
-          {character.gender === "male" ? "남성" : character.gender === "female" ? "여성" : "중성"}
+            <div className="grid size-full place-items-center bg-gradient-to-br from-primary/20 via-background to-sky-500/15">
+              <UserRound className="size-9 text-muted-foreground" />
+            </div>
+          )}
+          {active ? (
+            <span className="absolute left-2 top-2 inline-flex items-center gap-1 rounded-full bg-primary px-2 py-0.5 text-[10px] font-semibold text-primary-foreground shadow">
+              <CheckCircle2 className="size-3" />
+              사용 중
+            </span>
+          ) : null}
         </div>
-      </div>
-      <button
-        type="button"
-        onClick={onRemove}
-        className="absolute right-2 top-2 grid size-7 place-items-center rounded-full bg-black/60 text-white opacity-0 transition group-hover:opacity-100"
-        aria-label="내 캐릭터 삭제"
-      >
-        <Trash2 className="size-3.5" />
+        <div className="space-y-1 p-3">
+          <div className="truncate text-sm font-semibold">{character.name}</div>
+          <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
+            {character.mediaType === "video" ? <Video className="size-3" /> : <ImageIcon className="size-3" />}
+            {character.gender === "male" ? "남성" : character.gender === "female" ? "여성" : "중성"}
+          </div>
+        </div>
       </button>
+      <div className="grid grid-cols-[1fr_32px_32px] gap-1 border-t border-border/60 p-2">
+        <Button type="button" variant={active ? "secondary" : "outline"} size="sm" className="h-8 rounded-full px-2 text-xs" onClick={onSelect}>
+          {active ? <CheckCircle2 className="size-3.5" /> : <UserRound className="size-3.5" />}
+          {active ? "사용 중" : "대표"}
+        </Button>
+        <Button type="button" variant="outline" size="icon" className="size-8 rounded-full" onClick={onEdit} aria-label="내 캐릭터 수정">
+          <Pencil className="size-3.5" />
+        </Button>
+        <Button type="button" variant="outline" size="icon" className="size-8 rounded-full text-destructive hover:text-destructive" onClick={onRemove} aria-label="내 캐릭터 삭제">
+          <Trash2 className="size-3.5" />
+        </Button>
+      </div>
     </article>
   );
 }
@@ -464,11 +619,13 @@ function MyCharacterDialog({
   open,
   onOpenChange,
   userReady,
+  initialCharacter,
   onSave,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   userReady: boolean;
+  initialCharacter: MyChatCharacter | null;
   onSave: (character: MyChatCharacter) => void;
 }) {
   const [name, setName] = useState("");
@@ -479,6 +636,23 @@ function MyCharacterDialog({
   const [mediaUrl, setMediaUrl] = useState<string | null>(null);
   const [signedUrl, setSignedUrl] = useState<string | null>(null);
   const [prompt, setPrompt] = useState("");
+  const isEditing = Boolean(initialCharacter);
+
+  useEffect(() => {
+    if (!open) return;
+    if (!initialCharacter) {
+      reset();
+      return;
+    }
+    setName(initialCharacter.name);
+    setGender(initialCharacter.gender);
+    setConcept(initialCharacter.concept);
+    setMood(initialCharacter.mood);
+    setMediaType(initialCharacter.mediaType);
+    setMediaUrl(initialCharacter.mediaUrl ?? null);
+    setSignedUrl(initialCharacter.signedUrl ?? null);
+    setPrompt(initialCharacter.prompt ?? "");
+  }, [open, initialCharacter]);
 
   async function postToCharacterApi(body: Record<string, unknown>) {
     const { data, error } = await supabase.auth.getSession();
@@ -544,7 +718,7 @@ function MyCharacterDialog({
     }
     const now = new Date().toISOString();
     onSave({
-      id: `my_char_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      id: initialCharacter?.id ?? `my_char_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
       name: trimmedName,
       gender,
       concept: concept.trim(),
@@ -553,22 +727,21 @@ function MyCharacterDialog({
       mediaUrl,
       signedUrl,
       prompt,
-      createdAt: now,
+      createdAt: initialCharacter?.createdAt ?? now,
       updatedAt: now,
     });
-    toast.success("내 채팅 캐릭터를 저장했습니다.");
+    toast.success(isEditing ? "내 채팅 캐릭터를 수정했습니다." : "내 채팅 캐릭터를 저장했습니다.");
     onOpenChange(false);
-    reset();
   }
 
   const resolvedMediaUrl = useSignedMedia(mediaUrl);
-  const previewUrl = signedUrl || resolvedMediaUrl;
+  const previewUrl = resolvedMediaUrl || signedUrl;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto p-0">
         <DialogHeader className="border-b border-border px-5 py-4">
-          <DialogTitle>내 채팅 캐릭터 만들기</DialogTitle>
+          <DialogTitle>{isEditing ? "내 채팅 캐릭터 수정" : "내 채팅 캐릭터 만들기"}</DialogTitle>
         </DialogHeader>
         <div className="grid gap-4 p-5 md:grid-cols-[220px_minmax(0,1fr)]">
           <div className="space-y-3">
@@ -643,7 +816,7 @@ function MyCharacterDialog({
           </Button>
           <Button type="button" onClick={save} disabled={!userReady}>
             <Save className="size-4" />
-            저장
+            {isEditing ? "수정 저장" : "저장"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -664,7 +837,7 @@ function CharacterDatingCard({
   affectionInfo,
 }: {
   profile: PublicChatCharacterRow;
-  affectionInfo: { affection: number; row: Row | null };
+  affectionInfo: { affection: number; row: Row | null; updatedAt: string | null };
 }) {
   const affection = affectionInfo.affection;
   const gender = inferGender(profile);
@@ -732,8 +905,8 @@ function CharacterDatingCard({
 
         <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
           <span className="truncate">{profile.storyTitle}</span>
-          {affectionInfo.row ? (
-            <span className="shrink-0">{timeAgo(affectionInfo.row.updated_at)}</span>
+          {affectionInfo.updatedAt ? (
+            <span className="shrink-0">{timeAgo(affectionInfo.updatedAt)}</span>
           ) : (
             <span className="inline-flex shrink-0 items-center gap-1 text-primary">
               <MessageCircle className="size-3" />
@@ -819,9 +992,9 @@ function UnlockPreviewThumb({
     <div className="relative aspect-square overflow-hidden rounded-lg bg-muted/40">
       {url ? (
         asset.mediaType === "video" ? (
-          <video src={url} className={cn("size-full object-cover", locked && "blur-sm saturate-50")} muted playsInline />
+          <video src={url} className={cn("size-full object-cover", locked && "scale-[1.04] blur-[4px] brightness-75 saturate-75")} muted playsInline />
         ) : (
-          <img src={url} alt="" className={cn("size-full object-cover", locked && "blur-sm saturate-50")} />
+          <img src={url} alt="" className={cn("size-full object-cover", locked && "scale-[1.04] blur-[4px] brightness-75 saturate-75")} />
         )
       ) : (
         <div className="grid size-full place-items-center">
@@ -830,7 +1003,7 @@ function UnlockPreviewThumb({
       )}
       {locked && (
         <>
-          <div className="absolute inset-0 bg-black/35" />
+          <div className="absolute inset-0 bg-black/25" />
           <span className="absolute left-1 top-1 rounded bg-rose-500 px-1 text-[8px] font-black leading-4 text-white">19+</span>
         </>
       )}

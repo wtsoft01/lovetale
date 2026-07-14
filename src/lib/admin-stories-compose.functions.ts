@@ -2,6 +2,11 @@
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
 import { fetchWithSupabaseAuth, getFreshAccessToken } from "@/lib/supabase-auth-fetch";
+import {
+  characterNamesLikelySame,
+  normalizeCharacterNameKey,
+  preferredCharacterDisplayName,
+} from "@/lib/character-name-match";
 import { mapNormalizedProseOffset, normalizeProseLineBreaks } from "@/lib/text-normalization";
 
 export type HeatPreset = "soft" | "warm" | "spicy" | "steamy";
@@ -249,15 +254,31 @@ function analyzeChapterCharacters(
 
 function mergeCharacterInsights(card: Record<string, any>, chapters: ChapterConfig[]) {
   const byName = new Map<string, any>();
+  const findKey = (name: string) => {
+    const key = normalizeCharacterNameKey(name);
+    if (byName.has(key)) return key;
+    for (const [currentKey, character] of byName.entries()) {
+      if (characterNamesLikelySame(String(character?.name ?? currentKey), name)) return currentKey;
+    }
+    return key;
+  };
+  const setCharacter = (key: string, character: Record<string, any>) => {
+    const name = compactText(character.name);
+    const preferredName = preferredCharacterDisplayName(String(byName.get(key)?.name ?? ""), name) || name;
+    const preferredKey = normalizeCharacterNameKey(preferredName);
+    if (preferredKey && preferredKey !== key) byName.delete(key);
+    byName.set(preferredKey || key, { ...character, name: preferredName || name });
+  };
   const existing = Array.isArray(card.characters) ? card.characters : [];
   for (const character of existing) {
     const name = compactText(character?.name ?? character?.title);
-    if (name) byName.set(name, { ...character, name });
+    if (name) setCharacter(findKey(name), { ...character, name });
   }
 
   for (const chapter of chapters) {
     for (const insight of chapter.characterAnalysis ?? []) {
-      const current = byName.get(insight.name) ?? {
+      const key = findKey(insight.name);
+      const current = byName.get(key) ?? {
         id: `char_${insight.name.replace(/\s+/g, "_")}`,
         name: insight.name,
         role: insight.role,
@@ -279,8 +300,11 @@ function mergeCharacterInsights(card: Record<string, any>, chapters: ChapterConf
           chatGuidance: insight.chatGuidance,
         },
       ].slice(-12);
-      byName.set(insight.name, {
+      const displayName = preferredCharacterDisplayName(current.name, insight.name) || insight.name;
+      setCharacter(key, {
         ...current,
+        name: displayName,
+        id: current.id || `char_${displayName.replace(/\s+/g, "_")}`,
         role: current.role || insight.role,
         personality: compactText([current.personality, insight.traits.join(", ")].filter(Boolean).join(" / ")).slice(0, 500),
         relationship: current.relationship || insight.relationship,

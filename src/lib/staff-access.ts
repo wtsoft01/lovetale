@@ -33,12 +33,15 @@ function toStaffAccess(roles: StaffRole[]): StaffAccess {
 }
 
 async function getServerStaffAccess(accessToken?: string): Promise<StaffAccess | null> {
-  const response = accessToken
-    ? await fetch("/api/auth/staff-access", {
+  let response = await fetchWithSupabaseAuth("/api/auth/staff-access").catch(() => null);
+
+  if ((!response || response.status === 401) && accessToken) {
+    response = await fetch("/api/auth/staff-access", {
         headers: { Authorization: `Bearer ${accessToken}` },
-      }).then((res) => (res.status === 401 ? fetchWithSupabaseAuth("/api/auth/staff-access") : res))
-    : await fetchWithSupabaseAuth("/api/auth/staff-access");
-  if (!response.ok) return null;
+      }).catch(() => null);
+  }
+
+  if (!response || !response.ok) return null;
 
   const result = await response.json().catch(() => null);
   if (!result?.ok) return null;

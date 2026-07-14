@@ -19,6 +19,7 @@ import {
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Textarea } from "@/components/ui/textarea";
@@ -183,7 +184,10 @@ function CharacterChatRoom() {
   const affectionQ = useQuery({
     queryKey: ["story_affection", storyId],
     queryFn: () => fetchAffection({ data: { storyId } }),
-    staleTime: 30_000,
+    staleTime: 0,
+    gcTime: 30_000,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
   });
   const historyQ = useQuery({
     queryKey: ["reader_chat_messages", storyId],
@@ -631,6 +635,7 @@ function VisualUnlockRailV2({
 }) {
   const unlocked = assets.filter((asset) => affection >= asset.minAffection);
   const locked = assets.filter((asset) => affection < asset.minAffection);
+  const [activeAssetId, setActiveAssetId] = useState<string | null>(null);
   return (
     <div className="flex h-full min-h-0 flex-col space-y-4">
       <div>
@@ -643,12 +648,12 @@ function VisualUnlockRailV2({
       <div className="min-h-0 flex-1 space-y-5 overflow-y-auto pr-1">
         <VisualAssetSection title="해금된 이미지" count={unlocked.length} empty="아직 해금된 이미지가 없습니다.">
           {unlocked.map((asset) => (
-            <VisualAssetCard key={asset.id} asset={asset} affection={affection} />
+            <VisualAssetCard key={asset.id} asset={asset} affection={affection} onOpen={() => setActiveAssetId(asset.id)} />
           ))}
         </VisualAssetSection>
         <VisualAssetSection title="해금 전 이미지" count={locked.length} empty="잠긴 이미지가 없습니다.">
           {locked.map((asset) => (
-            <VisualAssetCard key={asset.id} asset={asset} affection={affection} />
+            <VisualAssetCard key={asset.id} asset={asset} affection={affection} onOpen={() => setActiveAssetId(asset.id)} />
           ))}
         </VisualAssetSection>
         {assets.length === 0 && (
@@ -661,6 +666,13 @@ function VisualUnlockRailV2({
           </div>
         )}
       </div>
+      <AssetGalleryDialog
+        assets={assets}
+        affection={affection}
+        activeAssetId={activeAssetId}
+        onSelect={setActiveAssetId}
+        onClose={() => setActiveAssetId(null)}
+      />
     </div>
   );
 }
@@ -727,19 +739,40 @@ function VisualUnlockRail({
 function VisualAssetCard({
   asset,
   affection,
+  onOpen,
 }: {
   asset: CharacterVisualAsset;
   affection: number;
+  onOpen?: () => void;
 }) {
   const url = useSignedMedia(asset.mediaUrl);
   const locked = affection < asset.minAffection;
   return (
-    <div className="relative aspect-square overflow-hidden rounded-2xl bg-white/[0.04]">
+    <button
+      type="button"
+      onClick={onOpen}
+      className="group relative aspect-square overflow-hidden rounded-2xl bg-white/[0.04] text-left outline-none ring-primary/0 transition hover:ring-2 focus-visible:ring-2"
+    >
       {url ? (
         asset.mediaType === "video" ? (
-          <video src={url} className={cn("size-full object-cover", locked && "blur-md saturate-50")} muted playsInline />
+          <video
+            src={url}
+            className={cn(
+              "size-full object-cover transition duration-300 group-hover:scale-[1.03]",
+              locked && "scale-[1.04] blur-[5px] brightness-75 saturate-75",
+            )}
+            muted
+            playsInline
+          />
         ) : (
-          <img src={url} alt={asset.caption} className={cn("size-full object-cover", locked && "blur-md saturate-50")} />
+          <img
+            src={url}
+            alt={asset.caption}
+            className={cn(
+              "size-full object-cover transition duration-300 group-hover:scale-[1.03]",
+              locked && "scale-[1.04] blur-[5px] brightness-75 saturate-75",
+            )}
+          />
         )
       ) : (
         <div className="grid size-full place-items-center">
@@ -747,14 +780,162 @@ function VisualAssetCard({
         </div>
       )}
       {locked && (
-        <div className="absolute inset-0 grid place-items-center bg-black/45">
-          <div className="text-center">
-            <Lock className="mx-auto size-4 text-rose-200" />
-            <div className="mt-1 text-[10px] font-black text-white">호감도 {asset.minAffection}</div>
+        <>
+          <div className="absolute inset-0 bg-black/28" />
+          <div className="absolute left-2 top-2 rounded-full bg-rose-500 px-1.5 py-0.5 text-[9px] font-black text-white">19+</div>
+          <div className="absolute inset-x-2 bottom-2 rounded-xl bg-black/55 px-2 py-1.5 text-center backdrop-blur-sm">
+            <Lock className="mx-auto size-3.5 text-rose-100" />
+            <div className="mt-0.5 text-[10px] font-black text-white">호감도 {asset.minAffection}</div>
           </div>
-        </div>
+        </>
       )}
       {!locked && <div className="absolute left-2 top-2 rounded-full bg-emerald-400 px-2 py-0.5 text-[10px] font-black text-black">OPEN</div>}
-    </div>
+    </button>
+  );
+}
+
+function AssetGalleryDialog({
+  assets,
+  affection,
+  activeAssetId,
+  onSelect,
+  onClose,
+}: {
+  assets: CharacterVisualAsset[];
+  affection: number;
+  activeAssetId: string | null;
+  onSelect: (assetId: string) => void;
+  onClose: () => void;
+}) {
+  const selectedIndex = Math.max(0, assets.findIndex((asset) => asset.id === activeAssetId));
+  const selected = assets[selectedIndex] ?? null;
+  const url = useSignedMedia(selected?.mediaUrl ?? null);
+  const locked = selected ? affection < selected.minAffection : false;
+  const open = Boolean(activeAssetId && selected);
+
+  return (
+    <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && onClose()}>
+      <DialogContent className="max-h-[92vh] max-w-5xl overflow-hidden border-white/10 bg-[#08060d] p-0 text-white">
+        <DialogHeader className="border-b border-white/10 px-5 py-4">
+          <DialogTitle className="flex items-center justify-between gap-3 text-base">
+            <span className="truncate">{selected?.caption || "캐릭터 이미지"}</span>
+            {selected ? (
+              <span
+                className={cn(
+                  "shrink-0 rounded-full px-2 py-0.5 text-[10px] font-black",
+                  locked ? "bg-rose-500 text-white" : "bg-emerald-400 text-black",
+                )}
+              >
+                {locked ? `19+ 호감도 ${selected.minAffection}` : "OPEN"}
+              </span>
+            ) : null}
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="grid min-h-0 gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_240px]">
+          <div className="relative grid max-h-[70vh] min-h-[320px] place-items-center overflow-hidden rounded-2xl border border-white/10 bg-black/45">
+            {url && selected ? (
+              selected.mediaType === "video" ? (
+                <video
+                  src={url}
+                  className={cn(
+                    "max-h-[70vh] size-full object-contain",
+                    locked && "scale-[1.02] blur-[7px] brightness-75 saturate-75",
+                  )}
+                  controls={!locked}
+                  muted={locked}
+                  playsInline
+                />
+              ) : (
+                <img
+                  src={url}
+                  alt={selected.caption || "캐릭터 이미지"}
+                  className={cn(
+                    "max-h-[70vh] size-full object-contain",
+                    locked && "scale-[1.02] blur-[7px] brightness-75 saturate-75",
+                  )}
+                />
+              )
+            ) : (
+              <ImageIcon className="size-8 text-white/25" />
+            )}
+
+            {locked ? (
+              <>
+                <div className="absolute inset-0 bg-black/24" />
+                <div className="absolute left-4 top-4 rounded-full bg-rose-500 px-2 py-1 text-[11px] font-black text-white">19+</div>
+                <div className="absolute inset-x-4 bottom-4 rounded-2xl border border-white/10 bg-black/62 px-4 py-3 text-center backdrop-blur-md">
+                  <Lock className="mx-auto size-5 text-rose-100" />
+                  <div className="mt-1 text-sm font-black">호감도 {selected?.minAffection}에서 선명하게 열립니다</div>
+                  <p className="mt-1 text-xs leading-5 text-white/55">실루엣을 미리 보고 대화를 이어가며 이미지를 해금하세요.</p>
+                </div>
+              </>
+            ) : null}
+          </div>
+
+          <div className="min-h-0 rounded-2xl border border-white/10 bg-white/[0.04] p-3">
+            <div className="mb-3 flex items-center justify-between">
+              <div className="text-sm font-bold">이미지 목록</div>
+              <div className="text-xs text-white/45">{assets.length}개</div>
+            </div>
+            <div className="grid max-h-[64vh] grid-cols-3 gap-2 overflow-y-auto pr-1 lg:grid-cols-2">
+              {assets.map((asset) => (
+                <AssetGalleryThumb
+                  key={asset.id}
+                  asset={asset}
+                  active={asset.id === selected?.id}
+                  locked={affection < asset.minAffection}
+                  onClick={() => onSelect(asset.id)}
+                />
+              ))}
+            </div>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function AssetGalleryThumb({
+  asset,
+  active,
+  locked,
+  onClick,
+}: {
+  asset: CharacterVisualAsset;
+  active: boolean;
+  locked: boolean;
+  onClick: () => void;
+}) {
+  const url = useSignedMedia(asset.mediaUrl);
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "relative aspect-square overflow-hidden rounded-xl border bg-black/40 text-left transition",
+        active ? "border-primary" : "border-white/10 hover:border-primary/50",
+      )}
+    >
+      {url ? (
+        asset.mediaType === "video" ? (
+          <video src={url} className={cn("size-full object-cover", locked && "scale-[1.04] blur-[4px] brightness-75 saturate-75")} muted playsInline />
+        ) : (
+          <img src={url} alt={asset.caption} className={cn("size-full object-cover", locked && "scale-[1.04] blur-[4px] brightness-75 saturate-75")} />
+        )
+      ) : (
+        <div className="grid size-full place-items-center">
+          <ImageIcon className="size-4 text-white/25" />
+        </div>
+      )}
+      {locked ? (
+        <>
+          <div className="absolute inset-0 bg-black/28" />
+          <div className="absolute left-1.5 top-1.5 rounded bg-rose-500 px-1 py-0.5 text-[8px] font-black text-white">19+</div>
+        </>
+      ) : (
+        <div className="absolute left-1.5 top-1.5 rounded bg-emerald-400 px-1 py-0.5 text-[8px] font-black text-black">OPEN</div>
+      )}
+    </button>
   );
 }

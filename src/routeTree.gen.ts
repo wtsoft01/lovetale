@@ -24,6 +24,7 @@ import { Route as PlaySessionIdRouteImport } from './routes/play.$sessionId'
 import { Route as InteractiveRpgIdRouteImport } from './routes/interactive-rpg.$id'
 import { Route as CharacterIdRouteImport } from './routes/character.$id'
 import { Route as ApiUnlocksRouteImport } from './routes/api/unlocks'
+import { Route as ApiStoryWritingAssistRouteImport } from './routes/api/story-writing-assist'
 import { Route as ApiStoryRpgRouteImport } from './routes/api/story-rpg'
 import { Route as ApiReaderStoryRouteImport } from './routes/api/reader-story'
 import { Route as ApiReaderProfileImageRouteImport } from './routes/api/reader-profile-image'
@@ -32,6 +33,7 @@ import { Route as ApiMarketplaceRouteImport } from './routes/api/marketplace'
 import { Route as ApiHomePlacementsRouteImport } from './routes/api/home-placements'
 import { Route as ApiChatRouteImport } from './routes/api/chat'
 import { Route as ApiCharacterChatRouteImport } from './routes/api/character-chat'
+import { Route as ApiActivityRouteImport } from './routes/api/activity'
 import { Route as AuthenticatedOrdersRouteImport } from './routes/_authenticated/orders'
 import { Route as AuthenticatedMarketplaceRouteImport } from './routes/_authenticated/marketplace'
 import { Route as AuthenticatedLibraryRouteImport } from './routes/_authenticated/library'
@@ -149,6 +151,11 @@ const ApiUnlocksRoute = ApiUnlocksRouteImport.update({
   path: '/api/unlocks',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiStoryWritingAssistRoute = ApiStoryWritingAssistRouteImport.update({
+  id: '/api/story-writing-assist',
+  path: '/api/story-writing-assist',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiStoryRpgRoute = ApiStoryRpgRouteImport.update({
   id: '/api/story-rpg',
   path: '/api/story-rpg',
@@ -187,6 +194,11 @@ const ApiChatRoute = ApiChatRouteImport.update({
 const ApiCharacterChatRoute = ApiCharacterChatRouteImport.update({
   id: '/api/character-chat',
   path: '/api/character-chat',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiActivityRoute = ApiActivityRouteImport.update({
+  id: '/api/activity',
+  path: '/api/activity',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AuthenticatedOrdersRoute = AuthenticatedOrdersRouteImport.update({
@@ -435,6 +447,7 @@ export interface FileRoutesByFullPath {
   '/library': typeof AuthenticatedLibraryRoute
   '/marketplace': typeof AuthenticatedMarketplaceRouteWithChildren
   '/orders': typeof AuthenticatedOrdersRoute
+  '/api/activity': typeof ApiActivityRoute
   '/api/character-chat': typeof ApiCharacterChatRoute
   '/api/chat': typeof ApiChatRoute
   '/api/home-placements': typeof ApiHomePlacementsRoute
@@ -443,6 +456,7 @@ export interface FileRoutesByFullPath {
   '/api/reader-profile-image': typeof ApiReaderProfileImageRoute
   '/api/reader-story': typeof ApiReaderStoryRoute
   '/api/story-rpg': typeof ApiStoryRpgRoute
+  '/api/story-writing-assist': typeof ApiStoryWritingAssistRoute
   '/api/unlocks': typeof ApiUnlocksRoute
   '/character/$id': typeof CharacterIdRoute
   '/interactive-rpg/$id': typeof InteractiveRpgIdRoute
@@ -500,6 +514,7 @@ export interface FileRoutesByTo {
   '/library': typeof AuthenticatedLibraryRoute
   '/marketplace': typeof AuthenticatedMarketplaceRouteWithChildren
   '/orders': typeof AuthenticatedOrdersRoute
+  '/api/activity': typeof ApiActivityRoute
   '/api/character-chat': typeof ApiCharacterChatRoute
   '/api/chat': typeof ApiChatRoute
   '/api/home-placements': typeof ApiHomePlacementsRoute
@@ -508,6 +523,7 @@ export interface FileRoutesByTo {
   '/api/reader-profile-image': typeof ApiReaderProfileImageRoute
   '/api/reader-story': typeof ApiReaderStoryRoute
   '/api/story-rpg': typeof ApiStoryRpgRoute
+  '/api/story-writing-assist': typeof ApiStoryWritingAssistRoute
   '/api/unlocks': typeof ApiUnlocksRoute
   '/character/$id': typeof CharacterIdRoute
   '/interactive-rpg/$id': typeof InteractiveRpgIdRoute
@@ -568,6 +584,7 @@ export interface FileRoutesById {
   '/_authenticated/library': typeof AuthenticatedLibraryRoute
   '/_authenticated/marketplace': typeof AuthenticatedMarketplaceRouteWithChildren
   '/_authenticated/orders': typeof AuthenticatedOrdersRoute
+  '/api/activity': typeof ApiActivityRoute
   '/api/character-chat': typeof ApiCharacterChatRoute
   '/api/chat': typeof ApiChatRoute
   '/api/home-placements': typeof ApiHomePlacementsRoute
@@ -576,6 +593,7 @@ export interface FileRoutesById {
   '/api/reader-profile-image': typeof ApiReaderProfileImageRoute
   '/api/reader-story': typeof ApiReaderStoryRoute
   '/api/story-rpg': typeof ApiStoryRpgRoute
+  '/api/story-writing-assist': typeof ApiStoryWritingAssistRoute
   '/api/unlocks': typeof ApiUnlocksRoute
   '/character/$id': typeof CharacterIdRoute
   '/interactive-rpg/$id': typeof InteractiveRpgIdRoute
@@ -636,6 +654,7 @@ export interface FileRouteTypes {
     | '/library'
     | '/marketplace'
     | '/orders'
+    | '/api/activity'
     | '/api/character-chat'
     | '/api/chat'
     | '/api/home-placements'
@@ -644,6 +663,7 @@ export interface FileRouteTypes {
     | '/api/reader-profile-image'
     | '/api/reader-story'
     | '/api/story-rpg'
+    | '/api/story-writing-assist'
     | '/api/unlocks'
     | '/character/$id'
     | '/interactive-rpg/$id'
@@ -701,6 +721,7 @@ export interface FileRouteTypes {
     | '/library'
     | '/marketplace'
     | '/orders'
+    | '/api/activity'
     | '/api/character-chat'
     | '/api/chat'
     | '/api/home-placements'
@@ -709,6 +730,7 @@ export interface FileRouteTypes {
     | '/api/reader-profile-image'
     | '/api/reader-story'
     | '/api/story-rpg'
+    | '/api/story-writing-assist'
     | '/api/unlocks'
     | '/character/$id'
     | '/interactive-rpg/$id'
@@ -768,6 +790,7 @@ export interface FileRouteTypes {
     | '/_authenticated/library'
     | '/_authenticated/marketplace'
     | '/_authenticated/orders'
+    | '/api/activity'
     | '/api/character-chat'
     | '/api/chat'
     | '/api/home-placements'
@@ -776,6 +799,7 @@ export interface FileRouteTypes {
     | '/api/reader-profile-image'
     | '/api/reader-story'
     | '/api/story-rpg'
+    | '/api/story-writing-assist'
     | '/api/unlocks'
     | '/character/$id'
     | '/interactive-rpg/$id'
@@ -831,6 +855,7 @@ export interface RootRouteChildren {
   PremiumRoute: typeof PremiumRoute
   ProfileRoute: typeof ProfileRoute
   RewardsRoute: typeof RewardsRoute
+  ApiActivityRoute: typeof ApiActivityRoute
   ApiCharacterChatRoute: typeof ApiCharacterChatRoute
   ApiChatRoute: typeof ApiChatRoute
   ApiHomePlacementsRoute: typeof ApiHomePlacementsRoute
@@ -839,6 +864,7 @@ export interface RootRouteChildren {
   ApiReaderProfileImageRoute: typeof ApiReaderProfileImageRoute
   ApiReaderStoryRoute: typeof ApiReaderStoryRoute
   ApiStoryRpgRoute: typeof ApiStoryRpgRoute
+  ApiStoryWritingAssistRoute: typeof ApiStoryWritingAssistRoute
   ApiUnlocksRoute: typeof ApiUnlocksRoute
   CharacterIdRoute: typeof CharacterIdRoute
   PlaySessionIdRoute: typeof PlaySessionIdRoute
@@ -964,6 +990,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiUnlocksRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/story-writing-assist': {
+      id: '/api/story-writing-assist'
+      path: '/api/story-writing-assist'
+      fullPath: '/api/story-writing-assist'
+      preLoaderRoute: typeof ApiStoryWritingAssistRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/story-rpg': {
       id: '/api/story-rpg'
       path: '/api/story-rpg'
@@ -1018,6 +1051,13 @@ declare module '@tanstack/react-router' {
       path: '/api/character-chat'
       fullPath: '/api/character-chat'
       preLoaderRoute: typeof ApiCharacterChatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/activity': {
+      id: '/api/activity'
+      path: '/api/activity'
+      fullPath: '/api/activity'
+      preLoaderRoute: typeof ApiActivityRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_authenticated/orders': {
@@ -1469,6 +1509,7 @@ const rootRouteChildren: RootRouteChildren = {
   PremiumRoute: PremiumRoute,
   ProfileRoute: ProfileRoute,
   RewardsRoute: RewardsRoute,
+  ApiActivityRoute: ApiActivityRoute,
   ApiCharacterChatRoute: ApiCharacterChatRoute,
   ApiChatRoute: ApiChatRoute,
   ApiHomePlacementsRoute: ApiHomePlacementsRoute,
@@ -1477,6 +1518,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiReaderProfileImageRoute: ApiReaderProfileImageRoute,
   ApiReaderStoryRoute: ApiReaderStoryRoute,
   ApiStoryRpgRoute: ApiStoryRpgRoute,
+  ApiStoryWritingAssistRoute: ApiStoryWritingAssistRoute,
   ApiUnlocksRoute: ApiUnlocksRoute,
   CharacterIdRoute: CharacterIdRoute,
   PlaySessionIdRoute: PlaySessionIdRoute,

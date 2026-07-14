@@ -11,6 +11,45 @@ export type AdminCreditUserRow = {
   updatedAt: string | null;
 };
 
+export type AdminMemberRow = AdminCreditUserRow & {
+  createdAt: string | null;
+  lastSignInAt: string | null;
+  lastActivityAt: string | null;
+  lastVisitAt: string | null;
+  lastPath: string | null;
+  activeNow: boolean;
+  visitCount: number;
+  totalDwellSeconds: number;
+  averageDwellSeconds: number;
+  activitySource: "tracked" | "estimated";
+  ageVerified: boolean;
+  isSubscribed: boolean;
+  subscriptionExpiresAt: string | null;
+  storyCount: number;
+  sessionCount: number;
+  chatMessageCount: number;
+  affectionCount: number;
+  averageAffection: number;
+  maxAffection: number;
+  roles: StaffRole[];
+};
+
+export type AdminUserAffectionRow = {
+  storyId: string;
+  storyTitle: string;
+  affection: number;
+  initialAffection: number;
+  updatedAt: string | null;
+};
+
+export type AdminAvailableAffectionStory = {
+  storyId: string;
+  storyTitle: string;
+  initialAffection: number;
+  isPublic: boolean;
+  isListed: boolean;
+};
+
 type StaffAccessPayload = {
   isAdmin: boolean;
   isEditor: boolean;
@@ -26,6 +65,62 @@ type DashboardStats = {
   revenue24hUsd: number;
   pendingOrders: number;
   activeSessions7d: number;
+};
+
+export type AdminRevenueRechargeRow = {
+  id: string;
+  userId: string;
+  userEmail: string | null;
+  displayName: string | null;
+  packageId: string;
+  credits: number;
+  amountUsd: number;
+  currency: string;
+  network: string;
+  walletAddress: string;
+  txHash: string | null;
+  status: "pending" | "submitted" | "confirmed" | "failed" | "refunded";
+  note: string | null;
+  createdAt: string;
+  updatedAt: string | null;
+  confirmedAt: string | null;
+  refundedAt: string | null;
+  refundReason: string | null;
+};
+
+export type AdminRevenueUsageRow = {
+  id: string;
+  userId: string;
+  userEmail: string | null;
+  displayName: string | null;
+  reason: string;
+  productType: "story" | "media" | "other";
+  productLabel: string;
+  storyId: string | null;
+  storyTitle: string | null;
+  creditsSpent: number;
+  authorShare: number;
+  balanceAfter: number;
+  refType: string | null;
+  refId: string | null;
+  createdAt: string;
+};
+
+export type AdminRevenueOverview = {
+  recharges: AdminRevenueRechargeRow[];
+  usages: AdminRevenueUsageRow[];
+  summary: {
+    rechargePending: number;
+    rechargeConfirmed: number;
+    rechargeRefunded: number;
+    rechargeRevenueUsd: number;
+    rechargeCreditsIssued: number;
+    usageCount: number;
+    usageCreditsSpent: number;
+    storyPurchaseCredits: number;
+    mediaUnlockCredits: number;
+    authorShareCredits: number;
+  };
 };
 
 async function readAdminError(res: Response) {
@@ -75,6 +170,13 @@ export const listAdminOrders = createServerFn({ method: "GET" }).handler(async (
   return payload.rows;
 });
 
+export const getAdminRevenueOverview = createServerFn({ method: "GET" }).handler(
+  async (): Promise<AdminRevenueOverview> => {
+    const payload = await adminCoreApi<{ ok: true; overview: AdminRevenueOverview }>("?mode=revenue-overview");
+    return payload.overview;
+  },
+);
+
 export const confirmCreditOrder = createServerFn({ method: "POST" })
   .inputValidator((i: unknown) => i as { orderId: string; txHash: string; note?: string })
   .handler(async ({ data }) => {
@@ -112,6 +214,86 @@ export const listAdminCreditUsers = createServerFn({ method: "GET" }).handler(
     return payload.rows;
   },
 );
+
+export const listAdminMembers = createServerFn({ method: "GET" }).handler(
+  async (): Promise<AdminMemberRow[]> => {
+    const payload = await adminCoreApi<{ ok: true; rows: AdminMemberRow[] }>("?mode=members");
+    return payload.rows;
+  },
+);
+
+export const getAdminUserAffections = createServerFn({ method: "GET" })
+  .inputValidator((i: unknown) => i as { userId: string })
+  .handler(async ({ data }): Promise<{ rows: AdminUserAffectionRow[]; stories: AdminAvailableAffectionStory[] }> => {
+    const params = new URLSearchParams({ mode: "user-affection", userId: data.userId });
+    const payload = await adminCoreApi<{
+      ok: true;
+      rows: AdminUserAffectionRow[];
+      stories: AdminAvailableAffectionStory[];
+    }>(`?${params.toString()}`);
+    return { rows: payload.rows, stories: payload.stories };
+  });
+
+export const updateAdminMemberProfile = createServerFn({ method: "POST" })
+  .inputValidator(
+    (i: unknown) =>
+      i as {
+        userId: string;
+        displayName?: string | null;
+        ageVerified?: boolean;
+        isSubscribed?: boolean;
+        subscriptionExpiresAt?: string | null;
+      },
+  )
+  .handler(async ({ data }) => {
+    await adminCoreApi<{ ok: true }>("", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "update_member_profile", ...data }),
+    });
+    return { ok: true };
+  });
+
+export const setAdminUserAffection = createServerFn({ method: "POST" })
+  .inputValidator((i: unknown) => i as { userId: string; storyId: string; affection: number })
+  .handler(async ({ data }) => {
+    const payload = await adminCoreApi<{ ok: true; affection: number }>("", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "set_user_affection", ...data }),
+    });
+    return { ok: true, affection: payload.affection };
+  });
+
+export const bulkUpdateAdminMembers = createServerFn({ method: "POST" })
+  .inputValidator(
+    (i: unknown) =>
+      i as {
+        userIds: string[];
+        ageVerified?: boolean | null;
+        isSubscribed?: boolean | null;
+        subscriptionExpiresAt?: string | null;
+      },
+  )
+  .handler(async ({ data }) => {
+    const payload = await adminCoreApi<{ ok: true; count: number }>("", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "bulk_update_member_profile", ...data }),
+    });
+    return payload;
+  });
+
+export const bulkAdjustUserCredits = createServerFn({ method: "POST" })
+  .inputValidator((i: unknown) => i as { userIds: string[]; delta: number; note?: string })
+  .handler(async ({ data }) => {
+    const payload = await adminCoreApi<{ ok: true; count: number; delta: number }>("", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "bulk_adjust_credits", ...data }),
+    });
+    return payload;
+  });
 
 export const adjustUserCredits = createServerFn({ method: "POST" })
   .inputValidator((i: unknown) => i as { userId: string; delta: number; note?: string })

@@ -16,6 +16,7 @@ import { reportLovableError } from "../lib/lovable-error-reporting";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { AuthProvider, useAuth } from "@/hooks/use-auth";
+import { useActivityTracker } from "@/hooks/use-activity-tracker";
 import { Toaster } from "@/components/ui/sonner";
 
 function NotFoundComponent() {
@@ -165,6 +166,7 @@ function RootComponent() {
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
+        <ActivityTracker />
         {isAdminRoute ? (
           <Outlet />
         ) : isPlayRoute ? (
@@ -204,6 +206,11 @@ function RootComponent() {
       </AuthProvider>
     </QueryClientProvider>
   );
+}
+
+function ActivityTracker() {
+  useActivityTracker();
+  return null;
 }
 
 function HeaderAuth() {

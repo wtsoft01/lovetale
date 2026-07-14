@@ -498,9 +498,7 @@ function SlotRenderer({
   const info = HEAT_INFO[tierKey];
   const minAffection = tierMinForSlot(slot);
   const locked = !isReaderAssetUnlocked(slot, affection);
-  const path = slot.media_url ?? slot.media_asset_id; // media_asset_id may be storage path or uuid (not handled here)
-  // For now we treat media_url as the only fillable source; media_asset_id resolution is in admin (we pass storage_path to media_url at save).
-  const url = useSignedMedia(slot.media_url);
+  const url = useSignedMedia(slot.media_url ?? slot.media_asset_id ?? null);
 
   return (
     <figure
@@ -510,8 +508,37 @@ function SlotRenderer({
       )}
     >
       <div className="relative">
-        {locked ? (
-          <div className="grid aspect-[16/9] place-items-center bg-gradient-to-br from-muted/40 to-muted/10 text-center p-6">
+        {locked && url ? (
+          <div className="relative aspect-[16/9] overflow-hidden bg-black">
+            {slot.media_type === "video" ? (
+              <video
+                src={url}
+                muted
+                loop
+                playsInline
+                className="size-full scale-[1.04] object-cover blur-[7px] brightness-75 saturate-75"
+              />
+            ) : (
+              <img
+                src={url}
+                alt=""
+                className="size-full scale-[1.04] object-cover blur-[7px] brightness-75 saturate-75"
+              />
+            )}
+            <div className="absolute inset-0 bg-black/24" />
+            <div className="absolute inset-0 bg-gradient-to-t from-black/72 via-black/18 to-transparent" />
+            <div className="absolute bottom-4 left-4 right-4">
+              <div className="inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-black/55 px-3 py-1 text-[11px] font-semibold text-white/86 backdrop-blur-md">
+                <Lock className="size-3.5 text-rose-200" />
+                호감도 {minAffection}+에서 선명해져요
+              </div>
+              <p className="mt-2 max-w-md text-xs leading-5 text-white/60">
+                지금 {affection}. 장면 대화를 이어가면 이 이미지가 열립니다.
+              </p>
+            </div>
+          </div>
+        ) : locked ? (
+          <div className="grid aspect-[16/9] place-items-center bg-gradient-to-br from-muted/40 to-muted/10 p-6 text-center">
             <div className="space-y-2">
               <Lock className="mx-auto size-5 text-muted-foreground" />
               <p className="text-xs text-muted-foreground">
@@ -593,13 +620,13 @@ function ReaderAssetGalleryCard({
               muted
               loop
               playsInline
-              className={cn("size-full object-cover", locked && "scale-110 blur-md saturate-50")}
+              className={cn("size-full object-cover", locked && "scale-[1.04] blur-[6px] brightness-75 saturate-75")}
             />
           ) : (
             <img
               src={url}
               alt=""
-              className={cn("size-full object-cover", locked && "scale-110 blur-md saturate-50")}
+              className={cn("size-full object-cover", locked && "scale-[1.04] blur-[6px] brightness-75 saturate-75")}
             />
           )
         ) : (
@@ -608,7 +635,7 @@ function ReaderAssetGalleryCard({
           </div>
         )}
         {locked && (
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_25%_25%,rgba(255,255,255,.22)_0_1px,transparent_1px)] bg-[length:9px_9px] bg-black/45" />
+          <div className="absolute inset-0 bg-black/28" />
         )}
         <div className="absolute left-2 top-2 flex items-center gap-1 rounded-full border border-white/15 bg-black/70 px-2 py-1 text-[10px] text-white">
           {locked ? <EyeOff className="size-3 text-rose-300" /> : <Eye className="size-3 text-emerald-300" />}
@@ -653,13 +680,13 @@ function ReaderAssetThumb({
             src={url}
             muted
             playsInline
-            className={cn("size-full object-cover", locked && "scale-110 blur-sm saturate-50")}
+            className={cn("size-full object-cover", locked && "scale-[1.04] blur-[4px] brightness-75 saturate-75")}
           />
         ) : (
           <img
             src={url}
             alt=""
-            className={cn("size-full object-cover", locked && "scale-110 blur-sm saturate-50")}
+            className={cn("size-full object-cover", locked && "scale-[1.04] blur-[4px] brightness-75 saturate-75")}
           />
         )
       ) : (
@@ -669,8 +696,7 @@ function ReaderAssetThumb({
       )}
       {locked && (
         <>
-          <div className="absolute inset-0 bg-black/38" />
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_30%,rgba(255,255,255,.28)_0_1px,transparent_1px)] bg-[length:8px_8px]" />
+          <div className="absolute inset-0 bg-black/30" />
           <span className="absolute left-1.5 top-1.5 rounded-full bg-rose-500 px-1.5 py-0.5 text-[9px] font-extrabold leading-none text-white shadow">
             19+
           </span>
@@ -839,7 +865,10 @@ export function UnifiedStoryReader({
     queryKey: ["story_affection", storyId],
     queryFn: () => fetchAff({ data: { storyId } }),
     enabled: !previewMode,
-    staleTime: 30_000,
+    staleTime: 0,
+    gcTime: 30_000,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
   });
   const bumpMut = useMutation({
     mutationFn: (reward: { delta: number; reason: string }) =>
@@ -911,17 +940,10 @@ export function UnifiedStoryReader({
     const normalized = normalizeProseLineBreaks(bodyText).replace(/\s+/g, " ").trim();
     return normalized.slice(0, readerMode === "focus" ? 150 : 110);
   }, [bodyText, readerMode]);
-  const statusItems = useMemo(() => {
-    const charactersForBar = (characterProfiles ?? [])
-      .map((character) => character.name?.trim())
-      .filter(Boolean)
-      .slice(0, 4);
-    const names = charactersForBar.length ? charactersForBar : [characterName];
-    return [
-      { label: "몰입도", value: affection },
-      ...names.map((name) => ({ label: `${name} 호감도`, value: affection })),
-    ];
-  }, [affection, characterName, characterProfiles]);
+  const statusItems = useMemo(
+    () => [{ label: "호감도", value: affection }],
+    [affection],
+  );
   const speakerCandidates = useMemo(
     () =>
       normalizeSpeakerCandidates(
@@ -1359,7 +1381,7 @@ export function UnifiedStoryReader({
               <div className="mt-3 space-y-2 text-xs leading-5 text-white/55">
                 <p>본문을 읽다가 하단 채팅창으로 주인공에게 말을 걸면 호감도가 쌓입니다.</p>
                 <p>호감도가 오르면 잠긴 이미지와 영상이 순서대로 열립니다.</p>
-                <p>왼쪽 휴대폰형 대화기록에서 친구목록과 채팅방을 오가며 이전 대화를 확인할 수 있습니다.</p>
+                <p>하단 채팅창에서 최근 대화를 짧게 확인하며 본문 흐름을 유지할 수 있습니다.</p>
                 <p>글꼴과 채팅 프로필은 이 브라우저에 저장되어 다음 방문에도 유지됩니다.</p>
               </div>
             </section>
@@ -1584,7 +1606,7 @@ export function UnifiedStoryReader({
       <main
         ref={containerRef}
         style={{ fontFamily: selectedReaderFont.fontFamily }}
-        className={cn("relative z-10 mx-auto px-5 pt-10", readerMode === "focus" ? "max-w-[768px]" : "max-w-[880px]", previewMode ? "pb-8" : "pb-40")}
+        className={cn("relative z-10 mx-auto px-5 pt-10", readerMode === "focus" ? "max-w-[768px]" : "max-w-[880px]", previewMode ? "pb-8" : "pb-28")}
       >
         {cover && (
           <div className="pointer-events-none absolute inset-x-5 top-0 -z-10 h-[440px] overflow-hidden rounded-[2rem] opacity-25 blur-[1px]">
@@ -1882,10 +1904,6 @@ function ReaderCharacterChatPanel({
   const [draft, setDraft] = useState("");
   const [lastReward, setLastReward] = useState(false);
   const [chatMode, setChatMode] = useState<ReaderChatMode>("single");
-  const [historyOpen, setHistoryOpen] = useState(false);
-  const [phoneTab, setPhoneTab] = useState<"friends" | "chats">("chats");
-  const [phoneView, setPhoneView] = useState<ChatPhoneView>("list");
-  const [activeChallengeId, setActiveChallengeId] = useState<string | null>(null);
   const [threads, setThreads] = useState<Record<string, ReaderChatThread>>({});
   const [unreadByThread, setUnreadByThread] = useState<Record<string, number>>({});
   const pendingThreadRef = useRef<ReaderChatThread | null>(null);
@@ -1900,10 +1918,6 @@ function ReaderCharacterChatPanel({
   const activeCharacterName = activeCharacter?.name || characterName || "캐릭터";
   const activeAvatarSource = activeCharacter?.avatarUrl ?? null;
   const activeAvatarUrl = useSignedMedia(activeAvatarSource);
-  const activeCharacterVisualSlots = useMemo(
-    () => (activeCharacter?.showcaseAssets ?? []).map(characterVisualAssetToSlot),
-    [activeCharacter?.showcaseAssets],
-  );
   const hasMultipleCharacters = chatCharacters.length > 1;
   const targetLabel = chatMode === "group" ? "단체채팅" : activeCharacterName;
   const threadKey = chatMode === "group" ? "group" : `single:${activeCharacter?.id ?? "main-character"}`;
@@ -1975,15 +1989,6 @@ function ReaderCharacterChatPanel({
     () => Object.values(unreadByThread).reduce((sum, count) => sum + count, 0),
     [unreadByThread],
   );
-  const chattedFriends = useMemo(() => {
-    const talkedIds = new Set(
-      Object.values(threads)
-        .filter((thread) => thread.mode === "single" && thread.messages.length > 0)
-        .map((thread) => thread.key.replace(/^single:/, "")),
-    );
-    const friends = chatCharacters.filter((character) => talkedIds.has(character.id));
-    return friends.length ? friends : chatCharacters.slice(0, Math.min(4, chatCharacters.length));
-  }, [chatCharacters, threads]);
   const quickPrompts = useMemo(
     () => [
       "지금 장면에서 네 마음은 어때?",
@@ -1993,11 +1998,6 @@ function ReaderCharacterChatPanel({
     ],
     [],
   );
-  const chatChallenges = useMemo(
-    () => buildChatChallenges(activeCharacterName, affection, readingExcerpt),
-    [activeCharacterName, affection, readingExcerpt],
-  );
-  const activeChallenge = chatChallenges.find((challenge) => challenge.id === activeChallengeId) ?? null;
   const nextGoal = affection < 30 ? 30 : affection < 55 ? 55 : affection < 75 ? 75 : 100;
   const affectionGap = Math.max(0, nextGoal - affection);
 
@@ -2020,8 +2020,8 @@ function ReaderCharacterChatPanel({
   }, [activeThread?.messages.length, isStreaming, latestAssistantMessage?.text]);
 
   useEffect(() => {
-    if (open && historyOpen && phoneTab === "chats") clearThreadUnread(threadKey);
-  }, [historyOpen, open, phoneTab, threadKey]);
+    if (open) clearThreadUnread(threadKey);
+  }, [open, threadKey]);
 
   useEffect(() => {
     if (previewMode || !open || proactiveThreadRef.current[threadKey]) return;
@@ -2132,7 +2132,7 @@ function ReaderCharacterChatPanel({
       };
     });
 
-    if (message.role === "assistant" && (thread.key !== threadKey || !open || !historyOpen || phoneTab !== "chats")) {
+    if (message.role === "assistant" && (thread.key !== threadKey || !open)) {
       setUnreadByThread((prev) => ({ ...prev, [thread.key]: (prev[thread.key] ?? 0) + 1 }));
     }
   }
@@ -2176,9 +2176,6 @@ function ReaderCharacterChatPanel({
     };
     appendThreadMessage(thread, userMessage);
     persistThreadMessage(thread, userMessage);
-    setHistoryOpen(true);
-    setPhoneTab("chats");
-    setPhoneView("room");
 
     await sendMessage(
       { text },
@@ -2188,8 +2185,8 @@ function ReaderCharacterChatPanel({
           sceneExcerpt: readingExcerpt,
           affection,
           chatMode,
-          challengeId: activeChallenge?.id ?? null,
-          engagementIntent: activeChallenge?.label ?? null,
+          challengeId: null,
+          engagementIntent: null,
           characterId: chatMode === "group" ? "group" : activeCharacter?.id,
           characterName: targetLabel,
           characterProfile: chatMode === "group" ? { name: "단체채팅", characters: selectedCharacters } : activeCharacter,
@@ -2203,18 +2200,8 @@ function ReaderCharacterChatPanel({
         },
       },
     );
-    const baseReward = chatRewardForText(text, Boolean(activeChallenge));
-    const reward = activeChallenge
-      ? { ...baseReward, delta: Math.max(baseReward.delta, activeChallenge.rewardDelta) }
-      : baseReward;
+    const reward = chatRewardForText(text, false);
     onChatReward(reward);
-    if (activeChallenge) {
-      toast.success(`${activeChallenge.label} 완료`, {
-        description: `호감도 보상 +${reward.delta}`,
-        icon: <Check className="size-4 text-emerald-400" />,
-      });
-      setActiveChallengeId(null);
-    }
     setLastReward(true);
     window.setTimeout(() => setLastReward(false), 1600);
   }
@@ -2226,19 +2213,6 @@ function ReaderCharacterChatPanel({
       delete next[key];
       return next;
     });
-  }
-
-  function openThread(key: string) {
-    clearThreadUnread(key);
-    if (key === "group") {
-      setChatMode("group");
-    } else {
-      setChatMode("single");
-      setActiveCharacterId(key.replace(/^single:/, ""));
-    }
-    onOpenChange(true);
-    setPhoneTab("chats");
-    setPhoneView("room");
   }
 
   function playNotification() {
@@ -2269,267 +2243,12 @@ function ReaderCharacterChatPanel({
     }
   }
 
-  const activeTimeLabel = useMemo(() => {
-    const latest = activeThread?.messages[activeThread.messages.length - 1];
-    return latest ? new Intl.DateTimeFormat("ko-KR", { hour: "2-digit", minute: "2-digit" }).format(latest.at) : "지금";
-  }, [activeThread]);
+  const compactMessages = activeThread?.messages.slice(-3) ?? [];
 
   return (
     <>
-      {!previewMode && (
-        <aside
-          aria-hidden={!historyOpen}
-          className={cn(
-            "fixed bottom-24 left-4 top-[114px] z-30 hidden w-[340px] flex-col transition duration-300 md:flex",
-            historyOpen ? "translate-x-0 opacity-100" : "pointer-events-none -translate-x-[calc(100%+1rem)] opacity-0",
-          )}
-        >
-          <div className="relative flex min-h-0 flex-1 flex-col rounded-[2rem] border-[8px] border-[#111] bg-[#111] shadow-[0_24px_80px_rgba(0,0,0,.62)]">
-            <div className="pointer-events-none absolute left-1/2 top-2 z-20 h-4 w-24 -translate-x-1/2 rounded-full bg-[#111]" />
-            <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1.55rem] bg-[#f7f4ef] text-[#191919]">
-              <div className="flex h-9 items-center justify-between px-5 pt-2 text-[11px] font-bold">
-                <span>{activeTimeLabel}</span>
-                <span className="h-2.5 w-4 rounded-[3px] border border-[#191919]/50">
-                  <span className="block h-full w-3 rounded-[2px] bg-[#191919]" />
-                </span>
-              </div>
-
-              <div className="flex items-center justify-between px-4 pb-3 pt-2">
-                <div className="flex items-center gap-2 text-[22px] font-extrabold tracking-[-0.02em]">
-                  Talk
-                  {totalUnread > 0 && (
-                    <span className="grid min-w-5 place-items-center rounded-full bg-[#ff4d6d] px-1.5 py-0.5 text-[10px] leading-none text-white">
-                      {totalUnread > 99 ? "99+" : totalUnread}
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <button type="button" className="grid size-8 place-items-center rounded-full bg-black/5" aria-label="검색">
-                    <Search className="size-4" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setHistoryOpen(false)}
-                    className="inline-flex h-8 items-center gap-1.5 rounded-full bg-[#191919] px-3 text-[11px] font-extrabold text-white shadow-sm transition hover:bg-[#ff4d6d]"
-                    aria-label="대화 기록 닫기"
-                  >
-                    <PanelLeftClose className="size-4" />
-                    닫기
-                  </button>
-                </div>
-              </div>
-
-              <div className="mx-4 mb-3 grid grid-cols-2 rounded-2xl bg-black/[0.06] p-1 text-xs font-bold">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPhoneTab("friends");
-                    setPhoneView("list");
-                  }}
-                  className={cn("rounded-xl py-2 transition", phoneTab === "friends" ? "bg-white shadow-sm" : "text-[#7b756f]")}
-                >
-                  친구
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPhoneTab("chats");
-                    setPhoneView("list");
-                  }}
-                  className={cn("rounded-xl py-2 transition", phoneTab === "chats" ? "bg-white shadow-sm" : "text-[#7b756f]")}
-                >
-                  채팅
-                </button>
-              </div>
-
-              {phoneView === "list" ? (
-                <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-3 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                  {phoneTab === "friends" ? (
-                    <div className="space-y-2">
-                      {chattedFriends.map((character) => (
-                        <button
-                          key={character.id}
-                          type="button"
-                          onClick={() => openThread(`single:${character.id}`)}
-                          className="flex w-full items-center gap-3 rounded-2xl px-2 py-2 text-left transition hover:bg-black/[0.04]"
-                        >
-                          <ReaderMessengerAvatar label={character.name} src={character.avatarUrl} className="size-12" />
-                          <span className="min-w-0 flex-1">
-                            <span className="block truncate text-sm font-extrabold">{character.name}</span>
-                            <span className="block truncate text-[11px] font-medium text-[#8a837b]">
-                              {character.role || character.personality || "스토리 주인공"}
-                            </span>
-                          </span>
-                          <Heart className="size-4 text-[#ff4d6d]" />
-                        </button>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="space-y-1">
-                      {threadList.map((thread) => {
-                        const latest = thread.messages[thread.messages.length - 1];
-                        const unread = unreadByThread[thread.key] ?? 0;
-                        return (
-                          <button
-                            key={thread.key}
-                            type="button"
-                            onClick={() => openThread(thread.key)}
-                            className="flex w-full items-center gap-3 rounded-2xl px-2 py-2 text-left transition hover:bg-black/[0.04]"
-                          >
-                            <ReaderMessengerAvatar
-                              label={thread.label}
-                              src={thread.avatarUrl}
-                              group={thread.mode === "group"}
-                              className="size-12"
-                            />
-                            <span className="min-w-0 flex-1">
-                              <span className="flex items-center justify-between gap-2">
-                                <span className="truncate text-sm font-extrabold">{thread.label}</span>
-                                {latest && (
-                                  <span className="shrink-0 text-[10px] font-medium text-[#9c958e]">
-                                    {new Intl.DateTimeFormat("ko-KR", { hour: "2-digit", minute: "2-digit" }).format(latest.at)}
-                                  </span>
-                                )}
-                              </span>
-                              <span className="mt-0.5 block truncate text-[11px] font-medium text-[#8a837b]">
-                                {latest?.text || "대화를 시작해보세요"}
-                              </span>
-                            </span>
-                            {unread > 0 && (
-                              <span className="grid min-w-5 place-items-center rounded-full bg-[#ff4d6d] px-1.5 py-0.5 text-[10px] leading-none text-white">
-                                {unread > 9 ? "9+" : unread}
-                              </span>
-                            )}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="mx-3 mb-3 flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1.5rem] bg-[#b7c9d7] shadow-inner">
-                  <div className="flex h-11 items-center justify-between bg-[#a9bfce] px-3 text-[#1d2a33]">
-                    <button type="button" onClick={() => setPhoneView("list")} className="inline-flex items-center gap-1 text-xs font-bold">
-                      <ArrowLeft className="size-3.5" /> 목록
-                    </button>
-                    <div className="min-w-0 flex items-center gap-2">
-                      <ReaderMessengerAvatar
-                        label={activeThread?.label ?? targetLabel}
-                        src={activeThread?.avatarUrl ?? null}
-                        group={activeThread?.mode === "group"}
-                        className="size-7 rounded-xl"
-                      />
-                      <span className="truncate text-sm font-extrabold">{activeThread?.label ?? targetLabel}</span>
-                    </div>
-                    <MoreHorizontal className="size-4" />
-                  </div>
-
-                  <div ref={scrollRef} className="min-h-0 flex-1 space-y-2 overflow-y-auto px-3 py-3">
-                    {(activeThread?.messages.length ?? 0) === 0 ? (
-                      <div className="mx-auto mt-8 max-w-[13rem] rounded-2xl bg-white/55 px-3 py-3 text-center text-xs leading-5 text-[#4d5960]">
-                        지금 읽는 장면을 떠올리며 말을 걸어보세요.
-                      </div>
-                    ) : (
-                      activeThread!.messages.map((message) => (
-                        <div key={message.id} className={cn("flex gap-2", message.role === "user" ? "justify-end" : "justify-start")}>
-                          {message.role === "assistant" && (
-                            <ReaderMessengerAvatar label={message.speaker} src={message.avatarUrl} className="mt-0.5 size-8 rounded-xl" />
-                          )}
-                          <div className="max-w-[74%]">
-                            {message.role === "assistant" && (
-                              <div className="mb-1 text-[10px] font-bold text-[#2c3a43]">{message.speaker}</div>
-                            )}
-                            <div
-                              className={cn(
-                                "rounded-2xl px-3 py-2 text-xs leading-5 shadow-sm",
-                                message.role === "user"
-                                  ? "rounded-tr-md bg-[#fee500] text-[#191919]"
-                                  : "rounded-tl-md bg-white text-[#191919]",
-                              )}
-                            >
-                              <div className="whitespace-pre-line">{message.text}</div>
-                            </div>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                    {isStreaming && (
-                      latestAssistantMessage?.text ? (
-                        <div className="flex justify-start gap-2">
-                          <ReaderMessengerAvatar
-                            label={targetLabel}
-                            src={activeThread?.avatarUrl ?? null}
-                            group={activeThread?.mode === "group"}
-                            className="mt-0.5 size-8 rounded-xl"
-                          />
-                          <div className="max-w-[74%]">
-                            <div className="mb-1 text-[10px] font-bold text-[#2c3a43]">{targetLabel}</div>
-                            <div className="rounded-2xl rounded-tl-md bg-white px-3 py-2 text-xs leading-5 text-[#191919] shadow-sm">
-                              <div className="whitespace-pre-line">{latestAssistantMessage.text}</div>
-                            </div>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-2 text-xs font-semibold text-[#4d5960]">
-                          <span className="relative flex size-2">
-                            <span className="absolute inline-flex size-full animate-ping rounded-full bg-[#fee500] opacity-70" />
-                            <span className="relative inline-flex size-2 rounded-full bg-[#fee500]" />
-                          </span>
-                          {targetLabel} 입력 중
-                        </div>
-                      )
-                    )}
-                  </div>
-                </div>
-              )}
-
-              <div className="grid grid-cols-3 border-t border-black/5 bg-white/80 py-2 text-[10px] font-bold text-[#8a837b]">
-                <button type="button" onClick={() => { setPhoneTab("friends"); setPhoneView("list"); }} className={cn("flex flex-col items-center gap-1", phoneTab === "friends" && "text-[#191919]")}>
-                  <UserRound className="size-4" /> 친구
-                </button>
-                <button type="button" onClick={() => { setPhoneTab("chats"); setPhoneView("list"); }} className={cn("flex flex-col items-center gap-1", phoneTab === "chats" && "text-[#191919]")}>
-                  <span className="relative">
-                    <MessageCircle className="size-4" />
-                    {totalUnread > 0 && (
-                      <span className="absolute -right-2 -top-2 grid min-w-4 place-items-center rounded-full bg-[#ff4d6d] px-1 text-[8px] leading-4 text-white">
-                        {totalUnread > 9 ? "9+" : totalUnread}
-                      </span>
-                    )}
-                  </span>
-                  채팅
-                </button>
-                <button type="button" className="flex flex-col items-center gap-1">
-                  <MoreHorizontal className="size-4" /> 더보기
-                </button>
-              </div>
-            </div>
-          </div>
-        </aside>
-      )}
-
-      {!previewMode && !historyOpen && (
-        <button
-          type="button"
-          onClick={() => {
-            setHistoryOpen(true);
-            setPhoneTab("chats");
-            setPhoneView("list");
-          }}
-          aria-label="대화 기록 열기"
-          className="fixed bottom-28 left-4 z-30 hidden items-center gap-2 rounded-full border border-white/10 bg-black/86 px-3 py-2 text-xs font-semibold text-white shadow-2xl backdrop-blur-xl transition hover:border-primary/50 md:flex"
-        >
-          <PanelLeftOpen className="size-4 text-primary" />
-          {totalUnread > 0 && (
-            <span className="grid min-w-5 place-items-center rounded-full bg-[#ff4d6d] px-1.5 py-0.5 text-[10px] leading-none text-white">
-              {totalUnread > 99 ? "99+" : totalUnread}
-            </span>
-          )}
-          휴대폰 열기
-        </button>
-      )}
-
-      <div className="fixed inset-x-0 bottom-0 z-30 bg-gradient-to-t from-[#0f0f0f] via-[#0f0f0f]/82 to-transparent pb-4 pt-8">
-        <div className={cn("mx-auto space-y-2 px-4", dockWidthClass)}>
+      <div className="pointer-events-none fixed inset-x-0 bottom-0 z-30 bg-gradient-to-t from-[#0f0f0f] via-[#0f0f0f]/72 to-transparent pb-3 pt-6">
+        <div className={cn("pointer-events-auto mx-auto space-y-2 px-4", dockWidthClass)}>
           {hasMultipleCharacters && open && (
             <div className="flex items-center gap-1.5 overflow-x-auto rounded-2xl border border-white/10 bg-black/72 p-1.5 backdrop-blur-xl [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               {chatCharacters.map((character) => {
@@ -2569,99 +2288,68 @@ function ReaderCharacterChatPanel({
           )}
 
           {open && (
-            <div className="flex items-center justify-between rounded-2xl border border-white/10 bg-black/70 px-3 py-2 text-xs text-white/60 backdrop-blur-xl">
-              <button
-                type="button"
-                onClick={() => setHistoryOpen((value) => !value)}
-                aria-label={historyOpen ? "휴대폰 채팅 닫기" : "휴대폰 채팅 열기"}
-                className="inline-flex items-center gap-2 rounded-full px-2 py-1 text-white transition hover:bg-white/10"
-              >
-                {historyOpen ? <PanelLeftClose className="size-4 text-primary" /> : <PanelLeftOpen className="size-4 text-primary" />}
+            <div className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-black/70 px-3 py-2 text-xs text-white/60 backdrop-blur-xl">
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="grid size-7 shrink-0 place-items-center overflow-hidden rounded-full border border-primary/30 bg-primary/10">
+                  {chatMode === "group" ? (
+                    <MessageCircle className="size-3.5 text-primary" />
+                  ) : activeAvatarUrl ? (
+                    <img src={activeAvatarUrl} alt="" className="size-full object-cover" />
+                  ) : (
+                    <span className="text-[11px] font-semibold text-primary">{activeCharacterName.slice(0, 1)}</span>
+                  )}
+                </span>
+                <span className="truncate font-medium text-white">{targetLabel}</span>
+                <span className="shrink-0 text-white/40">{chatMode === "group" ? "단체" : "1:1"}</span>
                 {totalUnread > 0 && (
                   <span className="grid min-w-5 place-items-center rounded-full bg-[#ff4d6d] px-1.5 py-0.5 text-[10px] leading-none text-white">
                     {totalUnread > 99 ? "99+" : totalUnread}
                   </span>
                 )}
-                {historyOpen ? "휴대폰 닫기" : "휴대폰"}
-              </button>
-              <div className="flex items-center gap-2">
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
                 <span className="relative flex size-2">
                   <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-60" />
                   <span className="relative inline-flex size-2 rounded-full bg-emerald-400" />
                 </span>
-                <span className="font-medium text-white">{targetLabel}</span>
-                <span>{chatMode === "group" ? "단체" : "1:1"}</span>
-                <span className="rounded-full border border-rose-400/30 bg-rose-500/10 px-2 py-0.5 text-[11px] text-rose-300">
-                  호감도 {affection}
-                </span>
+                <button
+                  type="button"
+                  onClick={() => onOpenChange(false)}
+                  className="grid size-7 place-items-center rounded-full border border-white/10 text-white/55 transition hover:bg-white/10 hover:text-white"
+                  aria-label="채팅 접기"
+                >
+                  <X className="size-3.5" />
+                </button>
               </div>
             </div>
           )}
 
-          {open && (
-            <div className="rounded-2xl border border-white/10 bg-black/72 p-2 backdrop-blur-xl">
-              <div className="mb-2 grid grid-cols-[4.5rem_minmax(0,1fr)] gap-2">
-                <div className="relative overflow-hidden rounded-xl bg-white/[0.04]">
-                  {activeAvatarUrl ? (
-                    <img src={activeAvatarUrl} alt="" className="aspect-square size-full object-cover" />
-                  ) : (
-                    <div className="grid aspect-square place-items-center">
-                      <UserRound className="size-6 text-white/30" />
-                    </div>
-                  )}
-                </div>
-                <div className="min-w-0 rounded-xl border border-white/10 bg-white/[0.035] p-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="truncate text-xs font-semibold text-white">{activeCharacterName}</span>
-                    <span className="rounded-full bg-rose-500/15 px-2 py-0.5 text-[10px] text-rose-200">호감도 {affection}</span>
-                  </div>
-                  <div className="mt-2 grid grid-cols-5 gap-1">
-                    {(activeCharacterVisualSlots.length ? activeCharacterVisualSlots : []).slice(0, 5).map((slot) => (
-                      <ReaderAssetThumb key={slot.id} slot={slot} affection={affection} />
-                    ))}
-                    {activeCharacterVisualSlots.length === 0 &&
-                      [0, 1, 2, 3, 4].map((item) => (
-                        <div key={item} className="grid aspect-square place-items-center rounded-lg border border-dashed border-white/10 bg-white/[0.03]">
-                          <Lock className="size-3 text-white/25" />
-                        </div>
-                      ))}
-                  </div>
-                </div>
-              </div>
-              <div className="mb-2 flex items-center justify-between gap-2 px-1 text-[11px] text-white/55">
-                <span className="inline-flex items-center gap-1.5">
-                  <Sparkles className="size-3.5 text-sky-300" />
-                  관계 챌린지
-                </span>
-                <span>{affectionGap > 0 ? `다음 단계까지 ${affectionGap}` : "완전 해금"}</span>
-              </div>
-              <div className="flex gap-1.5 overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                {chatChallenges.map((challenge) => (
-                  <button
-                    key={challenge.id}
-                    type="button"
-                    onClick={() => {
-                      setActiveChallengeId(challenge.id);
-                      setDraft(challenge.prompt);
-                      setPhoneTab("chats");
-                      setPhoneView("room");
-                      onOpenChange(true);
-                    }}
+          {open && (compactMessages.length > 0 || isStreaming) && (
+            <div ref={scrollRef} className="max-h-28 space-y-1.5 overflow-y-auto rounded-2xl border border-white/10 bg-black/72 p-2 backdrop-blur-xl">
+              {compactMessages.map((message) => (
+                <div key={message.id} className={cn("flex", message.role === "user" ? "justify-end" : "justify-start")}>
+                  <div
                     className={cn(
-                      "shrink-0 rounded-full border px-3 py-1.5 text-[11px] transition",
-                      activeChallengeId === challenge.id
-                        ? "border-sky-300/70 bg-sky-400/20 text-sky-100"
-                        : "border-white/10 bg-white/[0.04] text-white/62 hover:border-sky-300/50 hover:text-white",
+                      "max-w-[82%] rounded-2xl px-3 py-1.5 text-xs leading-5",
+                      message.role === "user"
+                        ? "rounded-br-md bg-primary text-primary-foreground"
+                        : "rounded-bl-md bg-white/[0.08] text-white/82",
                     )}
                   >
-                    {challenge.label}
-                    <span className="ml-1 text-sky-200">+{challenge.rewardDelta}</span>
-                  </button>
-                ))}
-              </div>
-              {activeChallenge && (
-                <div className="mt-2 rounded-xl border border-sky-300/20 bg-sky-400/10 px-3 py-2 text-[11px] leading-5 text-sky-50/80">
-                  {activeChallenge.label} 진행 중. 그대로 보내거나 네 말투로 바꿔도 됩니다.
+                    {message.role === "assistant" && (
+                      <span className="mb-0.5 block text-[10px] font-semibold text-white/42">{message.speaker}</span>
+                    )}
+                    <span className="line-clamp-2 whitespace-pre-line">{message.text}</span>
+                  </div>
+                </div>
+              ))}
+              {isStreaming && (
+                <div className="flex items-center gap-2 px-2 py-1 text-xs font-semibold text-white/55">
+                  <span className="relative flex size-2">
+                    <span className="absolute inline-flex size-full animate-ping rounded-full bg-primary opacity-70" />
+                    <span className="relative inline-flex size-2 rounded-full bg-primary" />
+                  </span>
+                  {targetLabel} 입력 중
                 </div>
               )}
             </div>
@@ -2711,9 +2399,9 @@ function ReaderCharacterChatPanel({
                   void send();
                 }
               }}
-              rows={open ? 2 : 1}
+              rows={1}
               placeholder={`${targetLabel}에게 메시지 보내기`}
-              className="min-h-10 flex-1 resize-none rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm leading-6 text-white placeholder:text-white/35 focus:outline-none focus:ring-1 focus:ring-primary"
+              className="min-h-10 max-h-20 flex-1 resize-none rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm leading-6 text-white placeholder:text-white/35 focus:outline-none focus:ring-1 focus:ring-primary"
             />
 
             <div className="flex shrink-0 items-center gap-1.5">
@@ -2728,8 +2416,9 @@ function ReaderCharacterChatPanel({
               </Button>
             </div>
           </form>
+          {open && (
           <div className="flex gap-1.5 overflow-x-auto px-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            {quickPrompts.map((prompt) => (
+            {quickPrompts.slice(0, 3).map((prompt) => (
               <button
                 key={prompt}
                 type="button"
@@ -2743,6 +2432,7 @@ function ReaderCharacterChatPanel({
               </button>
             ))}
           </div>
+          )}
         </div>
       </div>
     </>

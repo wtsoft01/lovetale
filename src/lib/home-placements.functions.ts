@@ -62,7 +62,7 @@ async function readError(res: Response) {
 
 async function publicPlacementsApi<T>(slot: HomeSlot): Promise<T> {
   const params = new URLSearchParams({ slot });
-  const res = await fetch(`/api/home-placements?${params.toString()}`);
+  const res = await fetch(`/api/home-placements?${params.toString()}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Home placements API failed (${res.status}): ${await readError(res)}`);
   return (await res.json()) as T;
 }

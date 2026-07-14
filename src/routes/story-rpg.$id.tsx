@@ -490,11 +490,11 @@ function StoryRpgPlay() {
             <Progress value={progressValue} className="mt-2 h-1.5 bg-white/12" />
           </div>
 
-          <article className="mx-auto mt-5 max-w-5xl space-y-5 pb-10">
-            <div className="rounded-[28px] border border-white/10 bg-black/35 p-5 md:p-8">
+          <article className="mx-auto mt-5 max-w-[920px] space-y-8 pb-16">
+            <div className="rounded-[28px] border border-white/10 bg-black/32 px-5 py-6 md:px-8 md:py-8">
               <div className="text-xs uppercase tracking-[0.28em] text-pink-200">Story RPG</div>
               <h1 className="mt-3 font-display text-4xl font-semibold leading-tight md:text-6xl">{game.title}</h1>
-              <p className="mt-4 max-w-3xl text-sm leading-7 text-white/56">{game.logline}</p>
+              <p className="mt-5 max-w-3xl text-[15px] leading-8 text-white/58 md:text-base">{game.logline}</p>
             </div>
 
             {readingSegments.map((segment, index) => {
@@ -628,6 +628,53 @@ function StatusChip({ label }: { label: string }) {
   );
 }
 
+function normalizeStoryRpgProse(value: string) {
+  return value
+    .replace(/\r\n?/g, "\n")
+    .split(/\n{2,}/)
+    .map((block) =>
+      block
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .join(" "),
+    )
+    .join("\n\n")
+    .trim();
+}
+
+function StoryRpgTextBlock({ value }: { value: string }) {
+  const paragraphs = normalizeStoryRpgProse(value).split(/\n{2,}/).filter(Boolean);
+  if (!paragraphs.length) {
+    return <p className="mt-5 text-sm leading-7 text-white/45">장면 본문이 아직 없습니다.</p>;
+  }
+
+  return (
+    <div className="mt-6 space-y-5">
+      {paragraphs.map((paragraph, index) => {
+        const text = paragraph.trim();
+        const isDialogue = /^[“"'‘『「]/.test(text);
+        if (isDialogue) {
+          return (
+            <div
+              key={`${text}-${index}`}
+              className="rounded-2xl border border-primary/20 bg-primary/[0.08] px-4 py-3 shadow-[0_12px_36px_rgba(236,72,153,.08)]"
+            >
+              <p className="whitespace-pre-line text-[18px] leading-[2.05] text-white sm:text-[19px]">{text}</p>
+            </div>
+          );
+        }
+
+        return (
+          <p key={`${text}-${index}`} className="whitespace-pre-line text-[17px] leading-[2.08] text-white/88 sm:text-[18px]">
+            {text}
+          </p>
+        );
+      })}
+    </div>
+  );
+}
+
 function StorySegment({
   scene,
   choice,
@@ -656,23 +703,23 @@ function StorySegment({
   onSelectChoice: (choice: StoryRpgChoice) => void;
 }) {
   return (
-    <section className="rounded-[28px] border border-white/10 bg-black/35 p-5 md:p-8">
+    <section className="rounded-[28px] border border-white/10 bg-black/32 px-5 py-6 md:px-8 md:py-8">
       {choice ? (
-        <div className="mb-5 rounded-2xl border border-primary/25 bg-primary/12 p-4">
+        <div className="mb-6 rounded-2xl border border-primary/25 bg-primary/12 px-4 py-3">
           <div className="text-[11px] uppercase tracking-[0.26em] text-pink-200">선택</div>
-          <p className="mt-1 text-base font-semibold text-white/86">{choice.label}</p>
-          <p className="mt-2 text-sm leading-6 text-white/56">{choice.result}</p>
+          <p className="mt-1 text-base font-semibold leading-7 text-white/86">{choice.label}</p>
+          <p className="mt-2 text-[15px] leading-7 text-white/60">{choice.result}</p>
         </div>
       ) : null}
 
       <div className="text-xs uppercase tracking-[0.28em] text-pink-200">{scene.title}</div>
-      <p className="mt-5 whitespace-pre-wrap text-lg leading-9 text-white/84 md:text-xl md:leading-10">{scene.text}</p>
+      <StoryRpgTextBlock value={scene.text} />
 
       {asset ? <InlineAsset asset={asset} /> : null}
 
-      <div className="mt-6 rounded-2xl border border-pink-400/25 bg-pink-500/10 p-4 shadow-[0_0_45px_rgba(236,72,153,.08)]">
-        <div className="text-xs text-pink-200">{leadName}</div>
-        <p className="mt-1 text-xl font-semibold leading-8">"{scene.partnerLine}"</p>
+      <div className="mt-7 rounded-2xl border border-primary/20 bg-primary/[0.08] px-4 py-3 shadow-[0_12px_36px_rgba(236,72,153,.08)]">
+        <div className="mb-2 text-[12px] font-semibold text-primary">{leadName}</div>
+        <p className="whitespace-pre-line text-[18px] leading-[2.05] text-white sm:text-[19px]">"{scene.partnerLine}"</p>
       </div>
 
       {isLast ? (

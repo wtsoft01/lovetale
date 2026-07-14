@@ -2,6 +2,7 @@
 import type { Session, User } from "@supabase/supabase-js";
 
 import { supabase } from "@/integrations/supabase/client";
+import { getFreshAccessToken } from "@/lib/supabase-auth-fetch";
 
 type AuthCtx = {
   session: Session | null;
@@ -24,9 +25,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let active = true;
 
-    supabase.auth.getSession().then(({ data }) => {
+    async function loadSession() {
+      const { data } = await supabase.auth.getSession();
+      let nextSession = data.session ?? null;
+
+      if (nextSession) {
+        await getFreshAccessToken().catch(() => null);
+        const { data: freshData } = await supabase.auth.getSession();
+        nextSession = freshData.session ?? nextSession;
+      }
+
       if (!active) return;
-      setSession(data.session ?? null);
+      setSession(nextSession);
+      setLoading(false);
+    }
+
+    loadSession().catch(() => {
+      if (!active) return;
+      setSession(null);
       setLoading(false);
     });
 

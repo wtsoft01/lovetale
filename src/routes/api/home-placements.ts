@@ -11,9 +11,14 @@ type PlacementRow = Pick<
 >;
 
 const HOME_SLOTS = new Set<HomeSlot>(["hero", "trending", "new", "all"]);
+const NO_STORE_HEADERS = { "Cache-Control": "no-store, max-age=0" } as const;
+
+function jsonResponse(body: unknown, status?: number) {
+  return Response.json(body, { status, headers: NO_STORE_HEADERS });
+}
 
 function jsonError(reason: string, status = 400) {
-  return Response.json({ ok: false, reason }, { status });
+  return jsonResponse({ ok: false, reason }, status);
 }
 
 function jsonServerError(error: unknown, status = 500) {
@@ -23,7 +28,7 @@ function jsonServerError(error: unknown, status = 500) {
       : typeof error === "object" && error
         ? JSON.stringify(error)
         : String(error);
-  return Response.json({ ok: false, reason: "server_error", message }, { status });
+  return jsonResponse({ ok: false, reason: "server_error", message }, status);
 }
 
 function validSlot(value: string | null): HomeSlot | null {
@@ -98,7 +103,7 @@ async function listPublicPlacements(request: Request) {
   if (placementsError) return jsonServerError(placementsError, 500);
 
   const rows = (placements ?? []) as PlacementRow[];
-  if (!rows.length) return Response.json({ ok: true, rows: [] });
+  if (!rows.length) return jsonResponse({ ok: true, rows: [] });
 
   const storyIds = rows.map((row) => row.story_id);
   const { data: stories, error: storiesError } = await supabaseAdmin
@@ -118,7 +123,7 @@ async function listPublicPlacements(request: Request) {
     })
     .filter(Boolean);
 
-  return Response.json({ ok: true, rows: cards });
+  return jsonResponse({ ok: true, rows: cards });
 }
 
 async function listAllPublicStories() {
@@ -140,7 +145,7 @@ async function listAllPublicStories() {
   }));
   const names = await authorNames(((stories ?? []) as UserStoryRow[]).map((story) => story.user_id));
   const cards = rows.map((row) => toCard(row, storyById(stories ?? [], row.story_id), names));
-  return Response.json({ ok: true, rows: cards });
+  return jsonResponse({ ok: true, rows: cards });
 }
 
 function storyById(stories: UserStoryRow[], id: string) {

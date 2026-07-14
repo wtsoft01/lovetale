@@ -44,9 +44,11 @@ export type Database = {
       credit_ledger: {
         Row: {
           balance_after: number
+          created_by: string | null
           created_at: string
           delta: number
           id: string
+          note: string | null
           reason: string
           ref_id: string | null
           ref_type: string | null
@@ -54,9 +56,11 @@ export type Database = {
         }
         Insert: {
           balance_after: number
+          created_by?: string | null
           created_at?: string
           delta: number
           id?: string
+          note?: string | null
           reason: string
           ref_id?: string | null
           ref_type?: string | null
@@ -64,9 +68,11 @@ export type Database = {
         }
         Update: {
           balance_after?: number
+          created_by?: string | null
           created_at?: string
           delta?: number
           id?: string
+          note?: string | null
           reason?: string
           ref_id?: string | null
           ref_type?: string | null
@@ -77,6 +83,8 @@ export type Database = {
       credit_orders: {
         Row: {
           amount_usd: number
+          confirmed_at: string | null
+          confirmed_by: string | null
           created_at: string
           credits: number
           currency: string
@@ -84,6 +92,8 @@ export type Database = {
           network: string
           note: string | null
           package_id: string
+          refunded_at: string | null
+          refund_reason: string | null
           status: Database["public"]["Enums"]["credit_order_status"]
           tx_hash: string | null
           updated_at: string
@@ -92,6 +102,8 @@ export type Database = {
         }
         Insert: {
           amount_usd: number
+          confirmed_at?: string | null
+          confirmed_by?: string | null
           created_at?: string
           credits: number
           currency: string
@@ -99,6 +111,8 @@ export type Database = {
           network: string
           note?: string | null
           package_id: string
+          refunded_at?: string | null
+          refund_reason?: string | null
           status?: Database["public"]["Enums"]["credit_order_status"]
           tx_hash?: string | null
           updated_at?: string
@@ -107,6 +121,8 @@ export type Database = {
         }
         Update: {
           amount_usd?: number
+          confirmed_at?: string | null
+          confirmed_by?: string | null
           created_at?: string
           credits?: number
           currency?: string
@@ -114,6 +130,8 @@ export type Database = {
           network?: string
           note?: string | null
           package_id?: string
+          refunded_at?: string | null
+          refund_reason?: string | null
           status?: Database["public"]["Enums"]["credit_order_status"]
           tx_hash?: string | null
           updated_at?: string
@@ -1099,7 +1117,7 @@ export type Database = {
     }
     Enums: {
       app_role: "admin" | "moderator" | "user" | "editor"
-      credit_order_status: "pending" | "submitted" | "confirmed" | "failed"
+      credit_order_status: "pending" | "submitted" | "confirmed" | "failed" | "refunded"
       home_slot: "hero" | "trending" | "new" | "all"
     }
     CompositeTypes: {
@@ -1229,7 +1247,7 @@ export const Constants = {
   public: {
     Enums: {
       app_role: ["admin", "moderator", "user", "editor"],
-      credit_order_status: ["pending", "submitted", "confirmed", "failed"],
+      credit_order_status: ["pending", "submitted", "confirmed", "failed", "refunded"],
       home_slot: ["hero", "trending", "new", "all"],
     },
   },

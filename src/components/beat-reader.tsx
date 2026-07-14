@@ -208,7 +208,10 @@ export function BeatReader({
     queryKey: ["story_affection", storyId],
     queryFn: () => fetchAff({ data: { storyId: storyId! } }),
     enabled: enableBackend,
-    staleTime: 30_000,
+    staleTime: 0,
+    gcTime: 30_000,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
   });
 
   const bumpMut = useMutation({

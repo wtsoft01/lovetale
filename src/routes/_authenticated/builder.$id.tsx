@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@/lib/_mock/runtime";
@@ -16,6 +16,9 @@ import {
   Flame,
   Sparkles,
   ImageIcon,
+  RotateCcw,
+  Undo2,
+  Wand2,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -33,6 +36,7 @@ import {
 } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
+import { fetchWithSupabaseAuth } from "@/lib/supabase-auth-fetch";
 import {
   generateCharacterAssetPreview,
   getMyUserStory,
@@ -70,6 +74,77 @@ type CharacterCard = {
 
 const EMOTIONS: Emotion[] = ["calm", "shy", "happy", "sad", "passion", "tense"];
 
+type AssistMode = "keep" | "dramatic" | "polish" | "expand";
+type AssistScope = "active" | "all";
+type BeatSnapshot = {
+  label: string;
+  beats: Beat[];
+  activeIdx: number;
+  createdAt: string;
+};
+
+const ASSIST_MODE_OPTIONS: Array<{ value: AssistMode; label: string }> = [
+  { value: "dramatic", label: "자극적 각색" },
+  { value: "expand", label: "추천으로 분량 채우기" },
+  { value: "polish", label: "맞춤법/가독성" },
+  { value: "keep", label: "원문 그대로" },
+];
+
+function cloneBeats(rows: Beat[]) {
+  return JSON.parse(JSON.stringify(rows)) as Beat[];
+}
+
+function splitTextForBeats(text: string, count: number) {
+  const cleaned = text.replace(/\r\n/g, "\n").trim();
+  if (!cleaned || count <= 0) return [];
+  const paragraphs = cleaned
+    .split(/\n{2,}/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const source = paragraphs.length > 1
+    ? paragraphs
+    : cleaned
+        .split(/(?<=[.!?。！？])\s+|\n+/)
+        .map((part) => part.trim())
+        .filter(Boolean);
+  const chunks = source.length ? source : [cleaned];
+  if (count === 1) return [cleaned];
+  if (chunks.length <= count) return chunks;
+  const grouped = Array.from({ length: count }, () => [] as string[]);
+  chunks.forEach((chunk, index) => {
+    const groupIndex = Math.min(count - 1, Math.floor((index * count) / chunks.length));
+    grouped[groupIndex].push(chunk);
+  });
+  return grouped.map((parts) => parts.join("\n\n"));
+}
+
+function applySourceTextToBeats(template: Beat[], sourceText?: string | null) {
+  const parts = splitTextForBeats(sourceText ?? "", template.length);
+  if (!parts.length) return cloneBeats(template);
+  return template.map((beat, index) => ({
+    ...beat,
+    text: parts[index] || beat.text,
+    narration: parts[index] || beat.narration,
+  }));
+}
+
+function buildBodyText(rows: Beat[]) {
+  return rows
+    .map((beat, index) => {
+      const body = (beat.narration || beat.text || "").trim();
+      if (!body) return "";
+      const speaker = beat.speaker?.trim();
+      return [`# ${index + 1}. ${beat.id}`, speaker ? `화자: ${speaker}` : "", body].filter(Boolean).join("\n");
+    })
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function historyLabel(mode: AssistMode, scope: AssistScope) {
+  const label = ASSIST_MODE_OPTIONS.find((option) => option.value === mode)?.label ?? "AI 편집";
+  return `${label} 적용 전 (${scope === "active" ? "현재 비트" : "전체"})`;
+}
+
 function BuilderEditPage() {
   const { id } = Route.useParams();
   const navigate = useNavigate();
@@ -91,6 +166,11 @@ function BuilderEditPage() {
   const [mode, setMode] = useState<"edit" | "preview">("edit");
   const [coverUrl, setCoverUrl] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
+  const [assistMode, setAssistMode] = useState<AssistMode>("dramatic");
+  const [assistScope, setAssistScope] = useState<AssistScope>("active");
+  const [assistNote, setAssistNote] = useState("");
+  const [history, setHistory] = useState<BeatSnapshot[]>([]);
+  const originalBeatsRef = useRef<Beat[]>([]);
 
   // hydrate when data arrives
   useEffect(() => {
@@ -101,7 +181,9 @@ function BuilderEditPage() {
     setCharacter((data.character_card as CharacterCard) ?? {});
     const arr = Array.isArray(data.beats) ? (data.beats as Beat[]) : [];
     setBeats(arr);
+    originalBeatsRef.current = applySourceTextToBeats(arr, data.source_prompt || data.body_text);
     setActiveIdx(0);
+    setHistory([]);
     setDirty(false);
   }, [data]);
 
@@ -116,6 +198,60 @@ function BuilderEditPage() {
 
   function markDirty() {
     setDirty(true);
+  }
+
+  function pushHistory(label: string, source = beats, sourceActiveIdx = activeIdx) {
+    setHistory((prev) => [
+      {
+        label,
+        beats: cloneBeats(source),
+        activeIdx: sourceActiveIdx,
+        createdAt: new Date().toISOString(),
+      },
+      ...prev,
+    ].slice(0, 12));
+  }
+
+  function restoreSnapshot(snapshot: BeatSnapshot, removeFromHistory = false) {
+    setBeats(cloneBeats(snapshot.beats));
+    setActiveIdx(Math.min(snapshot.activeIdx, Math.max(0, snapshot.beats.length - 1)));
+    if (removeFromHistory) {
+      setHistory((prev) => prev.filter((item) => item !== snapshot));
+    }
+    setDirty(true);
+  }
+
+  function undoLatest() {
+    const snapshot = history[0];
+    if (!snapshot) {
+      toast.info("되돌릴 이전 글이 없습니다.");
+      return;
+    }
+    restoreSnapshot(snapshot, true);
+    toast.success("이전 글로 되돌렸습니다.");
+  }
+
+  function restoreOriginal(scope: AssistScope = assistScope) {
+    const original = originalBeatsRef.current;
+    if (!original.length) {
+      toast.info("복원할 원문이 없습니다.");
+      return;
+    }
+    pushHistory("원문 복원 전");
+    if (scope === "active") {
+      const originalBeat = original[activeIdx];
+      if (!active || !originalBeat) return;
+      setBeats((prev) => prev.map((beat, index) => (index === activeIdx ? { ...beat, text: originalBeat.text, narration: originalBeat.narration } : beat)));
+    } else {
+      setBeats((prev) =>
+        prev.map((beat, index) => {
+          const originalBeat = original[index];
+          return originalBeat ? { ...beat, text: originalBeat.text, narration: originalBeat.narration } : beat;
+        }),
+      );
+    }
+    markDirty();
+    toast.success(scope === "active" ? "현재 비트를 원문으로 돌렸습니다." : "전체 비트를 원문으로 돌렸습니다.");
   }
 
   function patchActive(p: Partial<Beat>) {
@@ -209,6 +345,7 @@ function BuilderEditPage() {
           logline,
           character_card: character,
           beats,
+          body_text: buildBodyText(beats),
           cover_url: coverUrl,
         },
       }),
@@ -217,6 +354,93 @@ function BuilderEditPage() {
       setDirty(false);
       qc.invalidateQueries({ queryKey: ["user_story", id] });
       qc.invalidateQueries({ queryKey: ["my_user_stories"] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const writingAssist = useMutation({
+    mutationFn: async () => {
+      if (assistMode === "keep") {
+        return { mode: assistMode as AssistMode, restoredOriginal: true };
+      }
+      if (assistScope === "active" && !active) throw new Error("편집할 비트를 먼저 선택하세요.");
+      const before = cloneBeats(beats);
+      const beforeActiveIdx = activeIdx;
+      const targetBeats = assistScope === "active" && active ? [active] : beats;
+      const body =
+        assistScope === "active"
+          ? {
+              storyId: id,
+              mode: assistMode,
+              title,
+              logline,
+              character,
+              note: assistNote,
+              beat: {
+                id: active!.id,
+                text: active!.text,
+                narration: active!.narration,
+              },
+            }
+          : {
+              storyId: id,
+              mode: assistMode,
+              title,
+              logline,
+              character,
+              note: assistNote,
+              beats: targetBeats.map((beat) => ({
+                id: beat.id,
+                text: beat.text,
+                narration: beat.narration,
+              })),
+            };
+      const response = await fetchWithSupabaseAuth("/api/story-writing-assist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !payload?.ok) {
+        throw new Error(payload?.message || payload?.reason || "AI 글쓰기 도움을 적용하지 못했습니다.");
+      }
+      return { payload, before, beforeActiveIdx, mode: assistMode, scope: assistScope };
+    },
+    onSuccess: (result) => {
+      if (result.restoredOriginal) {
+        restoreOriginal();
+        return;
+      }
+      pushHistory(historyLabel(result.mode, result.scope), result.before, result.beforeActiveIdx);
+      if (result.scope === "active") {
+        setBeats((prev) =>
+          prev.map((beat, index) =>
+            index === result.beforeActiveIdx
+              ? {
+                  ...beat,
+                  text: result.payload.text || beat.text,
+                  narration: result.payload.narration || beat.narration,
+                }
+              : beat,
+          ),
+        );
+      } else {
+        const byId = new Map((result.payload.beats ?? []).map((beat: any) => [beat.id, beat]));
+        setBeats((prev) =>
+          prev.map((beat) => {
+            const next = byId.get(beat.id) as { text?: string; narration?: string } | undefined;
+            return next
+              ? {
+                  ...beat,
+                  text: next.text || beat.text,
+                  narration: next.narration || beat.narration,
+                }
+              : beat;
+          }),
+        );
+      }
+      setDirty(true);
+      toast.success(`${ASSIST_MODE_OPTIONS.find((option) => option.value === result.mode)?.label ?? "AI 편집"} 적용 완료`);
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -407,7 +631,7 @@ function BuilderEditPage() {
                     <Textarea
                       value={active.text}
                       onChange={(e) => patchActive({ text: e.target.value })}
-                      rows={3}
+                      rows={8}
                       className="mt-1"
                     />
                   </div>
@@ -586,6 +810,84 @@ function BuilderEditPage() {
 
             {/* Right: meta + character */}
             <aside className="space-y-4">
+              <section className="rounded-xl border border-border/60 bg-card/40 backdrop-blur p-4 space-y-3">
+                <h3 className="text-xs uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                  <Wand2 className="size-3.5" /> AI 글쓰기 도움
+                </h3>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <Label className="text-xs">작업</Label>
+                    <Select value={assistMode} onValueChange={(value: AssistMode) => setAssistMode(value)}>
+                      <SelectTrigger className="mt-1 h-9">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {ASSIST_MODE_OPTIONS.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label className="text-xs">범위</Label>
+                    <Select value={assistScope} onValueChange={(value: AssistScope) => setAssistScope(value)}>
+                      <SelectTrigger className="mt-1 h-9">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="active">현재 비트</SelectItem>
+                        <SelectItem value="all">전체 비트</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <Textarea
+                  value={assistNote}
+                  onChange={(event) => setAssistNote(event.target.value)}
+                  rows={2}
+                  className="text-sm"
+                  placeholder="원하는 톤이나 꼭 살릴 장면"
+                />
+                <div className="grid grid-cols-3 gap-2">
+                  <Button
+                    type="button"
+                    onClick={() => writingAssist.mutate()}
+                    disabled={writingAssist.isPending || (assistScope === "active" && !active)}
+                    className="col-span-3"
+                  >
+                    {writingAssist.isPending ? <Loader2 className="mr-1 size-3.5 animate-spin" /> : <Wand2 className="mr-1 size-3.5" />}
+                    적용
+                  </Button>
+                  <Button type="button" variant="outline" onClick={undoLatest} disabled={!history.length || writingAssist.isPending}>
+                    <Undo2 className="mr-1 size-3.5" />
+                    이전
+                  </Button>
+                  <Button type="button" variant="outline" onClick={() => restoreOriginal("active")} disabled={!originalBeatsRef.current.length || writingAssist.isPending}>
+                    <RotateCcw className="mr-1 size-3.5" />
+                    원문
+                  </Button>
+                  <Button type="button" variant="outline" onClick={() => restoreOriginal("all")} disabled={!originalBeatsRef.current.length || writingAssist.isPending}>
+                    전체 원문
+                  </Button>
+                </div>
+                {history.length > 0 && (
+                  <div className="max-h-28 space-y-1 overflow-y-auto rounded-lg border border-border/50 bg-background/35 p-2">
+                    {history.slice(0, 4).map((snapshot) => (
+                      <button
+                        key={`${snapshot.createdAt}-${snapshot.label}`}
+                        type="button"
+                        onClick={() => restoreSnapshot(snapshot)}
+                        className="block w-full truncate rounded-md px-2 py-1 text-left text-[11px] text-muted-foreground transition hover:bg-card/70 hover:text-foreground"
+                      >
+                        {snapshot.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </section>
+
               <section className="rounded-xl border border-border/60 bg-card/40 backdrop-blur p-4 space-y-3">
                 <h3 className="text-xs uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
                   <Sparkles className="size-3.5" /> 스토리 메타

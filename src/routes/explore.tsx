@@ -27,19 +27,32 @@ const HEAT_BADGE: Record<string, { label: string; className: string }> = {
   steamy: { label: "Steamy", className: "bg-fuchsia-500/15 text-fuchsia-300 border-fuchsia-500/30" },
 };
 
+const FRONT_MENU_QUERY_OPTIONS = {
+  staleTime: 0,
+  gcTime: 30_000,
+  refetchOnMount: "always",
+  refetchOnWindowFocus: false,
+} as const;
+
 function ExplorePage() {
   const { user } = useAuth();
   const list = useServerFn(listMyUserStories);
   const placementsFn = useServerFn(listHomePlacements);
-  const { data: mine, isLoading: mineLoading } = useQuery({
+  const mineQ = useQuery({
     queryKey: ["my_user_stories"],
     queryFn: () => list(),
     enabled: !!user,
+    ...FRONT_MENU_QUERY_OPTIONS,
   });
   const curatedQ = useQuery({
     queryKey: ["home_placement", "trending", "explore"],
     queryFn: () => placementsFn({ data: { slot: "trending" } }),
+    ...FRONT_MENU_QUERY_OPTIONS,
   });
+  const mine = mineQ.isFetchedAfterMount ? mineQ.data : undefined;
+  const mineLoading = mineQ.isLoading || (mineQ.isFetching && !mineQ.isFetchedAfterMount);
+  const curatedStories = curatedQ.isFetchedAfterMount ? curatedQ.data : undefined;
+  const curatedLoading = curatedQ.isLoading || (curatedQ.isFetching && !curatedQ.isFetchedAfterMount);
 
   return (
     <div className="mx-auto max-w-7xl space-y-10 px-4 py-8 md:px-8">
@@ -117,17 +130,17 @@ function ExplorePage() {
             Stories assigned to the Hot Stories slot in admin.
           </p>
         </div>
-        {curatedQ.isLoading ? (
+        {curatedLoading ? (
           <div className="flex items-center justify-center py-10 text-muted-foreground">
             <Loader2 className="size-5 animate-spin" />
           </div>
-        ) : (curatedQ.data?.length ?? 0) === 0 ? (
+        ) : (curatedStories?.length ?? 0) === 0 ? (
           <div className="rounded-xl border border-dashed border-border/60 p-6 text-center text-sm text-muted-foreground">
             No curated stories are exposed yet.
           </div>
         ) : (
           <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {curatedQ.data!.map((story) => (
+            {curatedStories!.map((story) => (
               <li key={story.id}>
                 <StoryCard story={story} />
               </li>

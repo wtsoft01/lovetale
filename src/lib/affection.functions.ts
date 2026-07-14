@@ -35,6 +35,30 @@ export const getMyStoryAffection = createServerFn({ method: "GET" })
     return { affection: await initialAffection(data.storyId), updatedAt: null as string | null };
   });
 
+export type MyStoryAffectionRow = {
+  storyId: string;
+  affection: number;
+  updatedAt: string;
+};
+
+export const listMyStoryAffections = createServerFn({ method: "GET" }).handler(
+  async (): Promise<MyStoryAffectionRow[]> => {
+    const uid = await requireUserId();
+    const { data, error } = await supabase
+      .from("story_affection")
+      .select("story_id, affection, updated_at")
+      .eq("user_id", uid)
+      .order("updated_at", { ascending: false })
+      .limit(500);
+    if (error) throw new Error(error.message);
+    return (data ?? []).map((row) => ({
+      storyId: row.story_id,
+      affection: row.affection,
+      updatedAt: row.updated_at,
+    }));
+  },
+);
+
 export const bumpMyStoryAffection = createServerFn({ method: "POST" })
   .inputValidator((i: unknown) => i as { storyId: string; delta: number; reason?: string })
   .handler(async ({ data }) => {
