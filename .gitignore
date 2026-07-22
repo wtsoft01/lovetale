@@ -36,3 +36,4 @@ dist-ssr
 .env*
 .supabase-secrets.local.txt*
 supabase/.temp/
+cloudzy-db-dumps/

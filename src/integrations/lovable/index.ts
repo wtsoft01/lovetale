@@ -1,12 +1,23 @@
-// Demo-mode stub for the Lovable integration helper. Mirrors only the
-// surface the app touches: lovable.auth.signInWithOAuth.
-import { mockSignInDemoGoogle } from "@/lib/_mock/store";
+import { supabase } from "@/integrations/supabase/client";
 
 export const lovable = {
   auth: {
-    async signInWithOAuth(_provider: string, _opts?: { redirect_uri?: string }) {
-      mockSignInDemoGoogle();
-      return { redirected: false, error: null as { message?: string } | null };
+    async signInWithOAuth(provider: string, opts?: { redirect_uri?: string }) {
+      if (provider !== "google") {
+        return {
+          redirected: false,
+          error: { message: `Unsupported OAuth provider: ${provider}` },
+        };
+      }
+
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider,
+        options: {
+          redirectTo: opts?.redirect_uri ?? window.location.origin,
+        },
+      });
+
+      return { redirected: Boolean(data.url), error };
     },
   },
 };

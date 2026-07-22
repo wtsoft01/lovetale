@@ -1,0 +1,18 @@
+services:
+  lovetale:
+    build:
+      context: .
+      args:
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL}
+        VITE_SUPABASE_PUBLISHABLE_KEY: ${VITE_SUPABASE_PUBLISHABLE_KEY}
+        VITE_SUPABASE_PROJECT_ID: ${VITE_SUPABASE_PROJECT_ID}
+        VITE_BOOTSTRAP_ADMIN_EMAIL: ${VITE_BOOTSTRAP_ADMIN_EMAIL:-admin@lovetale.org}
+    env_file:
+      - ${CLOUDZY_ENV_FILE:-.env.cloudzy}
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3000
+    ports:
+      - "${LOVETALE_BIND_ADDR:-127.0.0.1}:${LOVETALE_APP_PORT:-3000}:3000"
+    restart: unless-stopped

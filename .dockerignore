@@ -1,0 +1,17 @@
+.git
+.vercel
+.output
+.tanstack
+.tmp
+.wrangler
+node_modules
+dist
+coverage
+*.log
+build-check.log
+.env
+.env.*
+*.local
+.supabase-secrets.local.txt
+.supabase-secrets.local.example.txt
+cloudzy-db-dumps
