@@ -427,6 +427,53 @@ export function buildChaptersFromRow(row: any): ChapterConfig[] {
   ];
 }
 
+function normalizeChapterLocator(value: unknown) {
+  let raw = String(value ?? "").trim();
+  if (!raw) return "";
+  try {
+    raw = decodeURIComponent(raw);
+  } catch {
+    // TanStack route params and URLSearchParams are usually decoded already.
+  }
+  return raw.trim();
+}
+
+function episodeNumberFromChapterLocator(value: unknown) {
+  const compact = normalizeChapterLocator(value).replace(/\s+/g, "").toLowerCase();
+  if (!compact) return null;
+  const match =
+    compact.match(/^(\d+)$/) ??
+    compact.match(/^(\d+)화$/) ??
+    compact.match(/^ep(?:isode)?[-_]?(\d+)$/) ??
+    compact.match(/^chapter[-_]?(\d+)$/) ??
+    compact.match(/^ch[-_]?(\d+)$/);
+  if (!match) return null;
+  const episodeNumber = Number(match[1]);
+  return Number.isFinite(episodeNumber) && episodeNumber > 0 ? Math.floor(episodeNumber) : null;
+}
+
+function findChapterByLocator(chapters: ChapterConfig[], locator: unknown) {
+  const normalized = normalizeChapterLocator(locator);
+  if (!normalized) return null;
+
+  const direct = chapters.find((item) => item.id === normalized);
+  if (direct) return direct;
+
+  const byTitle = chapters.find((item) => normalizeChapterLocator(item.title) === normalized);
+  if (byTitle) return byTitle;
+
+  const episodeNumber = episodeNumberFromChapterLocator(normalized);
+  if (!episodeNumber) return null;
+  return (
+    chapters.find((item) => Math.floor(Number(item.episodeNumber) || 0) === episodeNumber) ?? null
+  );
+}
+
+function findChapterIndexByLocator(chapters: ChapterConfig[], locator: unknown) {
+  const chapter = findChapterByLocator(chapters, locator);
+  return chapter ? chapters.findIndex((item) => item.id === chapter.id) : -1;
+}
+
 export function flattenChapters(chapters: ChapterConfig[]) {
   let body = "";
   const slots: AssetSlot[] = [];
@@ -550,7 +597,7 @@ export const getStoryChapterEditor = createServerFn({ method: "GET" })
 
     const card = recordOf(row.character_card);
     const chapters = buildChaptersFromRow(row);
-    const chapter = chapters.find((item) => item.id === data.chapterId);
+    const chapter = findChapterByLocator(chapters, data.chapterId);
     if (!chapter) throw new Error("Chapter not found");
 
     const assetLibrary: ChapterEditorData["assetLibrary"] = [];
@@ -596,7 +643,7 @@ export const getStoryChapterText = createServerFn({ method: "GET" })
     const row = await loadStory(data.id);
     if (!row) throw new Error("Story not found");
 
-    const chapter = buildChaptersFromRow(row).find((item) => item.id === data.chapterId);
+    const chapter = findChapterByLocator(buildChaptersFromRow(row), data.chapterId);
     if (!chapter) throw new Error("Chapter not found");
 
     return {
@@ -688,7 +735,7 @@ export const saveStoryChapterEditor = createServerFn({ method: "POST" })
 
     const card = recordOf(row.character_card);
     const chapters = buildChaptersFromRow(row);
-    const index = chapters.findIndex((item) => item.id === data.chapter.id);
+    const index = findChapterIndexByLocator(chapters, data.chapter.id);
     if (index < 0) throw new Error("Chapter not found");
     const rawBody = String(data.chapter.body ?? "");
     const normalizedBody = normalizeProseLineBreaks(rawBody);
@@ -702,6 +749,7 @@ export const saveStoryChapterEditor = createServerFn({ method: "POST" })
         ? {
             ...item,
             ...data.chapter,
+            id: item.id,
             episodeNumber: Math.max(1, Number(data.chapter.episodeNumber) || item.episodeNumber),
             priceCredits: Math.max(0, Number(data.chapter.priceCredits) || 0),
             body: normalizedBody,
@@ -748,7 +796,7 @@ export const saveStoryChapterText = createServerFn({ method: "POST" })
 
     const card = recordOf(row.character_card);
     const chapters = buildChaptersFromRow(row);
-    const index = chapters.findIndex((item) => item.id === data.chapter.id);
+    const index = findChapterIndexByLocator(chapters, data.chapter.id);
     if (index < 0) throw new Error("Chapter not found");
     const rawBody = String(data.chapter.body ?? "");
     const normalizedBody = normalizeProseLineBreaks(rawBody);

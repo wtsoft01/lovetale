@@ -149,6 +149,48 @@ function upsertChapterSummary(list: StoryChapterSummary[], summary: StoryChapter
   return next.sort((a, b) => a.episodeNumber - b.episodeNumber);
 }
 
+function normalizeChapterLocator(value: unknown) {
+  let raw = String(value ?? "").trim();
+  if (!raw) return "";
+  try {
+    raw = decodeURIComponent(raw);
+  } catch {
+    // Browser query APIs already decode most values.
+  }
+  return raw.trim();
+}
+
+function episodeNumberFromChapterLocator(value: unknown) {
+  const compact = normalizeChapterLocator(value).replace(/\s+/g, "").toLowerCase();
+  if (!compact) return null;
+  const match =
+    compact.match(/^(\d+)$/) ??
+    compact.match(/^(\d+)화$/) ??
+    compact.match(/^ep(?:isode)?[-_]?(\d+)$/) ??
+    compact.match(/^chapter[-_]?(\d+)$/) ??
+    compact.match(/^ch[-_]?(\d+)$/);
+  if (!match) return null;
+  const episodeNumber = Number(match[1]);
+  return Number.isFinite(episodeNumber) && episodeNumber > 0 ? Math.floor(episodeNumber) : null;
+}
+
+function findChapterSummaryByLocator(chapters: StoryChapterSummary[], locator?: string | null) {
+  const normalized = normalizeChapterLocator(locator);
+  if (!normalized) return null;
+
+  const direct = chapters.find((chapter) => chapter.id === normalized);
+  if (direct) return direct;
+
+  const byTitle = chapters.find((chapter) => normalizeChapterLocator(chapter.title) === normalized);
+  if (byTitle) return byTitle;
+
+  const episodeNumber = episodeNumberFromChapterLocator(normalized);
+  if (!episodeNumber) return null;
+  return (
+    chapters.find((chapter) => Math.floor(Number(chapter.episodeNumber) || 0) === episodeNumber) ?? null
+  );
+}
+
 type ImportAutomationMetadata = {
   title?: string;
   logline?: string;
@@ -262,7 +304,8 @@ function StoriesPage() {
       requestedTab === "preview" || requestedTab === "assets" || requestedTab === "chapter" || requestedTab === "characters"
         ? requestedTab
         : "info";
-    const chapterId = params.get("chapter") ?? undefined;
+    const requestedChapterId = params.get("chapter") ?? undefined;
+    const chapterId = findChapterSummaryByLocator(story.chapters ?? [], requestedChapterId)?.id ?? requestedChapterId;
     setWorkspaceFor({ id: story.id, title: story.title, tab, chapterId, chapters: story.chapters ?? [] });
     window.history.replaceState({}, "", "/admin/stories");
   }, [pathname, query.isLoading, rows, workspaceFor]);
@@ -1326,19 +1369,34 @@ function StoryWorkspaceDialog({
 
   useEffect(() => {
     setLocalChapters(chapters);
-    setActiveChapterId((current) => selectedChapterId ?? current ?? chapters[0]?.id ?? "");
+    setActiveChapterId((current) => {
+      const selected = findChapterSummaryByLocator(chapters, selectedChapterId);
+      if (selected) return selected.id;
+      const existing = findChapterSummaryByLocator(chapters, current);
+      if (existing) return existing.id;
+      return chapters[0]?.id ?? "";
+    });
   }, [selectedChapterId, storyId, chapters]);
 
   useEffect(() => {
-    if (!activeChapterId && tab === 'chapter' && chapters[0]?.id) {
-      setActiveChapterId(chapters[0].id);
+    if (tab !== 'chapter') return;
+    const resolved = findChapterSummaryByLocator(localChapters, activeChapterId);
+    if (resolved && resolved.id !== activeChapterId) {
+      setActiveChapterId(resolved.id);
+      return;
     }
-  }, [activeChapterId, chapters, tab]);
+    if (!activeChapterId && localChapters[0]?.id) {
+      setActiveChapterId(localChapters[0].id);
+    }
+  }, [activeChapterId, localChapters, tab]);
 
   useEffect(() => {
     if (tab !== 'chapter') return;
     const data = chapterQ.data?.chapter;
     if (!data) return;
+    if (data.id !== activeChapterId) {
+      setActiveChapterId(data.id);
+    }
     setChapterDraft({
       title: data.title,
       episodeNumber: data.episodeNumber,
