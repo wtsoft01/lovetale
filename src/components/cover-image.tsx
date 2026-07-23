@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { resolveStoryMediaSource } from "@/lib/story-media-url";
 
 const signedUrlCache = new Map<string, { url: string; expiresAt: number }>();
 const SIGNED_URL_TTL_MS = 55 * 60 * 1000;
@@ -27,23 +28,16 @@ export function CoverImage({
       setResolved(undefined);
       return;
     }
-    // Direct usable URLs
-    if (/^(data:|blob:)/.test(src)) {
-      setResolved(src);
+    const source = resolveStoryMediaSource(src);
+    if (!source) {
+      setResolved(undefined);
       return;
     }
-    // Extract path if it's a Supabase storage URL for story-media
-    let path: string | null = null;
-    const m = src.match(/\/storage\/v1\/object\/(?:public|sign)\/story-media\/(.+?)(?:\?|$)/);
-    if (m) {
-      path = decodeURIComponent(m[1]);
-    } else if (/^https?:\/\//.test(src)) {
-      // External URL — use as-is
-      setResolved(src);
+    if (source.kind === "direct") {
+      setResolved(source.url);
       return;
-    } else {
-      path = src;
     }
+    const path = source.path;
 
     const cached = signedUrlCache.get(path);
     if (cached && cached.expiresAt > Date.now()) {
