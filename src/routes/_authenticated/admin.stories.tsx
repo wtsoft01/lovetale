@@ -45,6 +45,7 @@ import {
 import {
   CHAPTER_SEPARATOR,
   createStoryChapterText,
+  deleteStoryChapterText,
   getStoryChapterText,
   getStoryCompose,
   saveStoryChapterEditor,
@@ -1241,6 +1242,7 @@ function StoryWorkspaceDialog({
   const fetchCompose = useServerFn(getStoryCompose);
   const fetchChapterText = useServerFn(getStoryChapterText);
   const createChapterText = useServerFn(createStoryChapterText);
+  const deleteChapterText = useServerFn(deleteStoryChapterText);
   const saveChapterText = useServerFn(saveStoryChapterText);
   const saveChapterEditor = useServerFn(saveStoryChapterEditor);
   const suggestSlots = useServerFn(suggestStoryAssetSlots);
@@ -1255,6 +1257,8 @@ function StoryWorkspaceDialog({
   const [saving, setSaving] = useState(false);
   const [chapterSaving, setChapterSaving] = useState(false);
   const [chapterCreating, setChapterCreating] = useState(false);
+  const [chapterDeleting, setChapterDeleting] = useState(false);
+  const [chapterDeleteTarget, setChapterDeleteTarget] = useState<StoryChapterSummary | null>(null);
   const [assetSaving, setAssetSaving] = useState(false);
   const [assetSuggesting, setAssetSuggesting] = useState(false);
   const [assetDraft, setAssetDraft] = useState<ChapterConfig | null>(null);
@@ -1828,6 +1832,42 @@ function StoryWorkspaceDialog({
     }
   }
 
+  async function deleteChapter(chapterId: string) {
+    setChapterDeleting(true);
+    try {
+      const res = await deleteChapterText({ data: { id: storyId, chapterId } });
+      const nextChapters = [...res.chapters].sort((a, b) => a.episodeNumber - b.episodeNumber);
+      const nextActiveChapter = nextChapters.find((chapter) => chapter.id === res.activeChapterId) ?? nextChapters[0] ?? null;
+      setLocalChapters(nextChapters);
+      setActiveChapterId(nextActiveChapter?.id ?? "");
+      setAssetDraft((prev) => (prev?.id === res.deletedChapterId ? null : prev));
+      setChapterDraft({
+        title: nextActiveChapter?.title ?? "",
+        episodeNumber: nextActiveChapter?.episodeNumber ?? 1,
+        isFree: nextActiveChapter?.isFree ?? true,
+        priceCredits: nextActiveChapter?.priceCredits ?? 0,
+        summary: nextActiveChapter?.summary ?? "",
+        body: "",
+        characterAnalysis: [],
+      });
+      setChapterDeleteTarget(null);
+      toast.success("선택한 회차가 삭제되었습니다.");
+      qc.removeQueries({ queryKey: ["admin_story_chapter_text", storyId, res.deletedChapterId] });
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["admin_stories"] }),
+        qc.invalidateQueries({ queryKey: ["admin_story_detail", storyId] }),
+        qc.invalidateQueries({ queryKey: ["admin_story_workspace", storyId] }),
+        nextActiveChapter
+          ? qc.invalidateQueries({ queryKey: ["admin_story_chapter_text", storyId, nextActiveChapter.id] })
+          : Promise.resolve(),
+      ]);
+    } catch (e: any) {
+      toast.error(e?.message ?? "회차 삭제에 실패했습니다.");
+    } finally {
+      setChapterDeleting(false);
+    }
+  }
+
   async function saveAssets(nextDraft?: ChapterConfig) {
     const draftToSave = nextDraft ?? assetDraft;
     if (!draftToSave) return;
@@ -1906,6 +1946,8 @@ function StoryWorkspaceDialog({
   }
 
   const chapterList = localChapters;
+  const activeChapterSummary = findChapterSummaryByLocator(chapterList, activeChapterId);
+  const canDeleteActiveChapter = Boolean(activeChapterSummary) && chapterList.length > 1;
   const workspaceStats = {
     chapters: chapterList.length,
     bodyChars: chapterList.reduce((sum, chapter) => sum + (chapter.bodyChars ?? 0), 0),
@@ -1914,6 +1956,7 @@ function StoryWorkspaceDialog({
   };
 
   return (
+    <>
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="flex max-h-[92vh] max-w-[96vw] grid-rows-none flex-col gap-0 overflow-hidden p-0">
         <div className="shrink-0 border-b border-border px-4 py-3">
@@ -2795,10 +2838,23 @@ function StoryWorkspaceDialog({
                     <div className="text-sm font-semibold">회차 편집</div>
                     <div className="text-xs text-muted-foreground">회차를 선택하고 제목, 요약, 본문을 수정합니다.</div>
                   </div>
-                  <Button size="sm" variant="outline" onClick={createChapter} disabled={chapterCreating}>
-                    {chapterCreating ? <Loader2 className="size-3 animate-spin" /> : <Plus className="size-3" />}
-                    회차 추가
-                  </Button>
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" variant="outline" onClick={createChapter} disabled={chapterCreating || chapterDeleting}>
+                      {chapterCreating ? <Loader2 className="size-3 animate-spin" /> : <Plus className="size-3" />}
+                      회차 추가
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                      onClick={() => activeChapterSummary && setChapterDeleteTarget(activeChapterSummary)}
+                      disabled={!canDeleteActiveChapter || chapterSaving || chapterCreating || chapterDeleting}
+                    >
+                      {chapterDeleting ? <Loader2 className="size-3 animate-spin" /> : <Trash2 className="size-3" />}
+                      선택 회차 삭제
+                    </Button>
+                  </div>
                 </div>
                 <div className="mb-4 flex flex-wrap gap-2">
                   {chapterList.map((chapter) => {
@@ -3103,6 +3159,39 @@ function StoryWorkspaceDialog({
         </Tabs>
       </DialogContent>
     </Dialog>
+    <AlertDialog
+      open={Boolean(chapterDeleteTarget)}
+      onOpenChange={(open) => {
+        if (!open && !chapterDeleting) setChapterDeleteTarget(null);
+      }}
+    >
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>선택 회차 삭제</AlertDialogTitle>
+          <AlertDialogDescription>
+            {chapterDeleteTarget
+              ? `${chapterDeleteTarget.episodeNumber}화 "${chapterDeleteTarget.title || "제목 없음"}"을 삭제합니다.`
+              : "선택한 회차를 삭제합니다."}{" "}
+            본문과 이 회차에 연결된 이미지 배치가 함께 제거되며 되돌릴 수 없습니다.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={chapterDeleting}>취소</AlertDialogCancel>
+          <AlertDialogAction
+            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            disabled={chapterDeleting}
+            onClick={(event) => {
+              event.preventDefault();
+              if (chapterDeleteTarget) void deleteChapter(chapterDeleteTarget.id);
+            }}
+          >
+            {chapterDeleting ? <Loader2 className="size-3 animate-spin" /> : <Trash2 className="size-3" />}
+            삭제
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    </>
   );
 }
 

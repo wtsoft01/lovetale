@@ -566,6 +566,19 @@ export type ChapterTextSummary = {
   assetSlotsCount: number;
 };
 
+function makeChapterTextSummary(chapter: ChapterConfig): ChapterTextSummary {
+  return {
+    id: chapter.id,
+    title: chapter.title,
+    episodeNumber: chapter.episodeNumber,
+    summary: chapter.summary,
+    isFree: chapter.isFree,
+    priceCredits: chapter.priceCredits,
+    bodyChars: chapter.body.length,
+    assetSlotsCount: chapter.assetSlots.length,
+  };
+}
+
 export const getStoryCompose = createServerFn({ method: "GET" })
   .inputValidator((input: any) => input as { id: string })
   .handler(async ({ data }): Promise<ComposeData> => {
@@ -890,18 +903,73 @@ export const createStoryChapterText = createServerFn({ method: "POST" })
 
     return {
       ok: true,
-      chapter: {
-        id: chapter.id,
-        title: chapter.title,
-        episodeNumber: chapter.episodeNumber,
-        summary: chapter.summary,
-        isFree: chapter.isFree,
-        priceCredits: chapter.priceCredits,
-        bodyChars: 0,
-        assetSlotsCount: 0,
-      },
+      chapter: makeChapterTextSummary(chapter),
     };
   });
+
+export const deleteStoryChapterText = createServerFn({ method: "POST" })
+  .inputValidator((input: any) => input as { id: string; chapterId: string })
+  .handler(
+    async ({
+      data,
+    }): Promise<{
+      ok: true;
+      deletedChapterId: string;
+      activeChapterId: string | null;
+      chapters: ChapterTextSummary[];
+    }> => {
+      const userId = await requireStaff();
+      const row = await loadStory(data.id);
+      if (!row) throw new Error("Story not found");
+
+      const card = recordOf(row.character_card);
+      const chapters = buildChaptersFromRow(row);
+      if (chapters.length <= 1) {
+        throw new Error("최소 1개 이상의 회차가 필요합니다.");
+      }
+
+      const index = findChapterIndexByLocator(chapters, data.chapterId);
+      if (index < 0) throw new Error("Chapter not found");
+
+      const deleted = chapters[index];
+      const nextChapters = chapters.filter((_, itemIndex) => itemIndex !== index);
+      const activeChapterId = nextChapters[Math.min(index, nextChapters.length - 1)]?.id ?? null;
+      const remainingChapterIds = new Set(nextChapters.map((chapter) => chapter.id));
+      const prunedCharacters = Array.isArray(card.characters)
+        ? card.characters.map((character: any) => ({
+            ...character,
+            chapterInsights: Array.isArray(character?.chapterInsights)
+              ? character.chapterInsights.filter((insight: any) => remainingChapterIds.has(String(insight?.chapterId ?? "")))
+              : character?.chapterInsights,
+          }))
+        : card.characters;
+      const nextCard = { ...card, characters: prunedCharacters };
+      const { body: flatBody, slots: flatSlots } = flattenChapters(nextChapters);
+
+      await saveStory(
+        data.id,
+        {
+          body_text: flatBody,
+          asset_slots: flatSlots as any,
+          character_card: {
+            ...nextCard,
+            chapters: nextChapters,
+            characters: mergeCharacterInsights(nextCard, nextChapters),
+          } as any,
+          compose_step: flatSlots.length ? "assets" : "body",
+          updated_at: new Date().toISOString(),
+        },
+        userId,
+      );
+
+      return {
+        ok: true,
+        deletedChapterId: deleted.id,
+        activeChapterId,
+        chapters: nextChapters.map(makeChapterTextSummary),
+      };
+    },
+  );
 
 export const saveStoryBody = createServerFn({ method: "POST" })
   .inputValidator(
