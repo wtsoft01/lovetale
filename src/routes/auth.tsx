@@ -8,12 +8,22 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
-import { lovable } from "@/integrations/lovable";
 import { useAuth } from "@/hooks/use-auth";
 import { getStaffAccess } from "@/lib/staff-access";
 import { BrandLogo } from "@/components/brand-logo";
 
 const FIRST_ADMIN_EMAIL = "admin@lovetale.org";
+
+type PasswordLoginPayload = {
+  ok?: boolean;
+  access_token?: string;
+  refresh_token?: string;
+  user?: {
+    id?: string;
+    email?: string | null;
+  };
+  message?: string;
+};
 
 export const Route = createFileRoute("/auth")({
   head: () => ({
@@ -50,20 +60,74 @@ function AuthPage() {
     }).catch(() => null);
   }
 
+  function shouldRetryThroughSameOrigin(error: unknown) {
+    const message = String((error as { message?: unknown })?.message ?? error ?? "").toLowerCase();
+    return message.includes("failed to fetch") || message.includes("network") || message.includes("fetch");
+  }
+
+  async function signInThroughSameOrigin(normalizedEmail: string) {
+    const response = await fetch("/api/auth/password-login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: normalizedEmail, password }),
+    });
+    const payload = (await response.json().catch(() => ({}))) as PasswordLoginPayload;
+
+    if (!response.ok || !payload.access_token || !payload.refresh_token) {
+      throw new Error(payload.message ?? "로그인에 실패했습니다.");
+    }
+
+    const { data, error } = await supabase.auth.setSession({
+      access_token: payload.access_token,
+      refresh_token: payload.refresh_token,
+    });
+    if (error) throw error;
+
+    return {
+      session: data.session,
+      user: data.user ?? {
+        id: payload.user?.id ?? "",
+        email: payload.user?.email ?? normalizedEmail,
+      },
+    };
+  }
+
   async function signIn(e: React.FormEvent) {
     e.preventDefault();
     const normalizedEmail = email.trim();
     setBusy(true);
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email: normalizedEmail,
-      password,
-    });
+    let data: Awaited<ReturnType<typeof supabase.auth.signInWithPassword>>["data"] | null = null;
+    let error: unknown = null;
+    try {
+      const result = await supabase.auth.signInWithPassword({
+        email: normalizedEmail,
+        password,
+      });
+      data = result.data;
+      error = result.error;
+    } catch (caught) {
+      error = caught;
+    }
+
+    if (error && shouldRetryThroughSameOrigin(error)) {
+      try {
+        data = await signInThroughSameOrigin(normalizedEmail);
+        error = null;
+      } catch (caught) {
+        error = caught;
+      }
+    }
+
     setBusy(false);
     if (error) {
-      toast.error(error.message);
+      toast.error(String((error as { message?: unknown })?.message ?? "로그인에 실패했습니다."));
       return;
     }
-    const user = data.user;
+    const user = data?.user;
+    if (!user?.id) {
+      toast.error("로그인 세션을 확인할 수 없습니다.");
+      return;
+    }
     if (user?.email?.trim().toLowerCase() === FIRST_ADMIN_EMAIL) {
       await bootstrapFirstAdmin(user.id, user.email);
     }
@@ -98,28 +162,7 @@ function AuthPage() {
     if (data.user?.email?.trim().toLowerCase() === FIRST_ADMIN_EMAIL) {
       await bootstrapFirstAdmin(data.user.id, data.user.email ?? normalizedEmail);
     }
-    toast.success("계정이 만들어졌어. 메일을 확인해줘.");
-  }
-
-  async function google() {
-    setBusy(true);
-    const result = await lovable.auth.signInWithOAuth("google", {
-      redirect_uri: window.location.origin,
-    });
-    if (result.error) {
-      setBusy(false);
-      toast.error(result.error.message ?? "Google 로그인 실패");
-      return;
-    }
-    if (result.redirected) return;
-    router.invalidate();
-    const { data } = await supabase.auth.getSession();
-    const role = await getStaffAccess({
-      userId: data.session?.user.id,
-      accessToken: data.session?.access_token,
-      email: data.session?.user.email ?? undefined,
-    }).catch(() => null);
-    navigate({ to: role?.hasAny ? "/admin" : "/" });
+    toast.success("계정이 만들어졌어. 바로 로그인할 수 있어.");
   }
 
   return (
@@ -161,8 +204,6 @@ function AuthPage() {
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "로그인"}
             </Button>
           </form>
-          <Divider />
-          <GoogleButton onClick={google} disabled={busy} />
         </TabsContent>
 
         <TabsContent value="signup" className="mt-6 space-y-4">
@@ -194,8 +235,6 @@ function AuthPage() {
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "계정 만들기"}
             </Button>
           </form>
-          <Divider />
-          <GoogleButton onClick={google} disabled={busy} />
           <p className="text-center text-[11px] text-muted-foreground">계속 진행하려면 약관과 정책에 동의해줘.</p>
         </TabsContent>
       </Tabs>
@@ -239,32 +278,5 @@ function Field({
         />
       </div>
     </div>
-  );
-}
-
-function Divider() {
-  return (
-    <div className="relative my-2">
-      <div className="absolute inset-0 flex items-center">
-        <span className="w-full border-t border-border" />
-      </div>
-      <div className="relative flex justify-center text-[11px] uppercase tracking-wider">
-        <span className="bg-background px-2 text-muted-foreground">또는</span>
-      </div>
-    </div>
-  );
-}
-
-function GoogleButton({ onClick, disabled }: { onClick: () => void; disabled?: boolean }) {
-  return (
-    <Button type="button" variant="outline" onClick={onClick} disabled={disabled} className="w-full">
-      <svg className="mr-2 h-4 w-4" viewBox="0 0 48 48" aria-hidden>
-        <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.9 32.5 29.4 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3 0 5.8 1.1 7.9 3l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.3-.4-3.5z"/>
-        <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 16 19 13 24 13c3 0 5.8 1.1 7.9 3l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/>
-        <path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2c-2 1.5-4.5 2.4-7.2 2.4-5.4 0-9.9-3.4-11.5-8.1l-6.5 5C9.5 39.7 16.2 44 24 44z"/>
-        <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.3 4.2-4.1 5.6l6.2 5.2C41.4 35.7 44 30.3 44 24c0-1.3-.1-2.3-.4-3.5z"/>
-      </svg>
-      Google로 계속하기
-    </Button>
   );
 }

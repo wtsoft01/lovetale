@@ -43,6 +43,7 @@ import { Route as AuthenticatedAdminIndexRouteImport } from './routes/_authentic
 import { Route as ApiStorageEnsureStoryMediaRouteImport } from './routes/api/storage/ensure-story-media'
 import { Route as ApiPublicBootstrapAdminRouteImport } from './routes/api/public/bootstrap-admin'
 import { Route as ApiAuthStaffAccessRouteImport } from './routes/api/auth/staff-access'
+import { Route as ApiAuthPasswordLoginRouteImport } from './routes/api/auth/password-login'
 import { Route as ApiAdminStoryAiRouteImport } from './routes/api/admin/story-ai'
 import { Route as ApiAdminStoriesRouteImport } from './routes/api/admin/stories'
 import { Route as ApiAdminStaffRouteImport } from './routes/api/admin/staff'
@@ -246,6 +247,11 @@ const ApiPublicBootstrapAdminRoute = ApiPublicBootstrapAdminRouteImport.update({
 const ApiAuthStaffAccessRoute = ApiAuthStaffAccessRouteImport.update({
   id: '/api/auth/staff-access',
   path: '/api/auth/staff-access',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiAuthPasswordLoginRoute = ApiAuthPasswordLoginRouteImport.update({
+  id: '/api/auth/password-login',
+  path: '/api/auth/password-login',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiAdminStoryAiRoute = ApiAdminStoryAiRouteImport.update({
@@ -488,6 +494,7 @@ export interface FileRoutesByFullPath {
   '/api/admin/staff': typeof ApiAdminStaffRoute
   '/api/admin/stories': typeof ApiAdminStoriesRoute
   '/api/admin/story-ai': typeof ApiAdminStoryAiRoute
+  '/api/auth/password-login': typeof ApiAuthPasswordLoginRoute
   '/api/auth/staff-access': typeof ApiAuthStaffAccessRoute
   '/api/public/bootstrap-admin': typeof ApiPublicBootstrapAdminRoute
   '/api/storage/ensure-story-media': typeof ApiStorageEnsureStoryMediaRoute
@@ -555,6 +562,7 @@ export interface FileRoutesByTo {
   '/api/admin/staff': typeof ApiAdminStaffRoute
   '/api/admin/stories': typeof ApiAdminStoriesRoute
   '/api/admin/story-ai': typeof ApiAdminStoryAiRoute
+  '/api/auth/password-login': typeof ApiAuthPasswordLoginRoute
   '/api/auth/staff-access': typeof ApiAuthStaffAccessRoute
   '/api/public/bootstrap-admin': typeof ApiPublicBootstrapAdminRoute
   '/api/storage/ensure-story-media': typeof ApiStorageEnsureStoryMediaRoute
@@ -625,6 +633,7 @@ export interface FileRoutesById {
   '/api/admin/staff': typeof ApiAdminStaffRoute
   '/api/admin/stories': typeof ApiAdminStoriesRoute
   '/api/admin/story-ai': typeof ApiAdminStoryAiRoute
+  '/api/auth/password-login': typeof ApiAuthPasswordLoginRoute
   '/api/auth/staff-access': typeof ApiAuthStaffAccessRoute
   '/api/public/bootstrap-admin': typeof ApiPublicBootstrapAdminRoute
   '/api/storage/ensure-story-media': typeof ApiStorageEnsureStoryMediaRoute
@@ -695,6 +704,7 @@ export interface FileRouteTypes {
     | '/api/admin/staff'
     | '/api/admin/stories'
     | '/api/admin/story-ai'
+    | '/api/auth/password-login'
     | '/api/auth/staff-access'
     | '/api/public/bootstrap-admin'
     | '/api/storage/ensure-story-media'
@@ -762,6 +772,7 @@ export interface FileRouteTypes {
     | '/api/admin/staff'
     | '/api/admin/stories'
     | '/api/admin/story-ai'
+    | '/api/auth/password-login'
     | '/api/auth/staff-access'
     | '/api/public/bootstrap-admin'
     | '/api/storage/ensure-story-media'
@@ -831,6 +842,7 @@ export interface FileRouteTypes {
     | '/api/admin/staff'
     | '/api/admin/stories'
     | '/api/admin/story-ai'
+    | '/api/auth/password-login'
     | '/api/auth/staff-access'
     | '/api/public/bootstrap-admin'
     | '/api/storage/ensure-story-media'
@@ -878,6 +890,7 @@ export interface RootRouteChildren {
   ApiAdminStaffRoute: typeof ApiAdminStaffRoute
   ApiAdminStoriesRoute: typeof ApiAdminStoriesRoute
   ApiAdminStoryAiRoute: typeof ApiAdminStoryAiRoute
+  ApiAuthPasswordLoginRoute: typeof ApiAuthPasswordLoginRoute
   ApiAuthStaffAccessRoute: typeof ApiAuthStaffAccessRoute
   ApiPublicBootstrapAdminRoute: typeof ApiPublicBootstrapAdminRoute
   ApiStorageEnsureStoryMediaRoute: typeof ApiStorageEnsureStoryMediaRoute
@@ -1121,6 +1134,13 @@ declare module '@tanstack/react-router' {
       path: '/api/auth/staff-access'
       fullPath: '/api/auth/staff-access'
       preLoaderRoute: typeof ApiAuthStaffAccessRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/auth/password-login': {
+      id: '/api/auth/password-login'
+      path: '/api/auth/password-login'
+      fullPath: '/api/auth/password-login'
+      preLoaderRoute: typeof ApiAuthPasswordLoginRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/admin/story-ai': {
@@ -1532,6 +1552,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiAdminStaffRoute: ApiAdminStaffRoute,
   ApiAdminStoriesRoute: ApiAdminStoriesRoute,
   ApiAdminStoryAiRoute: ApiAdminStoryAiRoute,
+  ApiAuthPasswordLoginRoute: ApiAuthPasswordLoginRoute,
   ApiAuthStaffAccessRoute: ApiAuthStaffAccessRoute,
   ApiPublicBootstrapAdminRoute: ApiPublicBootstrapAdminRoute,
   ApiStorageEnsureStoryMediaRoute: ApiStorageEnsureStoryMediaRoute,
