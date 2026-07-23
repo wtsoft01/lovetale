@@ -64,11 +64,12 @@ DASHBOARD_USERNAME=<admin-user>
 DASHBOARD_PASSWORD=<strong-password>
 ```
 
-Also configure SMTP before production email login, password reset, or email
-confirmation flows are used.
+SMTP is optional. Configure it only before enabling production email delivery,
+password reset, or email confirmation flows.
 
-If Google login is enabled in the UI, enable the Google OAuth provider in
-self-hosted Supabase and set its redirect URL to the Cloudzy app domain.
+Google login is optional. If it is enabled in the UI later, enable the Google
+OAuth provider in self-hosted Supabase and set its redirect URL to the Cloudzy
+app domain.
 
 Start self-hosted Supabase:
 
@@ -151,6 +152,21 @@ SELF_HOSTED_DB_URL='postgresql://postgres:<password>@127.0.0.1:5432/postgres' \
 If the official Supabase restore procedure changes, follow the official restore
 guide first and use these scripts only as helpers.
 
+## Fresh database initial content
+
+When the old Supabase database is unavailable and the service restarts with a
+fresh Cloudzy database, seed the initial Lovetale catalog from the repository:
+
+```sh
+cd /opt/lovetale
+python3 scripts/cloudzy/seed-initial-content.py
+```
+
+The script reads `SUPABASE_SERVICE_ROLE_KEY` from `.env.cloudzy`, writes seven
+public starter stories, exposes chat-enabled characters, and creates active
+`hero`, `trending`, and `new` home placements. It is idempotent, so re-running
+it updates the same seeded rows instead of duplicating them.
+
 ## Storage migration
 
 The database dump does not move the actual media files. Lovetale uses the
@@ -203,7 +219,7 @@ This runs at 03:23 KST.
 2. Lovetale starts and `https://love.arirang.club/auth` responds.
 3. `.env.cloudzy` uses only self-hosted Supabase keys.
 4. Supabase Auth redirect URLs include `https://love.arirang.club`.
-5. Email/password and Google login work against the self-hosted Auth service.
+5. Admin email/password login works against the self-hosted Auth service.
 6. `/explore`, `/chats`, `/admin`, `/admin/stories`, and image unlock flows work.
 7. Storage images load from Cloudzy-backed storage.
 8. Old Vercel/Supabase service is kept read-only until Cloudzy is verified.
