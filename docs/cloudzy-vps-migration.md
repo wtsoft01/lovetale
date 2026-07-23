@@ -91,11 +91,15 @@ Use the self-hosted Supabase values:
 
 ```text
 VITE_SUPABASE_URL=https://supabase.love.arirang.club
-SUPABASE_URL=https://supabase.love.arirang.club
+SUPABASE_URL=http://kong:8000
 VITE_SUPABASE_PUBLISHABLE_KEY=<self-hosted-anon-key>
 SUPABASE_PUBLISHABLE_KEY=<self-hosted-anon-key>
 SUPABASE_SERVICE_ROLE_KEY=<self-hosted-service-role-key>
 ```
+
+`VITE_SUPABASE_URL` is the browser-facing URL. `SUPABASE_URL` is used by the
+server-side Supabase admin client and should use the Docker network on Cloudzy
+so server routes do not depend on public DNS while validating user tokens.
 
 Run the app:
 
@@ -163,6 +167,35 @@ SELF_HOSTED_STORAGE_REMOTE=lovetale-cloudzy-storage \
 
 After copying, verify representative images from `/explore`, `/chats`, and
 admin media pages.
+
+## Cloudzy backups
+
+For the new Cloudzy-owned database, run a local backup after first launch and
+then schedule it daily:
+
+```sh
+sh scripts/cloudzy/backup-self-hosted.sh
+```
+
+By default this writes root-owned backups under `/opt/lovetale-backups` and
+keeps 14 days. Each backup contains:
+
+- `roles.sql`
+- `postgres.dump`
+- `storage.tgz` when storage files exist
+- `manifest.txt`
+
+The backup does not include `.env.cloudzy` or the Supabase `docker/.env`
+secrets. Keep those files protected separately and rotate any key that was ever
+shared outside the server.
+
+Example cron entry:
+
+```cron
+23 18 * * * cd /opt/lovetale && sh scripts/cloudzy/backup-self-hosted.sh >> /var/log/lovetale-backup.log 2>&1
+```
+
+This runs at 03:23 KST.
 
 ## Cutover checklist
 
