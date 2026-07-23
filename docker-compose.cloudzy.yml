@@ -15,4 +15,12 @@ services:
       PORT: 3000
     ports:
       - "${LOVETALE_BIND_ADDR:-127.0.0.1}:${LOVETALE_APP_PORT:-3000}:3000"
+    networks:
+      - default
+      - supabase
     restart: unless-stopped
+
+networks:
+  supabase:
+    external: true
+    name: ${SUPABASE_DOCKER_NETWORK:-supabase_default}
