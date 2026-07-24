@@ -43,7 +43,9 @@ function ChapterTextEditorPage() {
           id,
           chapter: {
             id: current.id,
+            originalId: current.id,
             episodeNumber: Number(episodeRef.current?.value) || current.episodeNumber,
+            originalEpisodeNumber: current.episodeNumber,
             title: titleRef.current?.value ?? current.title,
             summary: summaryRef.current?.value ?? current.summary,
             body: bodyRef.current?.value ?? current.body,
@@ -53,9 +55,13 @@ function ChapterTextEditorPage() {
         },
       });
     },
-    onSuccess: () => {
+    onSuccess: (result) => {
+      const savedChapterId = result.chapter?.id ?? chapterId;
       toast.success("회차가 저장되었습니다.");
-      qc.invalidateQueries({ queryKey: ["story_chapter_text", id, chapterId] });
+      qc.invalidateQueries({ queryKey: ["story_chapter_text", id, savedChapterId] });
+      if (savedChapterId !== chapterId) {
+        qc.removeQueries({ queryKey: ["story_chapter_text", id, chapterId] });
+      }
       qc.invalidateQueries({ queryKey: ["admin_stories"] });
       qc.invalidateQueries({ queryKey: ["admin_story_workspace", id] });
     },

@@ -1750,7 +1750,9 @@ function StoryWorkspaceDialog({
   }
 
   async function saveChapter() {
-    const current = chapterQ.data?.chapter.id || activeChapterIdRef.current || activeChapterId;
+    const loadedChapter = chapterQ.data?.chapter;
+    const selectedSummary = findChapterSummaryByLocator(localChapters, activeChapterIdRef.current || activeChapterId);
+    const current = loadedChapter?.id || selectedSummary?.id || activeChapterIdRef.current || activeChapterId;
     if (!current) return;
     const normalizedBody = normalizeProseLineBreaks(chapterDraft.body);
     setChapterSaving(true);
@@ -1760,8 +1762,10 @@ function StoryWorkspaceDialog({
           id: storyId,
           chapter: {
             id: current,
+            originalId: loadedChapter?.id ?? selectedSummary?.id ?? current,
             title: chapterDraft.title.trim(),
             episodeNumber: chapterDraft.episodeNumber,
+            originalEpisodeNumber: loadedChapter?.episodeNumber ?? selectedSummary?.episodeNumber,
             isFree: chapterDraft.isFree,
             priceCredits: chapterDraft.priceCredits,
             summary: chapterDraft.summary,
@@ -1770,7 +1774,7 @@ function StoryWorkspaceDialog({
         },
       });
       const nextCharacterAnalysis = result.characterAnalysis ?? [];
-      const previousSummary = localChapters.find((chapter) => chapter.id === current);
+      const previousSummary = findChapterSummaryByLocator(localChapters, current);
       const draftChapter = {
         id: current,
         title: chapterDraft.title.trim(),

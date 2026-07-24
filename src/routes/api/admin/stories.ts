@@ -109,6 +109,7 @@ function defaultStoryRpgConfig(input: {
 }
 
 function buildChapter(
+  storyId: string,
   sourceText: string,
   contentType: ContentType,
   index: number,
@@ -116,7 +117,7 @@ function buildChapter(
   summary?: string,
 ) {
   return {
-    id: newId("ch"),
+    id: stableChapterIdForStory(storyId, index),
     title: title?.trim() || (contentType === "short_story" ? "Short story" : `Episode ${index}`),
     episodeNumber: index,
     isFree: index === 1,
@@ -391,7 +392,7 @@ async function createOrAppendStory(request: Request, payload?: Partial<CreateSto
     const chapters = Array.isArray(card.chapters) ? [...card.chapters] : [];
     const nextEpisodeNumber = chapters.length + 1;
     const episodeTitle = episodeTitleInput || title || `Episode ${nextEpisodeNumber}`;
-    chapters.push(buildChapter(sourceText, contentType, nextEpisodeNumber, episodeTitle, episodeSummary));
+    chapters.push(buildChapter(targetStoryId, sourceText, contentType, nextEpisodeNumber, episodeTitle, episodeSummary));
     const existingBody = typeof target.body_text === "string" ? target.body_text.trim() : "";
     const nextOverview = storyOverview || String(card.storyOverview ?? target.logline ?? "").trim();
     const nextBody = sourceText ? [existingBody, sourceText].filter(Boolean).join(CHAPTER_SEPARATOR) : existingBody;
@@ -420,7 +421,8 @@ async function createOrAppendStory(request: Request, payload?: Partial<CreateSto
     return Response.json({ ok: true, id: updated.id });
   }
 
-  const chapter = sourceText ? buildChapter(sourceText, contentType, 1, episodeTitleInput, episodeSummary) : null;
+  const newStoryId = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : newId("story");
+  const chapter = sourceText ? buildChapter(newStoryId, sourceText, contentType, 1, episodeTitleInput, episodeSummary) : null;
   const primaryCharacter = characterName
     ? {
         id: "main",
@@ -439,7 +441,7 @@ async function createOrAppendStory(request: Request, payload?: Partial<CreateSto
       }
     : null;
   const insert = normalizeStoryInsert({
-    id: typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : newId("story"),
+    id: newStoryId,
     user_id: staff.userId,
     title: safeTitle,
     logline: (logline || storyOverview) ? (logline || storyOverview).slice(0, 180) : null,

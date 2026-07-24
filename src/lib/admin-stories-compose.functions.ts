@@ -466,8 +466,10 @@ function episodeNumberFromChapterLocator(value: unknown) {
     compact.match(/^(\d+)$/) ??
     compact.match(/^(\d+)화$/) ??
     compact.match(/^ep(?:isode)?[-_]?(\d+)$/) ??
+    compact.match(/^episode[-_]?(\d+)$/) ??
     compact.match(/^chapter[-_]?(\d+)$/) ??
-    compact.match(/^ch[-_]?(\d+)$/);
+    compact.match(/^ch[-_]?(\d+)$/) ??
+    compact.match(/(?:^|[-_])ep[-_]?(\d+)$/);
   if (!match) return null;
   const episodeNumber = Number(match[1]);
   return Number.isFinite(episodeNumber) && episodeNumber > 0 ? Math.floor(episodeNumber) : null;
@@ -497,14 +499,38 @@ function findChapterIndexByLocator(chapters: ChapterConfig[], locator: unknown) 
 
 function findChapterIndexForPatch(
   chapters: ChapterConfig[],
-  patch: { id?: unknown; title?: unknown; episodeNumber?: unknown },
+  patch: { id?: unknown; originalId?: unknown; title?: unknown; episodeNumber?: unknown; originalEpisodeNumber?: unknown },
 ) {
-  const locators = [patch.id, patch.episodeNumber, patch.title];
+  const locators = [patch.id, patch.originalId, patch.originalEpisodeNumber, patch.episodeNumber, patch.title];
   for (const locator of locators) {
     const index = findChapterIndexByLocator(chapters, locator);
     if (index >= 0) return index;
   }
   return chapters.length === 1 ? 0 : -1;
+}
+
+function chapterNotFoundError(
+  action: string,
+  chapters: ChapterConfig[],
+  patchOrLocator: { id?: unknown; originalId?: unknown; title?: unknown; episodeNumber?: unknown; originalEpisodeNumber?: unknown } | unknown,
+) {
+  const values =
+    patchOrLocator && typeof patchOrLocator === "object"
+      ? [
+          (patchOrLocator as any).id,
+          (patchOrLocator as any).originalId,
+          (patchOrLocator as any).originalEpisodeNumber,
+          (patchOrLocator as any).episodeNumber,
+          (patchOrLocator as any).title,
+        ]
+      : [patchOrLocator];
+  const requested = values.map(normalizeChapterLocator).filter(Boolean).join(", ") || "empty";
+  const available =
+    chapters
+      .slice(0, 12)
+      .map((chapter) => `${chapter.episodeNumber}화:${chapter.id}`)
+      .join(", ") || "none";
+  return new Error(`Chapter not found (${action}). requested=${requested}; available=${available}`);
 }
 
 export function flattenChapters(chapters: ChapterConfig[]) {
@@ -580,8 +606,10 @@ export type ChapterTextEditorData = {
 
 export type ChapterTextPatch = {
   id: string;
+  originalId?: string;
   title: string;
   episodeNumber: number;
+  originalEpisodeNumber?: number;
   isFree: boolean;
   priceCredits: number;
   summary: string;
@@ -644,7 +672,7 @@ export const getStoryChapterEditor = createServerFn({ method: "GET" })
     const card = recordOf(row.character_card);
     const chapters = buildChaptersFromRow(row);
     const chapter = findChapterByLocator(chapters, data.chapterId);
-    if (!chapter) throw new Error("Chapter not found");
+    if (!chapter) throw chapterNotFoundError("editor_load", chapters, data.chapterId);
 
     const assetLibrary: ChapterEditorData["assetLibrary"] = [];
     const seen = new Set<string>();
@@ -689,8 +717,9 @@ export const getStoryChapterText = createServerFn({ method: "GET" })
     const row = await loadStoryForChapters(data.id);
     if (!row) throw new Error("Story not found");
 
-    const chapter = findChapterByLocator(buildChaptersFromRow(row), data.chapterId);
-    if (!chapter) throw new Error("Chapter not found");
+    const chapters = buildChaptersFromRow(row);
+    const chapter = findChapterByLocator(chapters, data.chapterId);
+    if (!chapter) throw chapterNotFoundError("text_load", chapters, data.chapterId);
 
     return {
       id: row.id,
@@ -782,7 +811,7 @@ export const saveStoryChapterEditor = createServerFn({ method: "POST" })
     const card = recordOf(row.character_card);
     const chapters = buildChaptersFromRow(row);
     const index = findChapterIndexForPatch(chapters, data.chapter);
-    if (index < 0) throw new Error("Chapter not found");
+    if (index < 0) throw chapterNotFoundError("editor_save", chapters, data.chapter);
     const rawBody = String(data.chapter.body ?? "");
     const normalizedBody = normalizeProseLineBreaks(rawBody);
     const nextAssetSlots = (Array.isArray(data.chapter.assetSlots) ? data.chapter.assetSlots : []).map((slot) => ({
@@ -843,7 +872,7 @@ export const saveStoryChapterText = createServerFn({ method: "POST" })
     const card = recordOf(row.character_card);
     const chapters = buildChaptersFromRow(row);
     const index = findChapterIndexForPatch(chapters, data.chapter);
-    if (index < 0) throw new Error("Chapter not found");
+    if (index < 0) throw chapterNotFoundError("text_save", chapters, data.chapter);
     const rawBody = String(data.chapter.body ?? "");
     const normalizedBody = normalizeProseLineBreaks(rawBody);
 
@@ -910,7 +939,7 @@ export const createStoryChapterText = createServerFn({ method: "POST" })
     const nextEpisode =
       chapters.reduce((max, item) => Math.max(max, Math.floor(Number(item.episodeNumber) || 0)), 0) + 1;
     const chapter: ChapterConfig = {
-      id: newId("ch"),
+      id: stableChapterId(row, nextEpisode),
       title: `${nextEpisode}화`,
       episodeNumber: nextEpisode,
       isFree: false,
@@ -966,7 +995,7 @@ export const deleteStoryChapterText = createServerFn({ method: "POST" })
       }
 
       const index = findChapterIndexByLocator(chapters, data.chapterId);
-      if (index < 0) throw new Error("Chapter not found");
+      if (index < 0) throw chapterNotFoundError("delete", chapters, data.chapterId);
 
       const deleted = chapters[index];
       const nextChapters = chapters.filter((_, itemIndex) => itemIndex !== index);
