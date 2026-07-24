@@ -24,4 +24,5 @@ fi
 docker compose --env-file .env.cloudzy -f docker-compose.cloudzy.yml up -d --build
 restart_supabase
 trap - EXIT INT TERM
+sh scripts/cloudzy/apply-operational-patches.sh
 docker compose --env-file .env.cloudzy -f docker-compose.cloudzy.yml ps

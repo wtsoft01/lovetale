@@ -167,6 +167,25 @@ public starter stories, exposes chat-enabled characters, and creates active
 `hero`, `trending`, and `new` home placements. It is idempotent, so re-running
 it updates the same seeded rows instead of duplicating them.
 
+## Operational patches and health check
+
+After pulling a new Lovetale commit on Cloudzy, run the deployment script. It
+builds the app and applies idempotent DB patches needed by the production
+content workspace:
+
+```sh
+cd /opt/lovetale
+STOP_SUPABASE_DURING_BUILD=0 sh scripts/cloudzy/deploy.sh
+```
+
+To check DB load speed, app response time, container pressure, and required
+content indexes:
+
+```sh
+cd /opt/lovetale
+sh scripts/cloudzy/production-health.sh
+```
+
 ## Storage migration
 
 The database dump does not move the actual media files. Lovetale uses the
