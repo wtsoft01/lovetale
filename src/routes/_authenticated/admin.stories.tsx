@@ -122,6 +122,12 @@ type StoryChapterSummary = {
   assetSlotsCount: number;
 };
 
+const ADMIN_WORKSPACE_QUERY_OPTIONS = {
+  staleTime: 15_000,
+  gcTime: 5 * 60_000,
+  refetchOnWindowFocus: false,
+} as const;
+
 function makeChapterSummaryFromConfig(
   chapter: Pick<ChapterConfig, "id" | "title" | "episodeNumber" | "summary" | "isFree" | "priceCredits"> & {
     body?: string | null;
@@ -1254,6 +1260,7 @@ function StoryWorkspaceDialog({
   const saveStory = useServerFn(updateAdminStory);
   const [tab, setTab] = useState(initialTab);
   const [activeChapterId, setActiveChapterId] = useState(selectedChapterId ?? "");
+  const activeChapterIdRef = useRef(activeChapterId);
   const [saving, setSaving] = useState(false);
   const [chapterSaving, setChapterSaving] = useState(false);
   const [chapterCreating, setChapterCreating] = useState(false);
@@ -1305,15 +1312,19 @@ function StoryWorkspaceDialog({
   const [storyRpgScenesDraft, setStoryRpgScenesDraft] = useState<StoryRpgSceneDraft[]>(defaultStoryRpgScenes());
 
   const storyQ = useQuery({
+    ...ADMIN_WORKSPACE_QUERY_OPTIONS,
     queryKey: ['admin_story_detail', storyId],
     queryFn: () => fetchStory({ data: { id: storyId } }),
+    enabled: tab !== 'chapter',
   });
   const composeQ = useQuery({
+    ...ADMIN_WORKSPACE_QUERY_OPTIONS,
     queryKey: ['admin_story_workspace', storyId],
     queryFn: () => fetchCompose({ data: { id: storyId } }),
     enabled: tab === 'info' || tab === 'preview' || tab === 'assets' || tab === 'characters',
   });
   const chapterQ = useQuery({
+    ...ADMIN_WORKSPACE_QUERY_OPTIONS,
     queryKey: ['admin_story_chapter_text', storyId, activeChapterId],
     queryFn: () => fetchChapterText({ data: { id: storyId, chapterId: activeChapterId as string } }),
     enabled: tab === 'chapter' && !!activeChapterId,
@@ -1370,6 +1381,10 @@ function StoryWorkspaceDialog({
   useEffect(() => {
     setTab(initialTab);
   }, [initialTab]);
+
+  useEffect(() => {
+    activeChapterIdRef.current = activeChapterId;
+  }, [activeChapterId]);
 
   useEffect(() => {
     setLocalChapters(chapters);
@@ -1735,7 +1750,7 @@ function StoryWorkspaceDialog({
   }
 
   async function saveChapter() {
-    const current = activeChapterId;
+    const current = chapterQ.data?.chapter.id || activeChapterIdRef.current || activeChapterId;
     if (!current) return;
     const normalizedBody = normalizeProseLineBreaks(chapterDraft.body);
     setChapterSaving(true);
@@ -1756,26 +1771,53 @@ function StoryWorkspaceDialog({
       });
       const nextCharacterAnalysis = result.characterAnalysis ?? [];
       const previousSummary = localChapters.find((chapter) => chapter.id === current);
-      const nextChapterSummary = makeChapterSummaryFromConfig(
-        {
-          id: current,
-          title: chapterDraft.title.trim(),
-          episodeNumber: chapterDraft.episodeNumber,
-          isFree: chapterDraft.isFree,
-          priceCredits: chapterDraft.priceCredits,
-          summary: chapterDraft.summary,
-          body: normalizedBody,
-          assetSlots: assetDraft?.id === current ? assetDraft.assetSlots : undefined,
-        },
-        previousSummary,
-      );
+      const draftChapter = {
+        id: current,
+        title: chapterDraft.title.trim(),
+        episodeNumber: chapterDraft.episodeNumber,
+        isFree: chapterDraft.isFree,
+        priceCredits: chapterDraft.priceCredits,
+        summary: chapterDraft.summary,
+        body: normalizedBody,
+        assetSlots: assetDraft?.id === current ? assetDraft.assetSlots : undefined,
+      };
+      const savedChapter = result.chapter ?? makeChapterSummaryFromConfig(draftChapter, previousSummary);
+      const savedChapterId = savedChapter.id || current;
+      const nextChapterSummary = {
+        ...makeChapterSummaryFromConfig(
+          {
+            ...draftChapter,
+            id: savedChapterId,
+            assetSlots: assetDraft && (assetDraft.id === current || assetDraft.id === savedChapterId) ? assetDraft.assetSlots : undefined,
+          },
+          previousSummary,
+        ),
+        ...savedChapter,
+        id: savedChapterId,
+        bodyChars: normalizedBody.length,
+        assetSlotsCount:
+          savedChapter.assetSlotsCount ??
+          (assetDraft?.id === current || assetDraft?.id === savedChapterId ? assetDraft?.assetSlots.length ?? 0 : 0),
+      };
       toast.success('회차가 저장되었습니다.');
-      setChapterDraft((prev) => ({ ...prev, body: normalizedBody, characterAnalysis: nextCharacterAnalysis }));
+      setChapterDraft((prev) => ({
+        ...prev,
+        title: nextChapterSummary.title,
+        episodeNumber: nextChapterSummary.episodeNumber,
+        isFree: nextChapterSummary.isFree,
+        priceCredits: nextChapterSummary.priceCredits,
+        summary: nextChapterSummary.summary,
+        body: normalizedBody,
+        characterAnalysis: nextCharacterAnalysis,
+      }));
       setLocalChapters((prev) => upsertChapterSummary(prev, nextChapterSummary));
+      setActiveChapterId(savedChapterId);
+      activeChapterIdRef.current = savedChapterId;
       setAssetDraft((prev) =>
-        prev && prev.id === current
+        prev && (prev.id === current || prev.id === savedChapterId)
           ? {
               ...prev,
+              id: savedChapterId,
               title: chapterDraft.title.trim(),
               episodeNumber: chapterDraft.episodeNumber,
               isFree: chapterDraft.isFree,
@@ -1787,24 +1829,48 @@ function StoryWorkspaceDialog({
           }
           : prev,
       );
-      await Promise.all([
-        qc.invalidateQueries({ queryKey: ['admin_stories'] }),
-        qc.invalidateQueries({ queryKey: ['admin_story_workspace', storyId] }),
-        qc.invalidateQueries({ queryKey: ['admin_story_chapter_text', storyId, current] }),
-      ]);
+      qc.setQueryData(['admin_story_chapter_text', storyId, savedChapterId], (previous: any) =>
+        previous
+          ? {
+              ...previous,
+              title: nextChapterSummary.title,
+              chapter: {
+                ...previous.chapter,
+                id: savedChapterId,
+                title: nextChapterSummary.title,
+                episodeNumber: nextChapterSummary.episodeNumber,
+                isFree: nextChapterSummary.isFree,
+                priceCredits: nextChapterSummary.priceCredits,
+                summary: nextChapterSummary.summary,
+                body: normalizedBody,
+                assetSlotsCount: nextChapterSummary.assetSlotsCount,
+                characterAnalysis: nextCharacterAnalysis,
+              },
+            }
+          : previous,
+      );
+      if (savedChapterId !== current) {
+        qc.removeQueries({ queryKey: ['admin_story_chapter_text', storyId, current] });
+      }
+      void qc.invalidateQueries({ queryKey: ['admin_stories'] });
+      void qc.invalidateQueries({ queryKey: ['admin_story_workspace', storyId] });
+      void qc.invalidateQueries({ queryKey: ['admin_story_chapter_text', storyId, savedChapterId] });
       if (normalizedBody.trim().length >= 80) {
-        try {
-          const analyzed = await analyzeCharacters({ data: { storyId, chapterId: current } });
-          const analyzedInsights = (analyzed.characterAnalysis ?? []) as NonNullable<ChapterConfig["characterAnalysis"]>;
-          const analyzedCharacters = (analyzed.characters ?? []) as Array<Record<string, unknown>>;
-          setChapterDraft((prev) => ({ ...prev, characterAnalysis: analyzedInsights }));
-          setCharacterDrafts((prev) => mergeAnalyzedCharacters(prev, analyzedCharacters));
-          qc.invalidateQueries({ queryKey: ['admin_story_workspace', storyId] });
-          qc.invalidateQueries({ queryKey: ['admin_character_stories'] });
-          toast.success(`AI가 주요 등장인물 ${analyzedCharacters.length || analyzedInsights.length}명을 갱신했습니다.`);
-        } catch (analysisError: any) {
-          toast.warning(analysisError?.message ?? "회차는 저장됐지만 AI 캐릭터 분석은 완료하지 못했습니다.");
-        }
+        void analyzeCharacters({ data: { storyId, chapterId: savedChapterId } })
+          .then((analyzed) => {
+            const analyzedInsights = (analyzed.characterAnalysis ?? []) as NonNullable<ChapterConfig["characterAnalysis"]>;
+            const analyzedCharacters = (analyzed.characters ?? []) as Array<Record<string, unknown>>;
+            if (activeChapterIdRef.current === savedChapterId) {
+              setChapterDraft((prev) => ({ ...prev, characterAnalysis: analyzedInsights }));
+            }
+            setCharacterDrafts((prev) => mergeAnalyzedCharacters(prev, analyzedCharacters));
+            void qc.invalidateQueries({ queryKey: ['admin_story_workspace', storyId] });
+            void qc.invalidateQueries({ queryKey: ['admin_character_stories'] });
+            toast.success(`AI가 주요 등장인물 ${analyzedCharacters.length || analyzedInsights.length}명을 갱신했습니다.`);
+          })
+          .catch((analysisError: any) => {
+            toast.warning(analysisError?.message ?? "회차는 저장됐지만 AI 캐릭터 분석은 완료하지 못했습니다.");
+          });
       }
     } catch (e: any) {
       toast.error(e?.message ?? '회차 저장에 실패했습니다.');
@@ -1820,6 +1886,7 @@ function StoryWorkspaceDialog({
       const nextChapter = res.chapter;
       setLocalChapters((prev) => [...prev.filter((item) => item.id !== nextChapter.id), nextChapter]);
       setActiveChapterId(nextChapter.id);
+      activeChapterIdRef.current = nextChapter.id;
       setTab('chapter');
       toast.success('새 회차가 생성되었습니다.');
       qc.invalidateQueries({ queryKey: ['admin_stories'] });
@@ -1840,6 +1907,7 @@ function StoryWorkspaceDialog({
       const nextActiveChapter = nextChapters.find((chapter) => chapter.id === res.activeChapterId) ?? nextChapters[0] ?? null;
       setLocalChapters(nextChapters);
       setActiveChapterId(nextActiveChapter?.id ?? "");
+      activeChapterIdRef.current = nextActiveChapter?.id ?? "";
       setAssetDraft((prev) => (prev?.id === res.deletedChapterId ? null : prev));
       setChapterDraft({
         title: nextActiveChapter?.title ?? "",
@@ -3032,7 +3100,7 @@ function StoryWorkspaceDialog({
                       />
                     </div>
                     <div className="sticky bottom-0 -mx-4 -mb-4 flex justify-end gap-2 border-t border-border bg-card/95 px-4 py-3 backdrop-blur">
-                      <Button onClick={saveChapter} disabled={chapterSaving}>
+                      <Button onClick={saveChapter} disabled={chapterSaving || chapterQ.isLoading || !chapterQ.data}>
                         {chapterSaving ? '저장 중...' : '회차 저장'}
                       </Button>
                     </div>

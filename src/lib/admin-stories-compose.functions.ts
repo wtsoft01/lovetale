@@ -327,6 +327,16 @@ async function loadStory(id: string): Promise<StoryRow | null> {
   return data;
 }
 
+async function loadStoryForChapters(id: string): Promise<StoryRow | null> {
+  const { data, error } = await supabase
+    .from("user_stories")
+    .select("id,title,logline,cover_url,max_heat,character_card,body_text,asset_slots,compose_step")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return (data as StoryRow | null) ?? null;
+}
+
 async function loadOrCreateDraft(id: string, userId: string): Promise<StoryRow> {
   const existing = await loadStory(id);
   if (existing) return existing;
@@ -394,27 +404,30 @@ export function buildChaptersFromRow(row: any): ChapterConfig[] {
   const topSlots = Array.isArray(row?.asset_slots) ? (row.asset_slots as AssetSlot[]) : [];
   if (raw.length) {
     const anyHasBody = raw.some((c: any) => typeof c.body === "string" && c.body.length > 0);
-    return raw.map((c: any, i: number) => ({
-      id: String(c.id || newId("ch")),
-      title: String(c.title || `Episode ${i + 1}`),
-      episodeNumber: Number(c.episodeNumber || i + 1),
-      isFree: Boolean(c.isFree ?? i === 0),
-      priceCredits: Math.max(0, Number(c.priceCredits || 0)),
-      summary: String(c.summary || ""),
-      body: anyHasBody ? String(c.body || "") : i === 0 ? topBody : "",
-      assetSlots: Array.isArray(c.assetSlots)
-        ? (c.assetSlots as AssetSlot[])
-        : anyHasBody
-          ? []
-          : i === 0
-            ? topSlots
-            : [],
-      characterAnalysis: Array.isArray(c.characterAnalysis) ? (c.characterAnalysis as ChapterCharacterInsight[]) : [],
-    }));
+    return raw.map((c: any, i: number) => {
+      const episodeNumber = Math.max(1, Math.floor(Number(c.episodeNumber || i + 1) || i + 1));
+      return {
+        id: String(c.id || stableChapterId(row, episodeNumber)),
+        title: String(c.title || `Episode ${i + 1}`),
+        episodeNumber,
+        isFree: Boolean(c.isFree ?? i === 0),
+        priceCredits: Math.max(0, Number(c.priceCredits || 0)),
+        summary: String(c.summary || ""),
+        body: anyHasBody ? String(c.body || "") : i === 0 ? topBody : "",
+        assetSlots: Array.isArray(c.assetSlots)
+          ? (c.assetSlots as AssetSlot[])
+          : anyHasBody
+            ? []
+            : i === 0
+              ? topSlots
+              : [],
+        characterAnalysis: Array.isArray(c.characterAnalysis) ? (c.characterAnalysis as ChapterCharacterInsight[]) : [],
+      };
+    });
   }
   return [
     {
-      id: newId("ch"),
+      id: stableChapterId(row, 1),
       title: "Episode 1",
       episodeNumber: 1,
       isFree: true,
@@ -425,6 +438,14 @@ export function buildChaptersFromRow(row: any): ChapterConfig[] {
       characterAnalysis: [],
     },
   ];
+}
+
+function stableChapterId(row: any, episodeNumber: number) {
+  const storyId = String(row?.id || "story")
+    .replace(/[^a-zA-Z0-9_-]/g, "_")
+    .slice(0, 64);
+  const safeEpisode = Math.max(1, Math.floor(Number(episodeNumber) || 1));
+  return `ch_${storyId}_ep_${safeEpisode}`;
 }
 
 function normalizeChapterLocator(value: unknown) {
@@ -472,6 +493,18 @@ function findChapterByLocator(chapters: ChapterConfig[], locator: unknown) {
 function findChapterIndexByLocator(chapters: ChapterConfig[], locator: unknown) {
   const chapter = findChapterByLocator(chapters, locator);
   return chapter ? chapters.findIndex((item) => item.id === chapter.id) : -1;
+}
+
+function findChapterIndexForPatch(
+  chapters: ChapterConfig[],
+  patch: { id?: unknown; title?: unknown; episodeNumber?: unknown },
+) {
+  const locators = [patch.id, patch.episodeNumber, patch.title];
+  for (const locator of locators) {
+    const index = findChapterIndexByLocator(chapters, locator);
+    if (index >= 0) return index;
+  }
+  return chapters.length === 1 ? 0 : -1;
 }
 
 export function flattenChapters(chapters: ChapterConfig[]) {
@@ -605,7 +638,7 @@ export const getStoryChapterEditor = createServerFn({ method: "GET" })
   .inputValidator((input: any) => input as { id: string; chapterId: string })
   .handler(async ({ data }): Promise<ChapterEditorData> => {
     await requireStaff();
-    const row = await loadStory(data.id);
+    const row = await loadStoryForChapters(data.id);
     if (!row) throw new Error("Story not found");
 
     const card = recordOf(row.character_card);
@@ -653,7 +686,7 @@ export const getStoryChapterText = createServerFn({ method: "GET" })
   .inputValidator((input: any) => input as { id: string; chapterId: string })
   .handler(async ({ data }): Promise<ChapterTextEditorData> => {
     await requireStaff();
-    const row = await loadStory(data.id);
+    const row = await loadStoryForChapters(data.id);
     if (!row) throw new Error("Story not found");
 
     const chapter = findChapterByLocator(buildChaptersFromRow(row), data.chapterId);
@@ -743,12 +776,12 @@ export const saveStoryChapterEditor = createServerFn({ method: "POST" })
   .inputValidator((input: any) => input as { id: string; chapter: ChapterConfig })
   .handler(async ({ data }) => {
     const userId = await requireStaff();
-    const row = await loadStory(data.id);
+    const row = await loadStoryForChapters(data.id);
     if (!row) throw new Error("Story not found");
 
     const card = recordOf(row.character_card);
     const chapters = buildChaptersFromRow(row);
-    const index = findChapterIndexByLocator(chapters, data.chapter.id);
+    const index = findChapterIndexForPatch(chapters, data.chapter);
     if (index < 0) throw new Error("Chapter not found");
     const rawBody = String(data.chapter.body ?? "");
     const normalizedBody = normalizeProseLineBreaks(rawBody);
@@ -797,19 +830,19 @@ export const saveStoryChapterEditor = createServerFn({ method: "POST" })
       },
       userId,
     );
-    return { ok: true };
+    return { ok: true, chapter: makeChapterTextSummary(nextChapters[index]) };
   });
 
 export const saveStoryChapterText = createServerFn({ method: "POST" })
   .inputValidator((input: any) => input as { id: string; chapter: ChapterTextPatch })
   .handler(async ({ data }) => {
     const userId = await requireStaff();
-    const row = await loadStory(data.id);
+    const row = await loadStoryForChapters(data.id);
     if (!row) throw new Error("Story not found");
 
     const card = recordOf(row.character_card);
     const chapters = buildChaptersFromRow(row);
-    const index = findChapterIndexByLocator(chapters, data.chapter.id);
+    const index = findChapterIndexForPatch(chapters, data.chapter);
     if (index < 0) throw new Error("Chapter not found");
     const rawBody = String(data.chapter.body ?? "");
     const normalizedBody = normalizeProseLineBreaks(rawBody);
@@ -858,14 +891,18 @@ export const saveStoryChapterText = createServerFn({ method: "POST" })
       },
       userId,
     );
-    return { ok: true, characterAnalysis: nextChapters[index]?.characterAnalysis ?? [] };
+    return {
+      ok: true,
+      chapter: makeChapterTextSummary(nextChapters[index]),
+      characterAnalysis: nextChapters[index]?.characterAnalysis ?? [],
+    };
   });
 
 export const createStoryChapterText = createServerFn({ method: "POST" })
   .inputValidator((input: any) => input as { id: string })
   .handler(async ({ data }): Promise<{ ok: true; chapter: ChapterTextSummary }> => {
     const userId = await requireStaff();
-    const row = await loadStory(data.id);
+    const row = await loadStoryForChapters(data.id);
     if (!row) throw new Error("Story not found");
 
     const card = recordOf(row.character_card);
@@ -919,7 +956,7 @@ export const deleteStoryChapterText = createServerFn({ method: "POST" })
       chapters: ChapterTextSummary[];
     }> => {
       const userId = await requireStaff();
-      const row = await loadStory(data.id);
+      const row = await loadStoryForChapters(data.id);
       if (!row) throw new Error("Story not found");
 
       const card = recordOf(row.character_card);
@@ -1085,7 +1122,7 @@ export const suggestAssetSlots = createServerFn({ method: "POST" })
   .inputValidator((input: any) => input as { id: string; desiredCount?: number })
   .handler(async ({ data }): Promise<{ slots: AssetSlot[] }> => {
     await requireStaff();
-    const row = await loadStory(data.id);
+    const row = await loadStoryForChapters(data.id);
     if (!row) throw new Error("Story not found");
 
     const body = row.body_text ?? "";
@@ -1200,7 +1237,7 @@ export const translateChapterBodyToVietnamese = createServerFn({ method: "POST" 
   .inputValidator((input: any) => input as { id: string; chapterId: string })
   .handler(async ({ data }): Promise<{ translatedText: string; chunks: number; providerLabels: string[]; tokensUsed: number }> => {
     await requireStaff();
-    const row = await loadStory(data.id);
+    const row = await loadStoryForChapters(data.id);
     if (!row) throw new Error("스토리를 찾을 수 없습니다.");
 
     const chapters = buildChaptersFromRow(row);

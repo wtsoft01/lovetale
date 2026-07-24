@@ -92,36 +92,56 @@ async function listPublicPlacements(request: Request) {
 
   if (slot === "all") return await listAllPublicStories();
 
-  const { data: placements, error: placementsError } = await supabaseAdmin
-    .from("home_placements")
-    .select("id,slot,sort_order,story_id,created_at")
-    .eq("slot", slot)
-    .eq("is_active", true)
-    .order("sort_order", { ascending: true })
-    .order("created_at", { ascending: false })
-    .limit(50);
+  const { data: rowsData, error: placementsError } = await supabaseAdmin.rpc("list_home_placements", {
+    _slot: slot,
+  });
   if (placementsError) return jsonServerError(placementsError, 500);
 
-  const rows = (placements ?? []) as PlacementRow[];
+  const rows = (rowsData ?? []) as Array<
+    PlacementRow & {
+      author_id: string;
+      author_name: string;
+      audience: string;
+      max_heat: string;
+      tags: string[];
+      title: string;
+      logline: string | null;
+      cover_url: string | null;
+      price_credits: number;
+    }
+  >;
   if (!rows.length) return jsonResponse({ ok: true, rows: [] });
 
-  const storyIds = rows.map((row) => row.story_id);
+  const storyIds = [...new Set(rows.map((row) => row.story_id))];
   const { data: stories, error: storiesError } = await supabaseAdmin
     .from("user_stories")
-    .select("id,title,logline,cover_url,price_credits,user_id,audience,max_heat,tags,created_at,character_card,is_public,is_listed")
-    .in("id", storyIds)
-    .eq("is_public", true)
-    .eq("is_listed", true);
+    .select("id,character_card")
+    .in("id", storyIds);
   if (storiesError) return jsonServerError(storiesError, 500);
 
-  const storyMap = new Map(((stories ?? []) as UserStoryRow[]).map((story) => [story.id, story]));
-  const names = await authorNames(((stories ?? []) as UserStoryRow[]).map((story) => story.user_id));
-  const cards = rows
-    .map((row) => {
-      const story = storyMap.get(row.story_id);
-      return story ? toCard(row, story, names) : null;
-    })
-    .filter(Boolean);
+  const contentTypeByStoryId = new Map(
+    ((stories ?? []) as Array<{ id: string; character_card: unknown }>).map((story) => [
+      story.id,
+      contentTypeFromCard(recordOf(story.character_card)),
+    ]),
+  );
+  const cards = rows.map((row) => ({
+    id: row.id,
+    slot: row.slot,
+    sort_order: row.sort_order,
+    story_id: row.story_id,
+    content_type: contentTypeByStoryId.get(row.story_id) ?? "story",
+    title: row.title,
+    logline: row.logline,
+    cover_url: row.cover_url,
+    price_credits: row.price_credits,
+    author_id: row.author_id,
+    author_name: row.author_name,
+    audience: row.audience,
+    max_heat: row.max_heat,
+    tags: row.tags ?? [],
+    created_at: row.created_at,
+  }));
 
   return jsonResponse({ ok: true, rows: cards });
 }
