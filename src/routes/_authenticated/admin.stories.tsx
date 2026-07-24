@@ -17,6 +17,9 @@ import {
   Gamepad2,
   Layers3,
   UserCircle2,
+  AlertTriangle,
+  CheckCircle2,
+  ClipboardCheck,
   FileText,
   Camera,
   Star,
@@ -66,11 +69,14 @@ import { ensureStoryMediaBucket } from "@/lib/storage.functions";
 import { fetchWithSupabaseAuth } from "@/lib/supabase-auth-fetch";
 import { resolveStoryMediaSource } from "@/lib/story-media-url";
 import { normalizeProseLineBreaks } from "@/lib/text-normalization";
+import { characterNamesLikelySame } from "@/lib/character-name-match";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -946,7 +952,56 @@ type CharacterEditDraft = {
   avatarUrl: string;
   tags?: string[];
   chatEnabled?: boolean;
+  visibleInFrontend?: boolean;
   reusable?: boolean;
+  chapterInsights?: Array<Record<string, unknown>>;
+  showcaseAssets?: Array<Record<string, unknown>>;
+  evidence?: string;
+  chatGuidance?: string;
+  emotion?: string;
+  attitude?: string;
+  traits?: string[];
+};
+
+type CharacterVerificationCandidate = {
+  key: string;
+  name: string;
+  role: string;
+  importance: number;
+  chapters: Array<{ id: string; title: string; episodeNumber: number }>;
+  evidence: string;
+  visualPrompt: string;
+  registeredBefore: boolean;
+  hasImage: boolean;
+  chatEnabled: boolean;
+  visibleInFrontend: boolean;
+};
+
+type CharacterVerificationChapterResult = {
+  chapterId: string;
+  title: string;
+  episodeNumber: number;
+  characters: Array<{ name: string; role: string; evidence: string }>;
+  error?: string;
+};
+
+type CharacterVerificationRawCharacter = Record<string, unknown> & {
+  _chapterId?: string;
+  _chapterTitle?: string;
+  _episodeNumber?: number;
+  _order?: number;
+};
+
+type CharacterVerificationResult = {
+  updatedAt: string;
+  analyzedChapters: number;
+  skippedChapters: number;
+  providerLabels: string[];
+  candidates: CharacterVerificationCandidate[];
+  duplicateGroups: Array<{ key: string; names: string[]; ids: string[] }>;
+  missingCandidates: CharacterVerificationCandidate[];
+  imageNeeded: CharacterVerificationCandidate[];
+  chapterResults: CharacterVerificationChapterResult[];
 };
 
 type StoryRpgRouteDraft = {
@@ -1110,6 +1165,10 @@ function makeCharacterId(name?: string) {
   return `char_${safe || "character"}_${Math.random().toString(36).slice(2, 6)}`;
 }
 
+function characterDraftElementId(id: string) {
+  return `story-character-${String(id || "character").replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+}
+
 function normalizeCharacterDrafts(card: any): CharacterEditDraft[] {
   const raw = Array.isArray(card?.characters) ? card.characters : [];
   const fromCharacters = raw
@@ -1125,7 +1184,17 @@ function normalizeCharacterDrafts(card: any): CharacterEditDraft[] {
       avatarUrl: String(character?.avatarUrl || "").trim(),
       tags: Array.isArray(character?.tags) ? character.tags.map(String).filter(Boolean) : [],
       chatEnabled: character?.chatEnabled !== false,
+      visibleInFrontend: Boolean(
+        character?.visibleInFrontend ??
+          character?.publicVisible ??
+          character?.showInFrontend ??
+          character?.exposeInFrontend ??
+          character?.chatVisible ??
+          false,
+      ),
       reusable: character?.reusable !== false,
+      chapterInsights: Array.isArray(character?.chapterInsights) ? character.chapterInsights : [],
+      showcaseAssets: Array.isArray(character?.showcaseAssets) ? character.showcaseAssets : [],
     }))
     .filter((character: CharacterEditDraft) => character.name);
 
@@ -1145,7 +1214,10 @@ function normalizeCharacterDrafts(card: any): CharacterEditDraft[] {
       avatarUrl: String(card?.avatarUrl || "").trim(),
       tags: Array.isArray(card?.tags) ? card.tags.map(String).filter(Boolean) : [],
       chatEnabled: true,
+      visibleInFrontend: false,
       reusable: true,
+      chapterInsights: [],
+      showcaseAssets: [],
     },
   ];
 }
@@ -1171,6 +1243,111 @@ function buildCharacterImagePrompt(storyTitle: string, character: CharacterEditD
 
 function normalizeCharacterName(name: string) {
   return String(name || "").replace(/\s+/g, "").trim().toLowerCase();
+}
+
+function characterNameMatches(a: string, b: string) {
+  const left = normalizeCharacterName(a);
+  const right = normalizeCharacterName(b);
+  if (!left || !right) return false;
+  return left === right || characterNamesLikelySame(a, b);
+}
+
+function findMatchingCharacterDraft(drafts: CharacterEditDraft[], name: string) {
+  return drafts.find((character) => characterNameMatches(character.name, name)) ?? null;
+}
+
+function duplicateCharacterGroups(drafts: CharacterEditDraft[]) {
+  const groups: Array<{ key: string; names: string[]; ids: string[] }> = [];
+  for (const character of drafts) {
+    const name = character.name.trim();
+    if (!name) continue;
+    const existing = groups.find((group) => group.names.some((current) => characterNameMatches(current, name)));
+    if (existing) {
+      existing.names = [...new Set([...existing.names, name])];
+      existing.ids.push(character.id);
+    } else {
+      groups.push({ key: normalizeCharacterName(name), names: [name], ids: [character.id] });
+    }
+  }
+  return groups.filter((group) => group.ids.length > 1);
+}
+
+function buildCharacterVerificationResult(input: {
+  chapterResults: CharacterVerificationChapterResult[];
+  skippedChapters: number;
+  rawCharacters: CharacterVerificationRawCharacter[];
+  draftsBefore: CharacterEditDraft[];
+  draftsAfter: CharacterEditDraft[];
+  providerLabels: string[];
+}): CharacterVerificationResult {
+  const byName = new Map<string, CharacterVerificationCandidate>();
+  for (const raw of input.rawCharacters) {
+    const name = String(raw.name ?? "").trim();
+    if (!name) continue;
+    const existingKey = [...byName.keys()].find((key) => characterNameMatches(byName.get(key)?.name ?? key, name));
+    const key = existingKey ?? normalizeCharacterName(name);
+    const draftBefore = findMatchingCharacterDraft(input.draftsBefore, name);
+    const draftAfter = findMatchingCharacterDraft(input.draftsAfter, name);
+    const chapter = {
+      id: String(raw._chapterId ?? ""),
+      title: String(raw._chapterTitle ?? ""),
+      episodeNumber: Number(raw._episodeNumber ?? 0),
+    };
+    const previous = byName.get(key);
+    const order = Math.max(0, Number(raw._order ?? 0));
+    const score = 100 - order * 8 + (Boolean(raw.isPrimary) ? 20 : 0);
+    const evidence = String(raw.evidence ?? raw.chatGuidance ?? "").trim();
+    const visualPrompt = String(raw.visualPrompt ?? "").trim();
+    if (previous) {
+      const hasChapter = previous.chapters.some((item) => item.id === chapter.id);
+      byName.set(key, {
+        ...previous,
+        role: previous.role || String(raw.role ?? ""),
+        importance: previous.importance + score + (hasChapter ? 0 : 24),
+        chapters: hasChapter ? previous.chapters : [...previous.chapters, chapter],
+        evidence: previous.evidence || evidence,
+        visualPrompt: previous.visualPrompt || visualPrompt,
+        hasImage: previous.hasImage || Boolean(draftAfter?.avatarUrl || raw.avatarUrl),
+        chatEnabled: previous.chatEnabled || draftAfter?.chatEnabled !== false,
+        visibleInFrontend: previous.visibleInFrontend || draftAfter?.visibleInFrontend === true,
+      });
+      continue;
+    }
+    byName.set(key, {
+      key,
+      name,
+      role: String(raw.role ?? draftAfter?.role ?? "").trim(),
+      importance: score + 24,
+      chapters: chapter.id ? [chapter] : [],
+      evidence,
+      visualPrompt,
+      registeredBefore: Boolean(draftBefore),
+      hasImage: Boolean(draftAfter?.avatarUrl || raw.avatarUrl),
+      chatEnabled: draftAfter?.chatEnabled !== false,
+      visibleInFrontend: draftAfter?.visibleInFrontend === true,
+    });
+  }
+
+  const candidates = [...byName.values()]
+    .map((candidate) => ({
+      ...candidate,
+      importance: Math.max(1, Math.round(candidate.importance + candidate.chapters.length * 16)),
+      chapters: candidate.chapters.sort((a, b) => a.episodeNumber - b.episodeNumber),
+    }))
+    .sort((a, b) => b.importance - a.importance || a.name.localeCompare(b.name));
+  const missingCandidates = candidates.filter((candidate) => !candidate.registeredBefore);
+  const imageNeeded = candidates.filter((candidate) => !candidate.hasImage);
+  return {
+    updatedAt: new Date().toISOString(),
+    analyzedChapters: input.chapterResults.filter((chapter) => !chapter.error).length,
+    skippedChapters: input.skippedChapters,
+    providerLabels: [...new Set(input.providerLabels.filter(Boolean))],
+    candidates,
+    duplicateGroups: duplicateCharacterGroups(input.draftsAfter),
+    missingCandidates,
+    imageNeeded,
+    chapterResults: input.chapterResults,
+  };
 }
 
 function mergeAnalyzedCharacters(
@@ -1202,7 +1379,25 @@ function mergeAnalyzedCharacters(
           ? raw.tags.map(String).filter(Boolean).slice(0, 8)
           : [],
       chatEnabled: existing?.chatEnabled ?? true,
+      visibleInFrontend:
+        existing?.visibleInFrontend ??
+        Boolean(raw.visibleInFrontend ?? raw.publicVisible ?? raw.showInFrontend ?? raw.exposeInFrontend ?? false),
       reusable: existing?.reusable ?? true,
+      chapterInsights:
+        existing?.chapterInsights ??
+        (Array.isArray(raw.chapterInsights) ? (raw.chapterInsights as Array<Record<string, unknown>>) : []),
+      showcaseAssets:
+        existing?.showcaseAssets ??
+        (Array.isArray(raw.showcaseAssets) ? (raw.showcaseAssets as Array<Record<string, unknown>>) : []),
+      evidence: existing?.evidence || String(raw.evidence || "").trim(),
+      chatGuidance: existing?.chatGuidance || String(raw.chatGuidance || "").trim(),
+      emotion: existing?.emotion || String(raw.emotion || "").trim(),
+      attitude: existing?.attitude || String(raw.attitude || "").trim(),
+      traits: existing?.traits?.length
+        ? existing.traits
+        : Array.isArray(raw.traits)
+          ? raw.traits.map(String).filter(Boolean).slice(0, 8)
+          : [],
     };
     byName.set(key, next);
   }
@@ -1226,6 +1421,160 @@ function CharacterAvatarPreview({ path, name }: { path: string; name: string }) 
         <UserCircle2 className="size-7 text-muted-foreground/60" />
       )}
     </div>
+  );
+}
+
+function CharacterVerificationPanel({
+  result,
+  onJumpToCharacter,
+}: {
+  result: CharacterVerificationResult;
+  onJumpToCharacter: (name: string) => void;
+}) {
+  const issueCount = result.duplicateGroups.length + result.missingCandidates.length + result.imageNeeded.length;
+  return (
+    <section className="rounded-lg border border-border bg-card p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2 text-sm font-semibold">
+            <ClipboardCheck className="size-4 text-primary" />
+            캐릭터 생성 검증 결과
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            {result.analyzedChapters}개 회차 분석
+            {result.skippedChapters ? ` · 본문 부족 ${result.skippedChapters}개 제외` : ""}
+            {result.providerLabels.length ? ` · ${result.providerLabels.join(", ")}` : ""}
+          </div>
+        </div>
+        <Badge variant={issueCount ? "outline" : "secondary"} className={issueCount ? "border-amber-400/40 text-amber-600" : ""}>
+          {issueCount ? `${issueCount}개 확인 필요` : "검증 통과"}
+        </Badge>
+      </div>
+
+      <div className="mt-4 grid gap-2 md:grid-cols-4">
+        <div className="rounded-md border border-border bg-background px-3 py-2">
+          <div className="text-[11px] text-muted-foreground">감지 캐릭터</div>
+          <div className="mt-1 text-lg font-semibold">{result.candidates.length}</div>
+        </div>
+        <div className="rounded-md border border-border bg-background px-3 py-2">
+          <div className="text-[11px] text-muted-foreground">신규 후보</div>
+          <div className="mt-1 text-lg font-semibold">{result.missingCandidates.length}</div>
+        </div>
+        <div className="rounded-md border border-border bg-background px-3 py-2">
+          <div className="text-[11px] text-muted-foreground">중복 의심</div>
+          <div className="mt-1 text-lg font-semibold">{result.duplicateGroups.length}</div>
+        </div>
+        <div className="rounded-md border border-border bg-background px-3 py-2">
+          <div className="text-[11px] text-muted-foreground">이미지 필요</div>
+          <div className="mt-1 text-lg font-semibold">{result.imageNeeded.length}</div>
+        </div>
+      </div>
+
+      {result.duplicateGroups.length ? (
+        <div className="mt-3 rounded-md border border-amber-400/30 bg-amber-400/10 p-3 text-xs text-amber-700">
+          <div className="flex items-center gap-2 font-medium">
+            <AlertTriangle className="size-3.5" />
+            중복 가능성이 있는 이름
+          </div>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {result.duplicateGroups.map((group) => (
+              <span key={group.key} className="rounded-full border border-amber-400/30 bg-background px-2 py-1">
+                {group.names.join(" / ")}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      <div className="mt-4 space-y-2">
+        <div className="text-xs font-semibold text-muted-foreground">주요도 순 캐릭터</div>
+        <div className="grid gap-2">
+          {result.candidates.map((candidate, index) => {
+            const status = [
+              !candidate.registeredBefore ? "신규 후보" : "등록됨",
+              !candidate.hasImage ? "이미지 필요" : "이미지 있음",
+              candidate.visibleInFrontend ? "프론트 노출" : "미노출",
+            ];
+            return (
+              <div key={candidate.key} className="rounded-md border border-border bg-background p-3">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary">
+                        #{index + 1}
+                      </span>
+                      <span className="font-medium">{candidate.name}</span>
+                      {candidate.role ? <span className="text-xs text-muted-foreground">{candidate.role}</span> : null}
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {status.map((label) => (
+                        <span
+                          key={label}
+                          className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground"
+                        >
+                          {label}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                  <Button type="button" size="sm" variant="outline" onClick={() => onJumpToCharacter(candidate.name)}>
+                    편집 위치
+                  </Button>
+                </div>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {candidate.chapters.slice(0, 8).map((chapter) => (
+                    <span key={chapter.id} className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
+                      {chapter.episodeNumber}화
+                    </span>
+                  ))}
+                </div>
+                {candidate.evidence ? (
+                  <div className="mt-2 line-clamp-2 text-xs leading-5 text-muted-foreground">{candidate.evidence}</div>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="mt-4 space-y-2">
+        <div className="text-xs font-semibold text-muted-foreground">회차별 감지 결과</div>
+        <div className="grid max-h-64 gap-2 overflow-y-auto pr-1">
+          {result.chapterResults.map((chapter) => (
+            <div key={chapter.chapterId} className="rounded-md border border-border bg-background px-3 py-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-xs font-medium">
+                  {chapter.episodeNumber}화 · {chapter.title || "제목 없음"}
+                </div>
+                {chapter.error ? (
+                  <Badge variant="destructive">실패</Badge>
+                ) : (
+                  <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
+                    <CheckCircle2 className="size-3 text-primary" />
+                    {chapter.characters.length}명
+                  </span>
+                )}
+              </div>
+              {chapter.error ? (
+                <div className="mt-1 text-xs text-destructive">{chapter.error}</div>
+              ) : (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {chapter.characters.length ? (
+                    chapter.characters.map((character) => (
+                      <span key={`${chapter.chapterId}-${character.name}`} className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">
+                        {character.name}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-xs text-muted-foreground">감지된 캐릭터 없음</span>
+                  )}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -1275,6 +1624,9 @@ function StoryWorkspaceDialog({
   const [characterUploadingId, setCharacterUploadingId] = useState<string | null>(null);
   const [characterGeneratingId, setCharacterGeneratingId] = useState<string | null>(null);
   const [characterAnalyzing, setCharacterAnalyzing] = useState(false);
+  const [characterVerifying, setCharacterVerifying] = useState(false);
+  const [characterVerifyProgress, setCharacterVerifyProgress] = useState({ current: 0, total: 0, label: "" });
+  const [characterVerification, setCharacterVerification] = useState<CharacterVerificationResult | null>(null);
   const [chapterDraft, setChapterDraft] = useState({
     title: "",
     episodeNumber: 1,
@@ -1377,6 +1729,57 @@ function StoryWorkspaceDialog({
     },
     onError: (error: Error) => toast.error(error.message),
   });
+
+  const characterVerifyPercent =
+    characterVerifyProgress.total > 0
+      ? Math.round((characterVerifyProgress.current / characterVerifyProgress.total) * 100)
+      : 0;
+  const aiWorkStatus = useMemo(() => {
+    if (characterVerifying) {
+      return {
+        title: "캐릭터 검증 중",
+        detail:
+          characterVerifyProgress.label ||
+          `${characterVerifyProgress.current}/${characterVerifyProgress.total} 회차 분석 중`,
+        progress: characterVerifyPercent,
+      };
+    }
+    if (characterAnalyzing) {
+      return { title: "캐릭터 후보 생성 중", detail: "회차 본문을 분석하고 있습니다.", progress: 45 };
+    }
+    if (characterGeneratingId) {
+      return { title: "캐릭터 이미지 생성 중", detail: "이미지 모델 응답을 기다리고 있습니다.", progress: 60 };
+    }
+    if (assetSuggesting) {
+      return { title: "에셋 위치 추천 중", detail: "본문에 맞는 이미지 삽입 위치를 찾고 있습니다.", progress: 50 };
+    }
+    if (infoAutofillMut.isPending || chapterSummaryMut.isPending) {
+      return { title: "AI 글작성 보조 실행 중", detail: "문장과 소개문을 정리하고 있습니다.", progress: 50 };
+    }
+    return null;
+  }, [
+    assetSuggesting,
+    characterAnalyzing,
+    characterGeneratingId,
+    characterVerifyPercent,
+    characterVerifyProgress.current,
+    characterVerifyProgress.label,
+    characterVerifyProgress.total,
+    characterVerifying,
+    chapterSummaryMut.isPending,
+    infoAutofillMut.isPending,
+  ]);
+  const isAiWorkBlockingExit = Boolean(aiWorkStatus);
+
+  useEffect(() => {
+    if (!isAiWorkBlockingExit) return;
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [isAiWorkBlockingExit]);
 
   useEffect(() => {
     setTab(initialTab);
@@ -1499,12 +1902,21 @@ function StoryWorkspaceDialog({
         speakingStyle: "",
         visualPrompt: "",
         avatarUrl: "",
+        visibleInFrontend: false,
+        chatEnabled: true,
+        reusable: true,
       },
     ]);
   }
 
   function removeCharacterDraft(id: string) {
     setCharacterDrafts((prev) => prev.filter((character) => character.id !== id));
+  }
+
+  function jumpToCharacterDraft(name: string) {
+    const target = findMatchingCharacterDraft(characterDrafts, name);
+    if (!target) return;
+    document.getElementById(characterDraftElementId(target.id))?.scrollIntoView({ behavior: "smooth", block: "center" });
   }
 
   async function generateSingleCharacterForWorkspace() {
@@ -1536,6 +1948,103 @@ function StoryWorkspaceDialog({
       toast.error(e?.message ?? "AI 캐릭터 생성에 실패했습니다.");
     } finally {
       setCharacterAnalyzing(false);
+    }
+  }
+
+  async function verifyCharactersForWorkspace() {
+    const sourceChapters = composeChapters.filter((chapter) => chapter.id);
+    const analyzableChapters = sourceChapters.filter((chapter) => String(chapter.body ?? "").trim().length >= 80);
+    if (!sourceChapters.length || composeQ.isLoading) {
+      toast.error("회차 정보를 먼저 불러와야 합니다.");
+      return;
+    }
+    if (!analyzableChapters.length) {
+      toast.error("캐릭터를 검증할 본문이 있는 회차가 없습니다.");
+      return;
+    }
+
+    const draftsBefore = characterDrafts;
+    const rawCharacters: Array<Record<string, unknown> & { _chapterId?: string; _chapterTitle?: string; _episodeNumber?: number; _order?: number }> = [];
+    const chapterResults: CharacterVerificationChapterResult[] = [];
+    const providerLabels: string[] = [];
+
+    setCharacterVerification(null);
+    setCharacterVerifying(true);
+    setCharacterVerifyProgress({ current: 0, total: analyzableChapters.length, label: "검증 준비 중" });
+    try {
+      for (let index = 0; index < analyzableChapters.length; index += 1) {
+        const chapter = analyzableChapters[index];
+        const label = `${chapter.episodeNumber}화 ${chapter.title || "제목 없음"}`;
+        setCharacterVerifyProgress({ current: index + 1, total: analyzableChapters.length, label });
+        try {
+          const result = await analyzeCharacters({
+            data: {
+              storyId,
+              chapterId: chapter.id,
+              scope: "chapter",
+            },
+          });
+          if (result.providerLabel) providerLabels.push(result.providerLabel);
+          const characters = (result.characters?.length ? result.characters : result.characterAnalysis ?? []) as Array<Record<string, unknown>>;
+          characters.forEach((character, order) => {
+            rawCharacters.push({
+              ...character,
+              _chapterId: chapter.id,
+              _chapterTitle: chapter.title,
+              _episodeNumber: chapter.episodeNumber,
+              _order: order,
+            });
+          });
+          chapterResults.push({
+            chapterId: chapter.id,
+            title: chapter.title,
+            episodeNumber: chapter.episodeNumber,
+            characters: characters.map((character) => ({
+              name: String(character.name ?? "").trim(),
+              role: String(character.role ?? "").trim(),
+              evidence: String(character.evidence ?? character.chatGuidance ?? "").trim(),
+            })).filter((character) => character.name),
+          });
+        } catch (error: any) {
+          chapterResults.push({
+            chapterId: chapter.id,
+            title: chapter.title,
+            episodeNumber: chapter.episodeNumber,
+            characters: [],
+            error: error?.message ?? "분석 실패",
+          });
+        }
+      }
+
+      const draftsAfter = mergeAnalyzedCharacters(draftsBefore, rawCharacters);
+      setCharacterDrafts(draftsAfter);
+      setCharacterVerification(
+        buildCharacterVerificationResult({
+          chapterResults,
+          skippedChapters: sourceChapters.length - analyzableChapters.length,
+          rawCharacters,
+          draftsBefore,
+          draftsAfter,
+          providerLabels,
+        }),
+      );
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["admin_stories"] }),
+        qc.invalidateQueries({ queryKey: ["admin_story_workspace", storyId] }),
+        qc.invalidateQueries({ queryKey: ["admin_character_stories"] }),
+        qc.invalidateQueries({ queryKey: ["public_chat_characters"] }),
+      ]);
+      const failedCount = chapterResults.filter((chapter) => chapter.error).length;
+      if (failedCount) {
+        toast.warning(`${analyzableChapters.length - failedCount}개 회차 검증 완료, ${failedCount}개 회차는 실패했습니다.`);
+      } else {
+        toast.success(`${analyzableChapters.length}개 회차의 캐릭터 검증이 완료되었습니다.`);
+      }
+    } catch (error: any) {
+      toast.error(error?.message ?? "캐릭터 검증에 실패했습니다.");
+    } finally {
+      setCharacterVerifying(false);
+      setCharacterVerifyProgress({ current: 0, total: 0, label: "" });
     }
   }
 
@@ -1699,7 +2208,10 @@ function StoryWorkspaceDialog({
           avatarUrl: character.avatarUrl.trim() || null,
           tags: Array.isArray(character.tags) ? character.tags : [],
           chatEnabled: character.chatEnabled !== false,
+          visibleInFrontend: character.visibleInFrontend === true,
           reusable: character.reusable !== false,
+          chapterInsights: Array.isArray(character.chapterInsights) ? character.chapterInsights : [],
+          showcaseAssets: Array.isArray(character.showcaseAssets) ? character.showcaseAssets : [],
         }))
         .filter((character) => character.name);
       const main = characters[0];
@@ -2029,8 +2541,38 @@ function StoryWorkspaceDialog({
 
   return (
     <>
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="flex max-h-[92vh] max-w-[96vw] grid-rows-none flex-col gap-0 overflow-hidden p-0">
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (open) return;
+        if (isAiWorkBlockingExit) {
+          toast.warning("AI 작업이 끝난 뒤 작업공간을 닫을 수 있습니다.");
+          return;
+        }
+        onClose();
+      }}
+    >
+      <DialogContent className="relative flex max-h-[92vh] max-w-[96vw] grid-rows-none flex-col gap-0 overflow-hidden p-0">
+        {aiWorkStatus ? (
+          <div className="absolute inset-0 z-50 grid place-items-center bg-background/85 px-4 backdrop-blur-sm">
+            <div className="w-full max-w-md rounded-lg border border-border bg-card p-5 shadow-lg">
+              <div className="flex items-start gap-3">
+                <div className="grid size-10 shrink-0 place-items-center rounded-full bg-primary/10 text-primary">
+                  <Loader2 className="size-5 animate-spin" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-semibold">{aiWorkStatus.title}</div>
+                  <div className="mt-1 text-xs leading-5 text-muted-foreground">{aiWorkStatus.detail}</div>
+                  <Progress value={aiWorkStatus.progress} className="mt-4 h-2" />
+                  <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground">
+                    <span>작업공간 보호 중</span>
+                    <span>{Math.max(5, Math.min(100, aiWorkStatus.progress))}%</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
         <div className="shrink-0 border-b border-border px-4 py-3">
           <div className="flex items-center justify-between gap-3 pr-8">
           <div>
@@ -2730,8 +3272,18 @@ function StoryWorkspaceDialog({
                       type="button"
                       size="sm"
                       variant="outline"
+                      onClick={verifyCharactersForWorkspace}
+                      disabled={characterVerifying || characterAnalyzing || composeQ.isLoading}
+                    >
+                      {characterVerifying ? <Loader2 className="size-3 animate-spin" /> : <ClipboardCheck className="size-3" />}
+                      캐릭터 생성 검증
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
                       onClick={generateSingleCharacterForWorkspace}
-                      disabled={characterAnalyzing || composeQ.isLoading}
+                      disabled={characterAnalyzing || characterVerifying || composeQ.isLoading}
                     >
                       {characterAnalyzing ? <Loader2 className="size-3 animate-spin" /> : <Sparkles className="size-3" />}
                       AI 한 명 생성
@@ -2745,11 +3297,30 @@ function StoryWorkspaceDialog({
                     </Button>
                   </div>
                 </div>
+                {characterVerifying ? (
+                  <div className="mt-4 rounded-md border border-primary/20 bg-primary/5 p-3">
+                    <div className="flex items-center justify-between gap-3 text-xs">
+                      <span className="font-medium text-primary">{characterVerifyProgress.label || "회차 분석 중"}</span>
+                      <span className="text-muted-foreground">
+                        {characterVerifyProgress.current}/{characterVerifyProgress.total}
+                      </span>
+                    </div>
+                    <Progress value={characterVerifyPercent} className="mt-2 h-2" />
+                  </div>
+                ) : null}
               </section>
+
+              {characterVerification ? (
+                <CharacterVerificationPanel result={characterVerification} onJumpToCharacter={jumpToCharacterDraft} />
+              ) : null}
 
               <div className="grid gap-3">
                 {characterDrafts.map((character, index) => (
-                  <section key={character.id} className="rounded-lg border border-border bg-card p-4">
+                  <section
+                    key={character.id}
+                    id={characterDraftElementId(character.id)}
+                    className="rounded-lg border border-border bg-card p-4 scroll-mt-6"
+                  >
                     <div className="flex flex-col gap-4 lg:flex-row">
                       <div className="flex w-full gap-3 lg:w-56 lg:flex-col">
                         <CharacterAvatarPreview path={character.avatarUrl} name={character.name || `캐릭터 ${index + 1}`} />
@@ -2791,6 +3362,14 @@ function StoryWorkspaceDialog({
                       </div>
 
                       <div className="min-w-0 flex-1 space-y-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {character.avatarUrl ? <Badge variant="secondary">이미지 등록</Badge> : <Badge variant="outline">이미지 필요</Badge>}
+                          {character.visibleInFrontend ? <Badge variant="secondary">프론트 노출</Badge> : <Badge variant="outline">미노출</Badge>}
+                          {character.chatEnabled !== false ? <Badge variant="secondary">채팅</Badge> : <Badge variant="outline">채팅 꺼짐</Badge>}
+                          {characterVerification?.duplicateGroups.some((group) => group.ids.includes(character.id)) ? (
+                            <Badge variant="outline" className="border-amber-400/40 text-amber-600">중복 확인</Badge>
+                          ) : null}
+                        </div>
                         <div className="grid gap-3 md:grid-cols-3">
                           <div>
                             <label className="text-xs text-muted-foreground">이름</label>
@@ -2852,7 +3431,7 @@ function StoryWorkspaceDialog({
                           />
                         </div>
 
-                        <div className="grid gap-3 md:grid-cols-[1fr_140px_140px_40px]">
+                        <div className="grid gap-3 md:grid-cols-[1fr_140px_140px_140px_40px]">
                           <Input
                             value={(character.tags ?? []).join(", ")}
                             onChange={(event) =>
@@ -2862,6 +3441,13 @@ function StoryWorkspaceDialog({
                             }
                             placeholder="태그: 냉정함, 집착, 다정함"
                           />
+                          <label className="flex items-center justify-between rounded-md border border-border bg-background px-3 py-2 text-sm">
+                            <span>노출</span>
+                            <Switch
+                              checked={character.visibleInFrontend === true}
+                              onCheckedChange={(checked) => updateCharacterDraft(character.id, { visibleInFrontend: checked })}
+                            />
+                          </label>
                           <label className="flex items-center justify-between rounded-md border border-border bg-background px-3 py-2 text-sm">
                             <span>채팅</span>
                             <Switch
