@@ -107,6 +107,32 @@ function compactText(value: unknown) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
 }
 
+async function adminStoriesWorkspaceApi<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetchWithSupabaseAuth(`/api/admin/stories${path}`, init);
+  const contentType = res.headers.get("content-type") ?? "";
+  const raw = await res.text().catch(() => "");
+  let payload: any = null;
+  if (contentType.includes("application/json") && raw) {
+    try {
+      payload = JSON.parse(raw);
+    } catch {
+      payload = null;
+    }
+  }
+
+  if (!res.ok) {
+    const reason =
+      payload?.message ||
+      payload?.reason ||
+      raw.slice(0, 220).replace(/\s+/g, " ").trim() ||
+      res.statusText ||
+      "unknown_error";
+    throw new Error(`Admin story workspace API failed (${res.status}): ${reason}`);
+  }
+
+  return (payload ?? {}) as T;
+}
+
 function textIncludesAny(text: string, keywords: string[]) {
   return keywords.some((keyword) => text.includes(keyword));
 }
@@ -643,99 +669,25 @@ function makeChapterTextSummary(chapter: ChapterConfig): ChapterTextSummary {
 export const getStoryCompose = createServerFn({ method: "GET" })
   .inputValidator((input: any) => input as { id: string })
   .handler(async ({ data }): Promise<ComposeData> => {
-    const userId = await requireStaff();
-    const row = await loadOrCreateDraft(data.id, userId);
-    return {
-      id: row.id,
-      title: row.title,
-      logline: row.logline ?? "",
-      cover_url: row.cover_url,
-      price_credits: row.price_credits,
-      max_heat: (row.max_heat as HeatPreset) ?? "warm",
-      audience: row.audience ?? "all",
-      tags: row.tags ?? [],
-      is_public: !!row.is_public,
-      is_listed: !!row.is_listed,
-      compose_step: (row.compose_step as ComposeData["compose_step"]) ?? "body",
-      chapters: buildChaptersFromRow(row),
-      character_card: recordOf(row.character_card),
-    };
+    const params = new URLSearchParams({ mode: "compose", id: data.id });
+    const payload = await adminStoriesWorkspaceApi<{ ok: true; compose: ComposeData }>(`?${params.toString()}`);
+    return payload.compose;
   });
 
 export const getStoryChapterEditor = createServerFn({ method: "GET" })
   .inputValidator((input: any) => input as { id: string; chapterId: string })
   .handler(async ({ data }): Promise<ChapterEditorData> => {
-    await requireStaff();
-    const row = await loadStoryForChapters(data.id);
-    if (!row) throw new Error("Story not found");
-
-    const card = recordOf(row.character_card);
-    const chapters = buildChaptersFromRow(row);
-    const chapter = findChapterByLocator(chapters, data.chapterId);
-    if (!chapter) throw chapterNotFoundError("editor_load", chapters, data.chapterId);
-
-    const assetLibrary: ChapterEditorData["assetLibrary"] = [];
-    const seen = new Set<string>();
-    for (const item of chapters) {
-      for (const slot of item.assetSlots) {
-        if (!slot.media_url || !slot.media_type || seen.has(slot.media_url)) continue;
-        seen.add(slot.media_url);
-        assetLibrary.push({
-          key: slot.id,
-          url: slot.media_url,
-          type: slot.media_type,
-          tier: slot.heat_tier,
-          caption: slot.caption,
-          scene: slot.scene_description ?? "",
-        });
-      }
-    }
-
-    return {
-      id: row.id,
-      title: row.title,
-      cover_url: row.cover_url,
-      contentType: (card.contentType as ContentType) ?? "web_novel",
-      activeCharacterName: String(card.characters?.[0]?.name || card.name || "캐릭터 미등록"),
-      chapter,
-      chapterSummaries: chapters.map((item) => ({
-        id: item.id,
-        title: item.title,
-        episodeNumber: item.episodeNumber,
-        summary: item.summary,
-        bodyChars: item.body.length,
-        assetSlotsCount: item.assetSlots.length,
-      })),
-      assetLibrary,
-    };
+    const params = new URLSearchParams({ mode: "chapter-editor", id: data.id, chapterId: data.chapterId });
+    const payload = await adminStoriesWorkspaceApi<{ ok: true; editor: ChapterEditorData }>(`?${params.toString()}`);
+    return payload.editor;
   });
 
 export const getStoryChapterText = createServerFn({ method: "GET" })
   .inputValidator((input: any) => input as { id: string; chapterId: string })
   .handler(async ({ data }): Promise<ChapterTextEditorData> => {
-    await requireStaff();
-    const row = await loadStoryForChapters(data.id);
-    if (!row) throw new Error("Story not found");
-
-    const chapters = buildChaptersFromRow(row);
-    const chapter = findChapterByLocator(chapters, data.chapterId);
-    if (!chapter) throw chapterNotFoundError("text_load", chapters, data.chapterId);
-
-    return {
-      id: row.id,
-      title: row.title,
-      chapter: {
-        id: chapter.id,
-        title: chapter.title,
-        episodeNumber: chapter.episodeNumber,
-        isFree: chapter.isFree,
-        priceCredits: chapter.priceCredits,
-        summary: chapter.summary,
-        body: chapter.body,
-        assetSlotsCount: chapter.assetSlots.length,
-        characterAnalysis: chapter.characterAnalysis ?? [],
-      },
-    };
+    const params = new URLSearchParams({ mode: "chapter-text", id: data.id, chapterId: data.chapterId });
+    const payload = await adminStoriesWorkspaceApi<{ ok: true; text: ChapterTextEditorData }>(`?${params.toString()}`);
+    return payload.text;
   });
 
 export type ProductInput = {
@@ -759,218 +711,53 @@ export type ProductInput = {
 export const saveStoryProduct = createServerFn({ method: "POST" })
   .inputValidator((input: any) => input as ProductInput)
   .handler(async ({ data }) => {
-    const userId = await requireStaff();
-    const { body: flatBody, slots: flatSlots } = flattenChapters(data.chapters);
-    const main = data.characters[0];
-    const isPublished = data.isPublic && data.isListed;
-    await saveStory(
-      data.id,
-      {
-        title: data.title,
-        logline: data.logline ?? null,
-        body_text: flatBody,
-        asset_slots: flatSlots as any,
-        cover_url: data.coverUrl ?? null,
-        price_credits: Math.max(0, Math.floor(data.priceCredits || 0)),
-        max_heat: data.maxHeat,
-        audience: data.audience,
-        tags: data.tags.slice(0, 12),
-        is_public: data.isPublic,
-        is_listed: data.isListed,
-        status: isPublished ? "published" : "draft",
-        compose_step: isPublished ? "published" : flatSlots.length ? "assets" : "body",
-        character_card: {
-        contentType: data.contentType,
-        storyOverview: data.storyOverview,
-        chapters: data.chapters,
-        characters: data.characters,
-        environment: data.environment,
-        name: main?.name,
-        role: main?.role,
-        persona: main?.persona,
-        notes: main?.persona,
-        visualPrompt: main?.visualPrompt,
-        appearance: main?.visualPrompt,
-        speakingStyle: main?.speakingStyle ?? "",
-        avatarUrl: main?.avatarUrl ?? null,
-        } as any,
-        updated_at: new Date().toISOString(),
-      },
-      userId,
-    );
+    await adminStoriesWorkspaceApi<{ ok: true }>("", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "save_product", ...data }),
+    });
     return { ok: true };
   });
 
 export const saveStoryChapterEditor = createServerFn({ method: "POST" })
   .inputValidator((input: any) => input as { id: string; chapter: ChapterConfig })
   .handler(async ({ data }) => {
-    const userId = await requireStaff();
-    const row = await loadStoryForChapters(data.id);
-    if (!row) throw new Error("Story not found");
-
-    const card = recordOf(row.character_card);
-    const chapters = buildChaptersFromRow(row);
-    const index = findChapterIndexForPatch(chapters, data.chapter);
-    if (index < 0) throw chapterNotFoundError("editor_save", chapters, data.chapter);
-    const rawBody = String(data.chapter.body ?? "");
-    const normalizedBody = normalizeProseLineBreaks(rawBody);
-    const nextAssetSlots = (Array.isArray(data.chapter.assetSlots) ? data.chapter.assetSlots : []).map((slot) => ({
-      ...slot,
-      offset: mapNormalizedProseOffset(rawBody, slot.offset),
-    }));
-
-    const nextChapters = chapters.map((item, itemIndex) =>
-      itemIndex === index
-        ? {
-            ...item,
-            ...data.chapter,
-            id: item.id,
-            episodeNumber: Math.max(1, Number(data.chapter.episodeNumber) || item.episodeNumber),
-            priceCredits: Math.max(0, Number(data.chapter.priceCredits) || 0),
-            body: normalizedBody,
-            assetSlots: nextAssetSlots,
-            characterAnalysis: analyzeChapterCharacters(
-              {
-                id: item.id,
-                title: String(data.chapter.title ?? item.title),
-                episodeNumber: Math.max(1, Number(data.chapter.episodeNumber) || item.episodeNumber),
-                summary: String(data.chapter.summary ?? item.summary),
-                body: normalizedBody,
-              },
-              card,
-            ),
-          }
-        : item,
-    );
-    const { body: flatBody, slots: flatSlots } = flattenChapters(nextChapters);
-
-    await saveStory(
-      data.id,
-      {
-        body_text: flatBody,
-        asset_slots: flatSlots as any,
-        character_card: {
-          ...card,
-          chapters: nextChapters,
-          characters: mergeCharacterInsights(card, nextChapters),
-        } as any,
-        compose_step: flatSlots.length ? "assets" : "body",
-        updated_at: new Date().toISOString(),
-      },
-      userId,
-    );
-    return { ok: true, chapter: makeChapterTextSummary(nextChapters[index]) };
+    const payload = await adminStoriesWorkspaceApi<{ ok: true; chapter: ChapterTextSummary }>("", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "save_chapter_editor", ...data }),
+    });
+    return { ok: true, chapter: payload.chapter };
   });
 
 export const saveStoryChapterText = createServerFn({ method: "POST" })
   .inputValidator((input: any) => input as { id: string; chapter: ChapterTextPatch })
   .handler(async ({ data }) => {
-    const userId = await requireStaff();
-    const row = await loadStoryForChapters(data.id);
-    if (!row) throw new Error("Story not found");
-
-    const card = recordOf(row.character_card);
-    const chapters = buildChaptersFromRow(row);
-    const index = findChapterIndexForPatch(chapters, data.chapter);
-    if (index < 0) throw chapterNotFoundError("text_save", chapters, data.chapter);
-    const rawBody = String(data.chapter.body ?? "");
-    const normalizedBody = normalizeProseLineBreaks(rawBody);
-
-    const nextChapters = chapters.map((item, itemIndex) =>
-      itemIndex === index
-        ? {
-            ...item,
-            title: String(data.chapter.title ?? "").trim() || item.title,
-            episodeNumber: Math.max(1, Math.floor(Number(data.chapter.episodeNumber) || item.episodeNumber)),
-            isFree: Boolean(data.chapter.isFree),
-            priceCredits: Math.max(0, Math.floor(Number(data.chapter.priceCredits) || 0)),
-            summary: String(data.chapter.summary ?? ""),
-            body: normalizedBody,
-            assetSlots: item.assetSlots.map((slot) => ({
-              ...slot,
-              offset: mapNormalizedProseOffset(rawBody, slot.offset),
-            })),
-            characterAnalysis: analyzeChapterCharacters(
-              {
-                id: item.id,
-                title: String(data.chapter.title ?? item.title),
-                episodeNumber: Math.max(1, Math.floor(Number(data.chapter.episodeNumber) || item.episodeNumber)),
-                summary: String(data.chapter.summary ?? ""),
-                body: normalizedBody,
-              },
-              card,
-            ),
-          }
-        : item,
-    );
-    const { body: flatBody, slots: flatSlots } = flattenChapters(nextChapters);
-
-    await saveStory(
-      data.id,
-      {
-        body_text: flatBody,
-        asset_slots: flatSlots as any,
-        character_card: {
-          ...card,
-          chapters: nextChapters,
-          characters: mergeCharacterInsights(card, nextChapters),
-        } as any,
-        compose_step: flatSlots.length ? "assets" : "body",
-        updated_at: new Date().toISOString(),
-      },
-      userId,
-    );
+    const payload = await adminStoriesWorkspaceApi<{
+      ok: true;
+      chapter: ChapterTextSummary;
+      characterAnalysis: ChapterCharacterInsight[];
+    }>("", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "save_chapter_text", ...data }),
+    });
     return {
       ok: true,
-      chapter: makeChapterTextSummary(nextChapters[index]),
-      characterAnalysis: nextChapters[index]?.characterAnalysis ?? [],
+      chapter: payload.chapter,
+      characterAnalysis: payload.characterAnalysis ?? [],
     };
   });
 
 export const createStoryChapterText = createServerFn({ method: "POST" })
   .inputValidator((input: any) => input as { id: string })
   .handler(async ({ data }): Promise<{ ok: true; chapter: ChapterTextSummary }> => {
-    const userId = await requireStaff();
-    const row = await loadStoryForChapters(data.id);
-    if (!row) throw new Error("Story not found");
-
-    const card = recordOf(row.character_card);
-    const chapters = buildChaptersFromRow(row);
-    const nextEpisode =
-      chapters.reduce((max, item) => Math.max(max, Math.floor(Number(item.episodeNumber) || 0)), 0) + 1;
-    const chapter: ChapterConfig = {
-      id: stableChapterId(row, nextEpisode),
-      title: `${nextEpisode}화`,
-      episodeNumber: nextEpisode,
-      isFree: false,
-      priceCredits: 0,
-      summary: "",
-      body: "",
-      assetSlots: [],
-      characterAnalysis: [],
-    };
-    const nextChapters = [...chapters, chapter];
-    const { body: flatBody, slots: flatSlots } = flattenChapters(nextChapters);
-
-    await saveStory(
-      data.id,
-      {
-        body_text: flatBody,
-        asset_slots: flatSlots as any,
-        character_card: {
-          ...card,
-          chapters: nextChapters,
-        } as any,
-        compose_step: flatSlots.length ? "assets" : "body",
-        updated_at: new Date().toISOString(),
-      },
-      userId,
-    );
-
-    return {
-      ok: true,
-      chapter: makeChapterTextSummary(chapter),
-    };
+    const payload = await adminStoriesWorkspaceApi<{ ok: true; chapter: ChapterTextSummary }>("", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "create_chapter_text", ...data }),
+    });
+    return { ok: true, chapter: payload.chapter };
   });
 
 export const deleteStoryChapterText = createServerFn({ method: "POST" })
@@ -984,55 +771,21 @@ export const deleteStoryChapterText = createServerFn({ method: "POST" })
       activeChapterId: string | null;
       chapters: ChapterTextSummary[];
     }> => {
-      const userId = await requireStaff();
-      const row = await loadStoryForChapters(data.id);
-      if (!row) throw new Error("Story not found");
-
-      const card = recordOf(row.character_card);
-      const chapters = buildChaptersFromRow(row);
-      if (chapters.length <= 1) {
-        throw new Error("최소 1개 이상의 회차가 필요합니다.");
-      }
-
-      const index = findChapterIndexByLocator(chapters, data.chapterId);
-      if (index < 0) throw chapterNotFoundError("delete", chapters, data.chapterId);
-
-      const deleted = chapters[index];
-      const nextChapters = chapters.filter((_, itemIndex) => itemIndex !== index);
-      const activeChapterId = nextChapters[Math.min(index, nextChapters.length - 1)]?.id ?? null;
-      const remainingChapterIds = new Set(nextChapters.map((chapter) => chapter.id));
-      const prunedCharacters = Array.isArray(card.characters)
-        ? card.characters.map((character: any) => ({
-            ...character,
-            chapterInsights: Array.isArray(character?.chapterInsights)
-              ? character.chapterInsights.filter((insight: any) => remainingChapterIds.has(String(insight?.chapterId ?? "")))
-              : character?.chapterInsights,
-          }))
-        : card.characters;
-      const nextCard = { ...card, characters: prunedCharacters };
-      const { body: flatBody, slots: flatSlots } = flattenChapters(nextChapters);
-
-      await saveStory(
-        data.id,
-        {
-          body_text: flatBody,
-          asset_slots: flatSlots as any,
-          character_card: {
-            ...nextCard,
-            chapters: nextChapters,
-            characters: mergeCharacterInsights(nextCard, nextChapters),
-          } as any,
-          compose_step: flatSlots.length ? "assets" : "body",
-          updated_at: new Date().toISOString(),
-        },
-        userId,
-      );
-
+      const payload = await adminStoriesWorkspaceApi<{
+        ok: true;
+        deletedChapterId: string;
+        activeChapterId: string | null;
+        chapters: ChapterTextSummary[];
+      }>("", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "delete_chapter_text", ...data }),
+      });
       return {
         ok: true,
-        deletedChapterId: deleted.id,
-        activeChapterId,
-        chapters: nextChapters.map(makeChapterTextSummary),
+        deletedChapterId: payload.deletedChapterId,
+        activeChapterId: payload.activeChapterId,
+        chapters: payload.chapters,
       };
     },
   );
@@ -1049,38 +802,22 @@ export const saveStoryBody = createServerFn({ method: "POST" })
       },
   )
   .handler(async ({ data }) => {
-    const userId = await requireStaff();
-    const row = await loadOrCreateDraft(data.id, userId);
-    const card = recordOf(row.character_card);
-    await saveStory(
-      data.id,
-      {
-        title: data.title,
-        logline: data.logline ?? null,
-        body_text: data.body_text,
-        compose_step: "assets",
-        character_card:
-          data.character_summary !== undefined ? ({ ...card, notes: data.character_summary } as any) : row.character_card,
-        updated_at: new Date().toISOString(),
-      },
-      userId,
-    );
+    await adminStoriesWorkspaceApi<{ ok: true }>("", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "save_body", ...data }),
+    });
     return { ok: true };
   });
 
 export const saveStorySlots = createServerFn({ method: "POST" })
   .inputValidator((input: any) => input as { id: string; asset_slots: AssetSlot[] })
   .handler(async ({ data }) => {
-    const userId = await requireStaff();
-    await saveStory(
-      data.id,
-      {
-        asset_slots: data.asset_slots as any,
-        compose_step: data.asset_slots.length ? "assets" : "body",
-        updated_at: new Date().toISOString(),
-      },
-      userId,
-    );
+    await adminStoriesWorkspaceApi<{ ok: true }>("", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "save_slots", ...data }),
+    });
     return { ok: true };
   });
 
@@ -1097,23 +834,11 @@ export const publishStoryUnified = createServerFn({ method: "POST" })
       },
   )
   .handler(async ({ data }) => {
-    const userId = await requireStaff();
-    await saveStory(
-      data.id,
-      {
-        price_credits: Math.max(0, Math.floor(data.price_credits || 0)),
-        max_heat: data.max_heat,
-        audience: data.audience ?? "all",
-        tags: data.tags,
-        is_public: true,
-        is_listed: true,
-        status: "published",
-        compose_step: "published",
-        ...(data.cover_url !== undefined ? { cover_url: data.cover_url } : {}),
-        updated_at: new Date().toISOString(),
-      },
-      userId,
-    );
+    await adminStoriesWorkspaceApi<{ ok: true }>("", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "publish_unified", ...data }),
+    });
     return { ok: true };
   });
 
@@ -1126,18 +851,11 @@ export const analyzeStoryProduct = createServerFn({ method: "POST" })
 export const unpublishStoryUnified = createServerFn({ method: "POST" })
   .inputValidator((input: any) => input as { id: string })
   .handler(async ({ data }) => {
-    const userId = await requireStaff();
-    await saveStory(
-      data.id,
-      {
-        is_public: false,
-        is_listed: false,
-        status: "draft",
-        compose_step: "assets",
-        updated_at: new Date().toISOString(),
-      },
-      userId,
-    );
+    await adminStoriesWorkspaceApi<{ ok: true }>("", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "unpublish_unified", ...data }),
+    });
     return { ok: true };
   });
 
