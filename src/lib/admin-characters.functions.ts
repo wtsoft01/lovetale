@@ -2,7 +2,10 @@ import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
 import { createServerFn } from "@/lib/_mock/runtime";
 import {
-  characterNamesLikelySame,
+  ambiguousKoreanGivenNameKeys,
+  characterNameAliasKeys,
+  characterNameSetsLikelySame,
+  cleanCharacterDisplayName,
   normalizeCharacterNameKey,
   preferredCharacterDisplayName,
 } from "@/lib/character-name-match";
@@ -34,6 +37,13 @@ export type StoryCharacter = {
   visibleInFrontend: boolean;
   reusable: boolean;
   showcaseAssets?: CharacterVisualAsset[];
+  chapterInsights?: CharacterChapterInsight[];
+  duplicateAliases?: string[];
+  duplicateExclusions?: string[];
+  importanceScore?: number;
+  dialogueCount?: number;
+  mentionCount?: number;
+  rankInStory?: number;
 };
 
 export type CharacterVisualAsset = {
@@ -43,6 +53,18 @@ export type CharacterVisualAsset = {
   mediaUrl: string | null;
   mediaType: "image" | "video";
   caption: string;
+};
+
+export type CharacterChapterInsight = {
+  chapterId: string;
+  chapterTitle: string;
+  episodeNumber: number;
+  emotion?: string;
+  attitude?: string;
+  traits?: string[];
+  relationship?: string;
+  evidence?: string;
+  chatGuidance?: string;
 };
 
 export type CharacterStoryRow = {
@@ -149,6 +171,27 @@ function normalizeVisualAssets(value: unknown): CharacterVisualAsset[] {
     })
     .filter((asset) => asset.mediaUrl || asset.caption)
     .slice(0, 12);
+}
+
+function normalizeChapterInsights(value: unknown): CharacterChapterInsight[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((insight) => {
+      const row = recordOf(insight);
+      return {
+        chapterId: asString(row.chapterId ?? row.chapter_id),
+        chapterTitle: asString(row.chapterTitle ?? row.chapter_title),
+        episodeNumber: Math.max(0, Math.floor(Number(row.episodeNumber ?? row.episode_number) || 0)),
+        emotion: asString(row.emotion),
+        attitude: asString(row.attitude),
+        traits: asStringArray(row.traits),
+        relationship: asString(row.relationship),
+        evidence: asString(row.evidence),
+        chatGuidance: asString(row.chatGuidance ?? row.chat_guidance),
+      };
+    })
+    .filter((insight) => insight.chapterId || insight.evidence || insight.chatGuidance)
+    .slice(-30);
 }
 
 function hashText(value: string) {
@@ -287,14 +330,41 @@ function normalizeCharacter(character: Record<string, any>, index: number): Stor
     visibleInFrontend,
     reusable: character.reusable !== false,
     showcaseAssets: normalizeVisualAssets(character.showcaseAssets ?? character.showcase_assets ?? character.visualAssets),
+    chapterInsights: normalizeChapterInsights(character.chapterInsights ?? character.chapter_insights),
+    duplicateAliases: asStringArray(character.duplicateAliases ?? character.duplicate_aliases),
+    duplicateExclusions: asStringArray(character.duplicateExclusions ?? character.duplicate_exclusions),
   };
 }
 
-function findCharacterKey(rows: Map<string, StoryCharacter>, name: string) {
+function characterNameSet(character: Pick<StoryCharacter, "name" | "duplicateAliases">) {
+  return [character.name, ...(character.duplicateAliases ?? [])].filter(Boolean);
+}
+
+function characterExclusionSet(character: Pick<StoryCharacter, "duplicateExclusions">) {
+  return character.duplicateExclusions ?? [];
+}
+
+function findCharacterKey(
+  rows: Map<string, StoryCharacter>,
+  name: string,
+  duplicateAliases: string[],
+  duplicateExclusions: string[],
+  blockedGivenKeys: ReadonlySet<string>,
+) {
   const key = normalizeCharacterNameKey(name);
   if (rows.has(key)) return key;
+  const names = [name, ...duplicateAliases];
   for (const [currentKey, character] of rows.entries()) {
-    if (characterNamesLikelySame(character.name, name)) return currentKey;
+    const aliases = characterNameSet(character);
+    if (
+      characterNameSetsLikelySame(aliases, names, {
+        blockedGivenKeys,
+        aExcludedNames: characterExclusionSet(character),
+        bExcludedNames: duplicateExclusions,
+      })
+    ) {
+      return currentKey;
+    }
   }
   return key;
 }
@@ -309,8 +379,38 @@ function mergeVisualAssets(a: CharacterVisualAsset[] = [], b: CharacterVisualAss
   return [...byKey.values()].slice(0, 12);
 }
 
+function mergeChapterInsights(a: CharacterChapterInsight[] = [], b: CharacterChapterInsight[] = []) {
+  const byKey = new Map<string, CharacterChapterInsight>();
+  for (const insight of [...a, ...b]) {
+    const key = asString(insight.chapterId || `${insight.episodeNumber}:${insight.evidence}`);
+    if (!key) continue;
+    const current = byKey.get(key);
+    byKey.set(key, {
+      ...insight,
+      ...current,
+      chapterId: current?.chapterId || insight.chapterId,
+      chapterTitle: current?.chapterTitle || insight.chapterTitle,
+      episodeNumber: current?.episodeNumber || insight.episodeNumber,
+      emotion: current?.emotion || insight.emotion,
+      attitude: current?.attitude || insight.attitude,
+      traits: [...new Set([...(current?.traits ?? []), ...(insight.traits ?? [])])].slice(0, 8),
+      relationship: current?.relationship || insight.relationship,
+      evidence: current?.evidence || insight.evidence,
+      chatGuidance: current?.chatGuidance || insight.chatGuidance,
+    });
+  }
+  return [...byKey.values()].sort((a, b) => a.episodeNumber - b.episodeNumber).slice(-30);
+}
+
 function mergeCharacterRow(current: StoryCharacter, next: StoryCharacter): StoryCharacter {
   const name = preferredCharacterDisplayName(current.name, next.name);
+  const duplicateAliases = [current.name, next.name, ...(current.duplicateAliases ?? []), ...(next.duplicateAliases ?? [])]
+    .map((value) => cleanCharacterDisplayName(asString(value)))
+    .filter((value) => value && normalizeCharacterNameKey(value) !== normalizeCharacterNameKey(name));
+  const mergedNameKeys = new Set([name, ...duplicateAliases].map(normalizeCharacterNameKey).filter(Boolean));
+  const duplicateExclusions = [...(current.duplicateExclusions ?? []), ...(next.duplicateExclusions ?? [])]
+    .map((value) => cleanCharacterDisplayName(asString(value)))
+    .filter((value) => value && !mergedNameKeys.has(normalizeCharacterNameKey(value)));
   return {
     ...next,
     ...current,
@@ -332,13 +432,23 @@ function mergeCharacterRow(current: StoryCharacter, next: StoryCharacter): Story
     visibleInFrontend: current.visibleInFrontend || next.visibleInFrontend,
     reusable: current.reusable || next.reusable,
     showcaseAssets: mergeVisualAssets(current.showcaseAssets, next.showcaseAssets),
+    chapterInsights: mergeChapterInsights(current.chapterInsights, next.chapterInsights),
+    duplicateAliases: [...new Set(duplicateAliases)].slice(0, 8),
+    duplicateExclusions: [...new Set(duplicateExclusions)].slice(0, 20),
   };
 }
 
 function dedupeCharactersByKoreanName(characters: StoryCharacter[]) {
   const byName = new Map<string, StoryCharacter>();
+  const blockedGivenKeys = ambiguousKoreanGivenNameKeys(characters.map(characterNameSet));
   for (const character of characters) {
-    const key = findCharacterKey(byName, character.name);
+    const key = findCharacterKey(
+      byName,
+      character.name,
+      character.duplicateAliases ?? [],
+      character.duplicateExclusions ?? [],
+      blockedGivenKeys,
+    );
     const current = byName.get(key);
     const merged = current ? mergeCharacterRow(current, character) : character;
     const mergedKey = normalizeCharacterNameKey(merged.name);
@@ -424,6 +534,10 @@ function countMatches(text: string, pattern: RegExp) {
   return Array.from(text.matchAll(pattern)).length;
 }
 
+function uniqueCharacterAliases(name: string) {
+  return [...new Set([name, ...characterNameAliasKeys(name)].map((item) => item.trim()).filter(Boolean))];
+}
+
 function characterImportance(character: StoryCharacter, storyText: string, index: number) {
   const name = character.name.trim();
   if (!name) {
@@ -435,26 +549,37 @@ function characterImportance(character: StoryCharacter, storyText: string, index
     };
   }
 
-  const escapedName = escapeRegExp(name);
-  const dialogueCount = countMatches(
-    storyText,
-    new RegExp(`(?:^|\\n)\\s*${escapedName}\\s*[:：]`, "g"),
+  const aliases = uniqueCharacterAliases(name);
+  const dialogueCount = aliases.reduce(
+    (sum, alias) => sum + countMatches(storyText, new RegExp(`(?:^|\\n)\\s*${escapeRegExp(alias)}\\s*[:：]`, "g")),
+    0,
   );
-  const speechAttributionCount = countMatches(
-    storyText,
-    new RegExp(
-      `${escapedName}\\s*(?:이|가|은|는)?\\s*(?:말했다|물었다|대답했다|속삭였다|중얼거렸다|웃었다|소리쳤다|입을 열었다)`,
-      "g",
-    ),
+  const speechAttributionCount = aliases.reduce(
+    (sum, alias) =>
+      sum +
+      countMatches(
+        storyText,
+        new RegExp(
+          `${escapeRegExp(alias)}\\s*(?:이|가|은|는|도)?\\s*(?:말했다|물었다|대답했다|속삭였다|중얼거렸다|웃었다|소리쳤다|외쳤다|답했다|불렀다|말을 이었다|입을 열었다)`,
+          "g",
+        ),
+      ),
+    0,
   );
-  const addressCount = countMatches(
-    storyText,
-    new RegExp(`${escapedName}(?:씨|님|오빠|언니|누나|아빠|대표님|사장님)`, "g"),
+  const addressCount = aliases.reduce(
+    (sum, alias) =>
+      sum +
+      countMatches(
+        storyText,
+        new RegExp(`${escapeRegExp(alias)}(?:야|아|씨|님|대표님|선배|오빠|형|누나|언니|사장님|실장님)`, "g"),
+      ),
+    0,
   );
-  const mentionCount = countMatches(storyText, new RegExp(escapedName, "g"));
+  const mentionCount = aliases.reduce((sum, alias) => sum + countMatches(storyText, new RegExp(escapeRegExp(alias), "g")), 0);
   const hasImageBonus = character.avatarUrl ? 8 : 0;
   const primaryBonus = character.isPrimary ? 18 : 0;
   const chatBonus = character.chatEnabled ? 5 : -20;
+  const insightBonus = Math.min(character.chapterInsights?.length ?? 0, 10) * 3;
   const rankBias = Math.max(0, 5 - index);
   const mainScore =
     dialogueCount * 12 +
@@ -464,6 +589,7 @@ function characterImportance(character: StoryCharacter, storyText: string, index
     hasImageBonus +
     primaryBonus +
     chatBonus +
+    insightBonus +
     rankBias;
 
   return {
@@ -472,6 +598,25 @@ function characterImportance(character: StoryCharacter, storyText: string, index
     mentionCount,
     rankBias,
   };
+}
+
+function rankStoryCharacters(characters: StoryCharacter[], story: UserStory) {
+  const storyText = storyTextForCharacterRanking(story);
+  return characters
+    .map((character, index) => ({
+      ...character,
+      ...characterImportance(character, storyText, index),
+    }))
+    .sort((a, b) => {
+      const primaryDelta = Number(b.isPrimary) - Number(a.isPrimary);
+      if (primaryDelta !== 0) return primaryDelta;
+      return b.mainScore - a.mainScore;
+    })
+    .map((character, index) => ({
+      ...character,
+      importanceScore: character.mainScore,
+      rankInStory: index + 1,
+    }));
 }
 
 function withVirtualAvatar(character: StoryCharacter, storyId: string): StoryCharacter {
@@ -484,7 +629,7 @@ function withVirtualAvatar(character: StoryCharacter, storyId: string): StoryCha
 
 function toStoryRow(story: UserStory): CharacterStoryRow {
   const card = recordOf(story.character_card);
-  const characters = charactersFromCard(card);
+  const characters = rankStoryCharacters(charactersFromCard(card), story);
   const chapters = Array.isArray(card.chapters) ? card.chapters : [];
   const primary = characters.find((character) => character.isPrimary) ?? characters[0];
   return {

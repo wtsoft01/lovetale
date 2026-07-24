@@ -3,7 +3,9 @@ import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
 import { fetchWithSupabaseAuth, getFreshAccessToken } from "@/lib/supabase-auth-fetch";
 import {
-  characterNamesLikelySame,
+  ambiguousKoreanGivenNameKeys,
+  characterNameSetsLikelySame,
+  cleanCharacterDisplayName,
   normalizeCharacterNameKey,
   preferredCharacterDisplayName,
 } from "@/lib/character-name-match";
@@ -128,6 +130,10 @@ async function adminStoriesWorkspaceApi<T>(path: string, init?: RequestInit): Pr
       res.statusText ||
       "unknown_error";
     throw new Error(`Admin story workspace API failed (${res.status}): ${reason}`);
+  }
+
+  if (payload?.ok === false) {
+    throw new Error(payload.message || payload.reason || "Admin story workspace API failed");
   }
 
   return (payload ?? {}) as T;
@@ -279,26 +285,75 @@ function analyzeChapterCharacters(
 }
 
 function mergeCharacterInsights(card: Record<string, any>, chapters: ChapterConfig[]) {
+  const existing = Array.isArray(card.characters) ? card.characters : [];
+  const blockedGivenKeys = ambiguousKoreanGivenNameKeys([
+    ...existing.map((character) => [
+      String(character?.name ?? character?.title ?? ""),
+      ...(Array.isArray(character?.duplicateAliases) ? character.duplicateAliases : []),
+    ]),
+    ...chapters.flatMap((chapter) =>
+      (chapter.characterAnalysis ?? []).map((insight) => [String(insight.name ?? "")]),
+    ),
+  ]);
   const byName = new Map<string, any>();
-  const findKey = (name: string) => {
+  const findKey = (name: string, duplicateAliases: unknown[] = [], duplicateExclusions: unknown[] = []) => {
     const key = normalizeCharacterNameKey(name);
     if (byName.has(key)) return key;
+    const names = [name, ...duplicateAliases.map((alias) => String(alias ?? ""))];
     for (const [currentKey, character] of byName.entries()) {
-      if (characterNamesLikelySame(String(character?.name ?? currentKey), name)) return currentKey;
+      const aliases = [character?.name, ...(Array.isArray(character?.duplicateAliases) ? character.duplicateAliases : [])];
+      if (
+        characterNameSetsLikelySame(aliases.map((alias) => String(alias ?? currentKey)), names, {
+          blockedGivenKeys,
+          aExcludedNames: Array.isArray(character?.duplicateExclusions) ? character.duplicateExclusions : [],
+          bExcludedNames: duplicateExclusions.map((alias) => String(alias ?? "")),
+        })
+      ) {
+        return currentKey;
+      }
     }
     return key;
   };
   const setCharacter = (key: string, character: Record<string, any>) => {
     const name = compactText(character.name);
-    const preferredName = preferredCharacterDisplayName(String(byName.get(key)?.name ?? ""), name) || name;
+    const current = byName.get(key) ?? {};
+    const preferredName = preferredCharacterDisplayName(String(current.name ?? ""), name) || name;
     const preferredKey = normalizeCharacterNameKey(preferredName);
+    const duplicateAliases = [
+      current.name,
+      name,
+      ...(Array.isArray(current.duplicateAliases) ? current.duplicateAliases : []),
+      ...(Array.isArray(character.duplicateAliases) ? character.duplicateAliases : []),
+    ]
+      .map((value) => cleanCharacterDisplayName(compactText(value)))
+      .filter((value) => value && normalizeCharacterNameKey(value) !== normalizeCharacterNameKey(preferredName));
+    const mergedNameKeys = new Set([preferredName, ...duplicateAliases].map(normalizeCharacterNameKey).filter(Boolean));
+    const duplicateExclusions = [
+      ...(Array.isArray(current.duplicateExclusions) ? current.duplicateExclusions : []),
+      ...(Array.isArray(character.duplicateExclusions) ? character.duplicateExclusions : []),
+    ]
+      .map((value) => cleanCharacterDisplayName(compactText(value)))
+      .filter((value) => value && !mergedNameKeys.has(normalizeCharacterNameKey(value)));
     if (preferredKey && preferredKey !== key) byName.delete(key);
-    byName.set(preferredKey || key, { ...character, name: preferredName || name });
+    byName.set(preferredKey || key, {
+      ...character,
+      name: preferredName || name,
+      duplicateAliases: [...new Set(duplicateAliases)].slice(0, 8),
+      duplicateExclusions: [...new Set(duplicateExclusions)].slice(0, 20),
+    });
   };
-  const existing = Array.isArray(card.characters) ? card.characters : [];
   for (const character of existing) {
     const name = compactText(character?.name ?? character?.title);
-    if (name) setCharacter(findKey(name), { ...character, name });
+    if (name) {
+      setCharacter(
+        findKey(
+          name,
+          Array.isArray(character?.duplicateAliases) ? character.duplicateAliases : [],
+          Array.isArray(character?.duplicateExclusions) ? character.duplicateExclusions : [],
+        ),
+        { ...character, name },
+      );
+    }
   }
 
   for (const chapter of chapters) {
@@ -720,7 +775,7 @@ export const saveStoryProduct = createServerFn({ method: "POST" })
   });
 
 export const saveStoryChapterEditor = createServerFn({ method: "POST" })
-  .inputValidator((input: any) => input as { id: string; chapter: ChapterConfig })
+  .inputValidator((input: any) => input as { id: string; chapter: ChapterConfig; assetOnly?: boolean })
   .handler(async ({ data }) => {
     const payload = await adminStoriesWorkspaceApi<{ ok: true; chapter: ChapterTextSummary }>("", {
       method: "POST",

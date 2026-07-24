@@ -4,7 +4,9 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import type { Database } from "@/integrations/supabase/types";
 import type { AssetSlot, AssetTier, ChapterCharacterInsight, ChapterConfig } from "@/lib/admin-stories-compose.functions";
 import {
-  characterNamesLikelySame,
+  ambiguousKoreanGivenNameKeys,
+  characterNameSetsLikelySame,
+  cleanCharacterDisplayName,
   normalizeCharacterNameKey,
   preferredCharacterDisplayName,
 } from "@/lib/character-name-match";
@@ -175,6 +177,7 @@ type SaveChapterEditorPayload = {
   action: "save_chapter_editor";
   id: string;
   chapter: ChapterConfig;
+  assetOnly?: boolean;
 };
 
 function newId(prefix: string) {
@@ -475,26 +478,75 @@ function analyzeChapterCharacters(
 }
 
 function mergeCharacterInsights(card: Record<string, any>, chapters: ChapterConfig[]) {
+  const existing = Array.isArray(card.characters) ? card.characters : [];
+  const blockedGivenKeys = ambiguousKoreanGivenNameKeys([
+    ...existing.map((character) => [
+      String(character?.name ?? character?.title ?? ""),
+      ...(Array.isArray(character?.duplicateAliases) ? character.duplicateAliases : []),
+    ]),
+    ...chapters.flatMap((chapter) =>
+      (chapter.characterAnalysis ?? []).map((insight) => [String(insight.name ?? "")]),
+    ),
+  ]);
   const byName = new Map<string, any>();
-  const findKey = (name: string) => {
+  const findKey = (name: string, duplicateAliases: unknown[] = [], duplicateExclusions: unknown[] = []) => {
     const key = normalizeCharacterNameKey(name);
     if (byName.has(key)) return key;
+    const names = [name, ...duplicateAliases.map((alias) => String(alias ?? ""))];
     for (const [currentKey, character] of byName.entries()) {
-      if (characterNamesLikelySame(String(character?.name ?? currentKey), name)) return currentKey;
+      const aliases = [character?.name, ...(Array.isArray(character?.duplicateAliases) ? character.duplicateAliases : [])];
+      if (
+        characterNameSetsLikelySame(aliases.map((alias) => String(alias ?? currentKey)), names, {
+          blockedGivenKeys,
+          aExcludedNames: Array.isArray(character?.duplicateExclusions) ? character.duplicateExclusions : [],
+          bExcludedNames: duplicateExclusions.map((alias) => String(alias ?? "")),
+        })
+      ) {
+        return currentKey;
+      }
     }
     return key;
   };
   const setCharacter = (key: string, character: Record<string, any>) => {
     const name = compactText(character.name);
-    const preferredName = preferredCharacterDisplayName(String(byName.get(key)?.name ?? ""), name) || name;
+    const current = byName.get(key) ?? {};
+    const preferredName = preferredCharacterDisplayName(String(current.name ?? ""), name) || name;
     const preferredKey = normalizeCharacterNameKey(preferredName);
+    const duplicateAliases = [
+      current.name,
+      name,
+      ...(Array.isArray(current.duplicateAliases) ? current.duplicateAliases : []),
+      ...(Array.isArray(character.duplicateAliases) ? character.duplicateAliases : []),
+    ]
+      .map((value) => cleanCharacterDisplayName(compactText(value)))
+      .filter((value) => value && normalizeCharacterNameKey(value) !== normalizeCharacterNameKey(preferredName));
+    const mergedNameKeys = new Set([preferredName, ...duplicateAliases].map(normalizeCharacterNameKey).filter(Boolean));
+    const duplicateExclusions = [
+      ...(Array.isArray(current.duplicateExclusions) ? current.duplicateExclusions : []),
+      ...(Array.isArray(character.duplicateExclusions) ? character.duplicateExclusions : []),
+    ]
+      .map((value) => cleanCharacterDisplayName(compactText(value)))
+      .filter((value) => value && !mergedNameKeys.has(normalizeCharacterNameKey(value)));
     if (preferredKey && preferredKey !== key) byName.delete(key);
-    byName.set(preferredKey || key, { ...character, name: preferredName || name });
+    byName.set(preferredKey || key, {
+      ...character,
+      name: preferredName || name,
+      duplicateAliases: [...new Set(duplicateAliases)].slice(0, 8),
+      duplicateExclusions: [...new Set(duplicateExclusions)].slice(0, 20),
+    });
   };
-  const existing = Array.isArray(card.characters) ? card.characters : [];
   for (const character of existing) {
     const name = compactText(character?.name ?? character?.title);
-    if (name) setCharacter(findKey(name), { ...character, name });
+    if (name) {
+      setCharacter(
+        findKey(
+          name,
+          Array.isArray(character?.duplicateAliases) ? character.duplicateAliases : [],
+          Array.isArray(character?.duplicateExclusions) ? character.duplicateExclusions : [],
+        ),
+        { ...character, name },
+      );
+    }
   }
 
   for (const chapter of chapters) {
@@ -1526,32 +1578,40 @@ async function saveChapterEditor(request: Request, body: SaveChapterEditorPayloa
   const index = findChapterIndexForPatch(chapters, body.chapter);
   if (index < 0) throw chapterNotFoundError("editor_save", chapters, body.chapter);
 
-  const rawBody = String(body.chapter.body ?? "");
-  const normalizedBody = normalizeProseLineBreaks(rawBody);
+  const assetOnly = Boolean(body.assetOnly);
+  const currentChapter = chapters[index];
+  const rawBody = assetOnly ? String(currentChapter.body ?? "") : String(body.chapter.body ?? "");
+  const normalizedBody = assetOnly ? String(currentChapter.body ?? "") : normalizeProseLineBreaks(rawBody);
   const nextAssetSlots = (Array.isArray(body.chapter.assetSlots) ? body.chapter.assetSlots : []).map((slot) => ({
     ...slot,
-    offset: mapNormalizedProseOffset(rawBody, slot.offset),
+    offset: assetOnly
+      ? Math.max(0, Math.min(normalizedBody.length, Math.floor(Number(slot.offset) || 0)))
+      : mapNormalizedProseOffset(rawBody, slot.offset),
   }));
   const nextChapters = chapters.map((item, itemIndex) =>
     itemIndex === index
       ? {
           ...item,
-          ...body.chapter,
           id: item.id,
-          episodeNumber: Math.max(1, Number(body.chapter.episodeNumber) || item.episodeNumber),
-          priceCredits: Math.max(0, Number(body.chapter.priceCredits) || 0),
+          title: assetOnly ? item.title : String(body.chapter.title ?? "").trim() || item.title,
+          episodeNumber: assetOnly ? item.episodeNumber : Math.max(1, Number(body.chapter.episodeNumber) || item.episodeNumber),
+          isFree: assetOnly ? item.isFree : Boolean(body.chapter.isFree),
+          priceCredits: assetOnly ? item.priceCredits : Math.max(0, Number(body.chapter.priceCredits) || 0),
+          summary: assetOnly ? item.summary : String(body.chapter.summary ?? item.summary),
           body: normalizedBody,
           assetSlots: nextAssetSlots,
-          characterAnalysis: analyzeChapterCharacters(
-            {
-              id: item.id,
-              title: String(body.chapter.title ?? item.title),
-              episodeNumber: Math.max(1, Number(body.chapter.episodeNumber) || item.episodeNumber),
-              summary: String(body.chapter.summary ?? item.summary),
-              body: normalizedBody,
-            },
-            card,
-          ),
+          characterAnalysis: assetOnly
+            ? item.characterAnalysis ?? []
+            : analyzeChapterCharacters(
+                {
+                  id: item.id,
+                  title: String(body.chapter.title ?? item.title),
+                  episodeNumber: Math.max(1, Number(body.chapter.episodeNumber) || item.episodeNumber),
+                  summary: String(body.chapter.summary ?? item.summary),
+                  body: normalizedBody,
+                },
+                card,
+              ),
         }
       : item,
   );
@@ -1559,17 +1619,28 @@ async function saveChapterEditor(request: Request, body: SaveChapterEditorPayloa
 
   await saveStoryData(
     body.id,
-    {
-      body_text: flatBody,
-      asset_slots: flatSlots as any,
-      character_card: {
-        ...card,
-        chapters: nextChapters,
-        characters: mergeCharacterInsights(card, nextChapters),
-      } as any,
-      compose_step: flatSlots.length ? "assets" : "body",
-      updated_at: new Date().toISOString(),
-    },
+    assetOnly
+      ? {
+          asset_slots: flatSlots as any,
+          character_card: {
+            ...card,
+            chapters: nextChapters,
+            characters: Array.isArray(card.characters) ? card.characters : mergeCharacterInsights(card, nextChapters),
+          } as any,
+          compose_step: flatSlots.length ? "assets" : "body",
+          updated_at: new Date().toISOString(),
+        }
+      : {
+          body_text: flatBody,
+          asset_slots: flatSlots as any,
+          character_card: {
+            ...card,
+            chapters: nextChapters,
+            characters: mergeCharacterInsights(card, nextChapters),
+          } as any,
+          compose_step: flatSlots.length ? "assets" : "body",
+          updated_at: new Date().toISOString(),
+        },
     staff.userId,
   );
   return Response.json({ ok: true, chapter: makeChapterTextSummary(nextChapters[index]) });

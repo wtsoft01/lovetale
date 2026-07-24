@@ -96,14 +96,18 @@ async function adminStoriesApi<T>(path: string, init?: RequestInit): Promise<T> 
       }
     }
     const reason =
-      payload?.reason ||
       payload?.message ||
+      payload?.reason ||
       raw.slice(0, 180).replace(/\s+/g, " ").trim() ||
       res.statusText ||
       "unknown_error";
     throw new Error(`Admin stories API failed (${res.status}): ${reason}`);
   }
-  return (await res.json()) as T;
+  const payload = (await res.json()) as any;
+  if (payload?.ok === false) {
+    throw new Error(payload.message || payload.reason || "Admin stories API failed");
+  }
+  return payload as T;
 }
 
 export const listAdminStories = createServerFn({ method: "GET" })

@@ -2,8 +2,11 @@ import { createFileRoute } from "@tanstack/react-router";
 
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import {
+  ambiguousKoreanGivenNameKeys,
   characterNameAliasKeys,
   characterNamesLikelySame,
+  characterNameSetsLikelySame,
+  cleanCharacterDisplayName,
   normalizeCharacterNameKey,
   preferredCharacterDisplayName,
 } from "@/lib/character-name-match";
@@ -419,6 +422,14 @@ function normalizeCharacterResult(item: Record<string, any>, index: number) {
     traits,
     evidence: compactText(item.evidence, 280),
     chatGuidance: compactText(item.chatGuidance, 900),
+    duplicateAliases: safeArray(item.duplicateAliases ?? item.duplicate_aliases)
+      .map((alias) => cleanCharacterDisplayName(compactText(alias, 80)))
+      .filter(Boolean)
+      .slice(0, 8),
+    duplicateExclusions: safeArray(item.duplicateExclusions ?? item.duplicate_exclusions)
+      .map((alias) => cleanCharacterDisplayName(compactText(alias, 80)))
+      .filter(Boolean)
+      .slice(0, 20),
     assetHints: safeArray(item.assetHints ?? item.asset_hints)
       .map((hint) => {
         const row = recordOf(hint);
@@ -441,32 +452,88 @@ function normalizeNameKey(name: string) {
   return normalizeCharacterNameKey(name);
 }
 
-function findCharacterMapKey(byName: Map<string, any>, name: string) {
+function characterRecordNameSet(character: Record<string, any>) {
+  return [
+    String(character?.name ?? character?.title ?? ""),
+    ...safeArray(character?.duplicateAliases).map((alias) => String(alias ?? "")),
+  ].filter(Boolean);
+}
+
+function characterRecordExclusionSet(character: Record<string, any>) {
+  return safeArray(character?.duplicateExclusions).map((alias) => String(alias ?? "")).filter(Boolean);
+}
+
+function findCharacterMapKey(
+  byName: Map<string, any>,
+  name: string,
+  duplicateAliases: unknown[] = [],
+  duplicateExclusions: unknown[] = [],
+  blockedGivenKeys: ReadonlySet<string> = new Set(),
+) {
   const exactKey = normalizeNameKey(name);
   if (!exactKey) return "";
   if (byName.has(exactKey)) return exactKey;
+  const names = [name, ...duplicateAliases.map((alias) => String(alias ?? ""))];
   for (const [key, character] of byName.entries()) {
-    if (characterNamesLikelySame(String(character?.name ?? key), name)) return key;
+    const aliases = characterRecordNameSet(character);
+    if (
+      characterNameSetsLikelySame(aliases.length ? aliases : [key], names, {
+        blockedGivenKeys,
+        aExcludedNames: characterRecordExclusionSet(character),
+        bExcludedNames: duplicateExclusions.map((alias) => String(alias ?? "")),
+      })
+    ) {
+      return key;
+    }
   }
   return exactKey;
 }
 
 function commitCharacterMapEntry(byName: Map<string, any>, key: string, character: Record<string, any>) {
   const name = compactText(character.name, 80);
-  const preferredName = preferredCharacterDisplayName(String(byName.get(key)?.name ?? ""), name) || name;
+  const current = byName.get(key) ?? {};
+  const preferredName = preferredCharacterDisplayName(String(current.name ?? ""), name) || name;
   const preferredKey = normalizeNameKey(preferredName);
+  const duplicateAliases = [
+    current.name,
+    name,
+    ...safeArray(current.duplicateAliases),
+    ...safeArray(character.duplicateAliases),
+  ]
+    .map((value) => cleanCharacterDisplayName(compactText(value, 80)))
+    .filter((value) => value && normalizeNameKey(value) !== normalizeNameKey(preferredName));
+  const mergedNameKeys = new Set([preferredName, ...duplicateAliases].map(normalizeNameKey).filter(Boolean));
+  const duplicateExclusions = [...safeArray(current.duplicateExclusions), ...safeArray(character.duplicateExclusions)]
+    .map((value) => cleanCharacterDisplayName(compactText(value, 80)))
+    .filter((value) => value && !mergedNameKeys.has(normalizeNameKey(value)));
   if (preferredKey && preferredKey !== key) byName.delete(key);
-  byName.set(preferredKey || key, { ...character, name: preferredName || name });
+  byName.set(preferredKey || key, {
+    ...character,
+    name: preferredName || name,
+    duplicateAliases: [...new Set(duplicateAliases)].slice(0, 8),
+    duplicateExclusions: [...new Set(duplicateExclusions)].slice(0, 20),
+  });
 }
 
 function mergeAnalyzedCharactersIntoCard(card: Record<string, any>, chapter: any, result: Awaited<ReturnType<typeof analyzeCharactersWithLlm>>) {
   const existing = Array.isArray(card.characters) ? card.characters : [];
+  const blockedGivenKeys = ambiguousKoreanGivenNameKeys([
+    ...existing.map((character) => characterRecordNameSet(recordOf(character))),
+    ...result.characters.map((character) => characterRecordNameSet(recordOf(character))),
+    ...result.characterAnalysis.map((character) => characterRecordNameSet(recordOf(character))),
+  ]);
   const assetContext = Array.isArray(result.assetContext) ? result.assetContext : [];
   const byName = new Map<string, any>();
   for (const character of existing) {
     const name = compactText(character?.name ?? character?.title, 80);
     if (!name) continue;
-    const key = findCharacterMapKey(byName, name);
+    const key = findCharacterMapKey(
+      byName,
+      name,
+      safeArray(character?.duplicateAliases),
+      safeArray(character?.duplicateExclusions),
+      blockedGivenKeys,
+    );
     const current = byName.get(key) ?? {};
     commitCharacterMapEntry(byName, key, { ...current, ...character, name: preferredCharacterDisplayName(current.name, name) });
   }
@@ -474,12 +541,18 @@ function mergeAnalyzedCharactersIntoCard(card: Record<string, any>, chapter: any
   for (const analyzed of result.characters) {
     const name = compactText(analyzed.name, 80);
     if (!name) continue;
-    const key = findCharacterMapKey(byName, name);
+    const key = findCharacterMapKey(
+      byName,
+      name,
+      safeArray(analyzed.duplicateAliases),
+      safeArray(analyzed.duplicateExclusions),
+      blockedGivenKeys,
+    );
     const current = byName.get(key) ?? {};
     const displayName = preferredCharacterDisplayName(current.name, name) || name;
     const matchingInsight =
       result.characterAnalysis.find((item) =>
-        characterNamesLikelySame(String(item.name ?? ""), displayName),
+        characterNameSetsLikelySame([String(item.name ?? "")], [displayName], { blockedGivenKeys }),
       ) ?? analyzed;
     const matchedSlots = matchSlotsForCharacter(displayName, assetContext, analyzed.assetHints);
     const chapterInsights = Array.isArray(current.chapterInsights) ? current.chapterInsights : [];
@@ -677,6 +750,14 @@ async function generateSingleCharacterWithLlm(
     .map((character) => ({
       id: compactText(character.id, 120),
       name: compactText(character.name ?? character.title, 80),
+      duplicateAliases: safeArray(character.duplicateAliases ?? character.duplicate_aliases)
+        .map((alias) => cleanCharacterDisplayName(compactText(alias, 80)))
+        .filter(Boolean)
+        .slice(0, 8),
+      duplicateExclusions: safeArray(character.duplicateExclusions ?? character.duplicate_exclusions)
+        .map((alias) => cleanCharacterDisplayName(compactText(alias, 80)))
+        .filter(Boolean)
+        .slice(0, 20),
       role: compactText(character.role, 120),
       relationship: compactText(character.relationship, 220),
       persona: compactText(character.persona ?? character.personality ?? character.notes, 420),
@@ -788,9 +869,19 @@ async function generateSingleCharacterWithLlm(
 
   const name = String(character.name ?? "");
   const nameKey = normalizeNameKey(name);
+  const existingRows = existingCharacters.map((existing) => recordOf(existing));
+  const existingNameSets = existingRows.map(characterRecordNameSet);
+  const existingExclusionSets = existingRows.map(characterRecordExclusionSet);
+  const blockedGivenKeys = ambiguousKoreanGivenNameKeys([...existingNameSets, [name]]);
   const isExisting =
     existingNameKeys.has(nameKey) ||
-    existingCharacters.some((existing) => characterNamesLikelySame(existing.name, name));
+    existingNameSets.some((existingNames, index) =>
+      characterNameSetsLikelySame(existingNames, [name], {
+        blockedGivenKeys,
+        aExcludedNames: existingExclusionSets[index] ?? [],
+        bExcludedNames: characterRecordExclusionSet(character),
+      }),
+    );
   const groundedByCandidate = [...groundedNames].some((candidate) => characterNamesLikelySame(candidate, name));
   const bodyKey = normalizeNameKey(body);
   const groundedByBody = characterNameAliasKeys(name).some((alias) => body.includes(alias) || bodyKey.includes(alias));

@@ -108,7 +108,7 @@ export const generateSingleStoryCharacter = createServerFn({ method: "POST" })
       i as {
         storyId: string;
         chapterId: string;
-        existingCharacters?: Array<{ name?: string; id?: string }>;
+        existingCharacters?: Array<{ name?: string; id?: string; duplicateAliases?: string[]; duplicateExclusions?: string[] }>;
       },
   )
   .handler(async ({ data }) => {

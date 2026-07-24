@@ -16,6 +16,7 @@ import {
   Search,
   Star,
   Trash2,
+  Unlink2,
   Upload,
   UserCircle2,
   Wand2,
@@ -29,6 +30,13 @@ import {
   type StoryCharacter,
 } from "@/lib/admin-characters.functions";
 import { analyzeStoryCharacters } from "@/lib/admin-story-ai.functions";
+import {
+  ambiguousKoreanGivenNameKeys,
+  characterNameSetsLikelySame,
+  cleanCharacterDisplayName,
+  normalizeCharacterNameKey,
+  preferredCharacterDisplayName,
+} from "@/lib/character-name-match";
 import { ensureStoryMediaBucket } from "@/lib/storage.functions";
 import { fetchWithSupabaseAuth } from "@/lib/supabase-auth-fetch";
 import { resolveStoryMediaSource } from "@/lib/story-media-url";
@@ -48,6 +56,17 @@ export const Route = createFileRoute("/_authenticated/admin/characters")({
 
 type CharacterDraft = StoryCharacter & {
   tagsText: string;
+  duplicateAliasesText: string;
+  duplicateExclusionsText: string;
+};
+
+type CharacterListMode = "all" | "major" | "duplicates";
+type CharacterDuplicateGroup = {
+  key: string;
+  displayName: string;
+  aliases: string[];
+  characters: CharacterDraft[];
+  recommendedId: string;
 };
 
 const VISUAL_TIERS = [
@@ -71,6 +90,7 @@ function CharactersPage() {
   const [selectedCharacterId, setSelectedCharacterId] = useState("");
   const [contentFilter, setContentFilter] = useState<"all" | "story" | "story_rpg">("all");
   const [topicFilter, setTopicFilter] = useState("all");
+  const [characterListMode, setCharacterListMode] = useState<CharacterListMode>("all");
 
   const storiesQ = useQuery({ queryKey: ["admin_character_stories"], queryFn: () => list() });
 
@@ -119,6 +139,19 @@ function CharactersPage() {
   const chatEnabledCount = drafts.filter((character) => character.chatEnabled).length;
   const frontendVisibleCount = drafts.filter((character) => character.chatEnabled && character.visibleInFrontend).length;
   const completeCount = drafts.filter((character) => characterQuality(character).score >= 80).length;
+  const duplicateGroups = useMemo(() => buildCharacterDuplicateGroups(drafts), [drafts]);
+  const duplicateIds = useMemo(
+    () => new Set(duplicateGroups.flatMap((group) => group.characters.map((character) => character.id))),
+    [duplicateGroups],
+  );
+  const sortedDrafts = useMemo(() => sortCharacterDraftsForManagement(drafts), [drafts]);
+  const visibleDrafts = useMemo(() => {
+    if (characterListMode === "duplicates") return sortedDrafts.filter((character) => duplicateIds.has(character.id));
+    if (characterListMode === "major") return sortedDrafts.filter((character, index) => character.isPrimary || index < 12);
+    return sortedDrafts;
+  }, [characterListMode, duplicateIds, sortedDrafts]);
+  const duplicateCharacterCount = duplicateGroups.reduce((sum, group) => sum + Math.max(0, group.characters.length - 1), 0);
+  const majorCharacterCount = sortedDrafts.filter((character, index) => character.isPrimary || index < 12).length;
   const storyCount = stories.filter((story) => story.contentType !== "story_rpg").length;
   const storyGameCount = stories.filter((story) => story.contentType === "story_rpg").length;
   const selectedStoryStats = useMemo(() => {
@@ -145,7 +178,15 @@ function CharactersPage() {
       : [toDraft(createBlankCharacter(true))];
     setDrafts(nextDrafts);
     setSelectedCharacterId(nextDrafts[0]?.id ?? "");
-  }, [selectedStory?.storyId]);
+    setCharacterListMode("all");
+  }, [selectedStory?.storyId, selectedStory?.updatedAt]);
+
+  useEffect(() => {
+    if (!visibleDrafts.length) return;
+    if (!selectedCharacterId || !visibleDrafts.some((character) => character.id === selectedCharacterId)) {
+      setSelectedCharacterId(visibleDrafts[0].id);
+    }
+  }, [selectedCharacterId, visibleDrafts]);
 
   const saveM = useMutation({
     mutationFn: () =>
@@ -153,10 +194,11 @@ function CharactersPage() {
         data: {
           storyId: selectedStory?.storyId ?? "",
           storyOverview,
-          characters: drafts.map(fromDraft),
+          characters: mergeDuplicateCharacterDrafts(drafts).map(fromDraft),
         },
       }),
     onSuccess: () => {
+      setDrafts((current) => ensureSinglePrimaryDraft(sortCharacterDraftsForManagement(mergeDuplicateCharacterDrafts(current))));
       toast.success("캐릭터 설정을 저장했습니다.");
       qc.invalidateQueries({ queryKey: ["admin_character_stories"] });
       qc.invalidateQueries({ queryKey: ["admin_stories"] });
@@ -236,6 +278,54 @@ function CharactersPage() {
     });
   }
 
+  function mergeDuplicateGroup(characterIds: string[]) {
+    const ids = new Set(characterIds);
+    const group = drafts.filter((character) => ids.has(character.id));
+    if (group.length < 2) return;
+    const merged = mergeCharacterDraftGroup(group);
+    const next = drafts.filter((character) => !ids.has(character.id));
+    setDrafts(ensureSinglePrimaryDraft(sortCharacterDraftsForManagement([...next, merged])));
+    setSelectedCharacterId(merged.id);
+    toast.success("중복 캐릭터를 하나로 병합했습니다.");
+  }
+
+  function keepDuplicateGroupSeparate(characterIds: string[]) {
+    const ids = new Set(characterIds);
+    const group = drafts.filter((character) => ids.has(character.id));
+    if (group.length < 2) return;
+    setDrafts((current) =>
+      current.map((character) => {
+        if (!ids.has(character.id)) return character;
+        const otherNames = group
+          .filter((other) => other.id !== character.id)
+          .flatMap(characterDraftNameSet);
+        const duplicateExclusions = mergeCharacterNameList(character.duplicateExclusions ?? [], otherNames);
+        return {
+          ...character,
+          duplicateExclusions,
+          duplicateExclusionsText: duplicateExclusions.join(", "),
+        };
+      }),
+    );
+    toast.success("중복 후보를 별개 캐릭터로 유지합니다.");
+  }
+
+  function mergeAllDuplicateGroups() {
+    const merged = ensureSinglePrimaryDraft(sortCharacterDraftsForManagement(mergeDuplicateCharacterDrafts(drafts)));
+    setDrafts(merged);
+    setSelectedCharacterId(merged[0]?.id ?? "");
+    setCharacterListMode("all");
+    toast.success("중복 캐릭터 후보를 자동 정리했습니다.");
+  }
+
+  function sortByImportance() {
+    const sorted = ensureSinglePrimaryDraft(sortCharacterDraftsForManagement(drafts));
+    setDrafts(sorted);
+    setSelectedCharacterId(sorted[0]?.id ?? "");
+    setCharacterListMode("major");
+    toast.success("주요도 순으로 캐릭터 목록을 정렬했습니다.");
+  }
+
   return (
     <div className="space-y-5">
       <header className="flex flex-wrap items-start justify-between gap-4">
@@ -252,6 +342,8 @@ function CharactersPage() {
           <StatusPill icon={MessageCircle} label="대화 가능" value={chatEnabledCount} />
           <StatusPill icon={Eye} label="캐릭터채팅 노출" value={frontendVisibleCount} />
           <StatusPill icon={CheckCircle2} label="프로필 완성" value={completeCount} />
+          <StatusPill icon={Search} label="중복 후보" value={duplicateCharacterCount} />
+          <StatusPill icon={Star} label="주요 관리" value={majorCharacterCount} />
         </div>
       </header>
 
@@ -404,15 +496,57 @@ function CharactersPage() {
                   <div><span className="text-foreground">기존분석</span> · {selectedStoryStats.characterAnalysisCount.toLocaleString()}개</div>
                 </div>
               )}
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="grid w-full grid-cols-3 gap-1 rounded-lg border border-border bg-background p-1 sm:w-auto sm:min-w-72">
+                  {[
+                    ["all", "전체"],
+                    ["major", "주요"],
+                    ["duplicates", "중복"],
+                  ].map(([value, label]) => (
+                    <button
+                      type="button"
+                      key={value}
+                      onClick={() => setCharacterListMode(value as CharacterListMode)}
+                      className={`h-8 rounded-md px-3 text-xs transition ${
+                        characterListMode === value ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button type="button" variant="outline" size="sm" onClick={sortByImportance} disabled={drafts.length < 2}>
+                    <Star className="size-4" />
+                    주요도순
+                  </Button>
+                  <Button type="button" variant="outline" size="sm" onClick={mergeAllDuplicateGroups} disabled={!duplicateGroups.length}>
+                    <CheckCircle2 className="size-4" />
+                    중복 자동 병합
+                  </Button>
+                </div>
+              </div>
+              <CharacterDuplicateReview
+                groups={duplicateGroups}
+                onMergeGroup={mergeDuplicateGroup}
+                onSeparateGroup={keepDuplicateGroupSeparate}
+                onSelectCharacter={setSelectedCharacterId}
+              />
               <div className="max-h-[min(58vh,620px)] space-y-2 overflow-y-auto pr-1">
-                {drafts.map((character) => (
+                {visibleDrafts.map((character) => (
                   <CharacterSummaryCard
                     key={character.id}
                     character={character}
                     active={character.id === selectedCharacter?.id}
+                    duplicate={duplicateIds.has(character.id)}
                     onClick={() => setSelectedCharacterId(character.id)}
                   />
                 ))}
+                {!visibleDrafts.length && (
+                  <div className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+                    {characterListMode === "duplicates" ? "중복 후보가 없습니다." : "표시할 캐릭터가 없습니다."}
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -588,6 +722,10 @@ function CharacterEditor({
               {character.chatEnabled && <Badge variant="secondary">채팅</Badge>}
               {character.reusable && <Badge variant="outline">재사용</Badge>}
               <Badge variant="outline">완성도 {quality.score}</Badge>
+              {character.rankInStory && <Badge variant="outline">주요 #{character.rankInStory}</Badge>}
+              {character.importanceScore !== undefined && (
+                <Badge variant="outline">점수 {Number(character.importanceScore).toLocaleString()}</Badge>
+              )}
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -668,6 +806,32 @@ function CharacterEditor({
                 <Field label="태그">
                   <Input value={character.tagsText} onChange={(event) => onPatch({ tagsText: event.target.value })} />
                 </Field>
+                <Field label="별칭/중복명">
+                  <Input
+                    value={character.duplicateAliasesText}
+                    onChange={(event) => {
+                      const duplicateAliasesText = event.target.value;
+                      onPatch({
+                        duplicateAliasesText,
+                        duplicateAliases: parseCharacterNameList(duplicateAliasesText),
+                      });
+                    }}
+                    placeholder="정혁이, 김정혁 대표"
+                  />
+                </Field>
+                <Field label="별개 유지명">
+                  <Input
+                    value={character.duplicateExclusionsText}
+                    onChange={(event) => {
+                      const duplicateExclusionsText = event.target.value;
+                      onPatch({
+                        duplicateExclusionsText,
+                        duplicateExclusions: parseCharacterNameList(duplicateExclusionsText),
+                      });
+                    }}
+                    placeholder="동명이인으로 유지할 이름"
+                  />
+                </Field>
               </div>
             </PanelSection>
 
@@ -688,6 +852,39 @@ function CharacterEditor({
                 <ToggleLine checked={character.reusable} label="재사용 허용" text="다른 스토리에 복사" onChange={(checked) => onPatch({ reusable: checked })} />
               </div>
             </PanelSection>
+
+            {(character.duplicateAliases?.length || character.chapterInsights?.length) && (
+              <PanelSection title="중복/회차 근거">
+                <div className="space-y-3">
+                  {character.duplicateAliases?.length ? (
+                    <div>
+                      <div className="mb-1 text-xs font-medium text-muted-foreground">병합된 이름</div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {character.duplicateAliases.map((alias) => (
+                          <Badge key={alias} variant="outline">
+                            {alias}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                  {character.chapterInsights?.length ? (
+                    <div className="max-h-40 space-y-2 overflow-y-auto pr-1">
+                      {character.chapterInsights.slice(-8).map((insight, index) => (
+                        <div key={`${insight.chapterId}-${index}`} className="rounded-md border border-border bg-background p-2">
+                          <div className="text-xs font-medium">
+                            {insight.episodeNumber ? `${insight.episodeNumber}화` : "회차"} · {insight.chapterTitle || "근거"}
+                          </div>
+                          <div className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
+                            {insight.evidence || insight.chatGuidance || insight.relationship || "분석 근거가 저장되어 있습니다."}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              </PanelSection>
+            )}
 
             <PanelSection
               title="AI 이미지 프롬프트"
@@ -837,17 +1034,94 @@ function StatusPill({
   );
 }
 
+function CharacterDuplicateReview({
+  groups,
+  onMergeGroup,
+  onSeparateGroup,
+  onSelectCharacter,
+}: {
+  groups: CharacterDuplicateGroup[];
+  onMergeGroup: (characterIds: string[]) => void;
+  onSeparateGroup: (characterIds: string[]) => void;
+  onSelectCharacter: (characterId: string) => void;
+}) {
+  if (!groups.length) {
+    return (
+      <div className="rounded-lg border border-border bg-background px-3 py-2 text-xs text-muted-foreground">
+        중복 후보 없음 · 저장 시 이름 정규화 기준으로 한 번 더 검사합니다.
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="text-sm font-semibold text-amber-100">중복 후보 {groups.length}그룹</div>
+          <div className="text-xs text-amber-100/75">성+이름, 호칭, 조사 변형까지 같은 캐릭터로 판단합니다.</div>
+        </div>
+      </div>
+      <div className="max-h-48 space-y-2 overflow-y-auto pr-1">
+        {groups.map((group) => {
+          const recommended = group.characters.find((character) => character.id === group.recommendedId) ?? group.characters[0];
+          return (
+            <div key={group.key} className="rounded-md border border-amber-500/25 bg-background/80 p-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-medium">{group.displayName}</div>
+                  <div className="truncate text-xs text-muted-foreground">
+                    {group.aliases.join(" / ")} · 권장 기준 {recommended?.name}
+                  </div>
+                </div>
+                <div className="flex shrink-0 flex-wrap gap-1.5">
+                  <Button type="button" size="sm" variant="outline" onClick={() => onSeparateGroup(group.characters.map((character) => character.id))}>
+                    <Unlink2 className="size-4" />
+                    별개 유지
+                  </Button>
+                  <Button type="button" size="sm" variant="outline" onClick={() => onMergeGroup(group.characters.map((character) => character.id))}>
+                    <CheckCircle2 className="size-4" />
+                    병합
+                  </Button>
+                </div>
+              </div>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {group.characters.map((character) => (
+                  <button
+                    type="button"
+                    key={character.id}
+                    onClick={() => onSelectCharacter(character.id)}
+                    className={`rounded-md border px-2 py-1 text-[11px] transition ${
+                      character.id === group.recommendedId
+                        ? "border-primary/45 bg-primary/10 text-primary"
+                        : "border-border bg-card text-muted-foreground hover:border-primary/40"
+                    }`}
+                  >
+                    {character.name || "이름 없음"} · 주요 {Number(character.importanceScore ?? 0).toLocaleString()}
+                  </button>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function CharacterSummaryCard({
   character,
   active,
+  duplicate,
   onClick,
 }: {
   character: CharacterDraft;
   active: boolean;
+  duplicate: boolean;
   onClick: () => void;
 }) {
   const quality = characterQuality(character);
   const avatarPreview = useSignedCharacterImage(character.avatarUrl);
+  const importance = Math.max(0, Number(character.importanceScore ?? 0));
   return (
     <button
       type="button"
@@ -855,7 +1129,9 @@ function CharacterSummaryCard({
       className={`w-full rounded-lg border px-2.5 py-2 text-left transition ${
         active
           ? "border-primary/50 bg-primary/10"
-          : "border-border bg-background hover:border-primary/30"
+          : duplicate
+            ? "border-amber-500/45 bg-amber-500/10 hover:border-amber-400/70"
+            : "border-border bg-background hover:border-primary/30"
       }`}
     >
       <div className="flex min-w-0 items-center gap-2.5">
@@ -872,9 +1148,19 @@ function CharacterSummaryCard({
             {character.isPrimary && <Star className="size-3.5 fill-primary text-primary" />}
             {character.visibleInFrontend && <Eye className="size-3.5 text-primary" />}
             {character.chatEnabled && <MessageCircle className="size-3.5 text-primary" />}
+            {duplicate && (
+              <Badge variant="outline" className="px-1.5 py-0 text-[10px] text-amber-300">
+                중복
+              </Badge>
+            )}
           </div>
           <div className="mt-0.5 truncate text-xs text-muted-foreground">{character.role || "역할 미입력"}</div>
           <div className="mt-1 flex min-w-0 items-center gap-1">
+            {character.rankInStory && (
+              <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
+                #{character.rankInStory}
+              </Badge>
+            )}
             {character.tags.slice(0, 3).map((tag) => (
               <Badge key={tag} variant="secondary" className="px-1.5 py-0 text-[10px]">
                 {tag}
@@ -892,11 +1178,12 @@ function CharacterSummaryCard({
             )}
           </div>
         </div>
-        <div className="w-14 shrink-0 text-right">
-          <div className="text-[11px] font-semibold text-muted-foreground">{quality.score}</div>
+        <div className="w-16 shrink-0 text-right">
+          <div className="text-[11px] font-semibold text-muted-foreground">완성 {quality.score}</div>
           <div className="mt-1 h-1 overflow-hidden rounded-full bg-muted">
             <div className="h-full rounded-full bg-primary" style={{ width: `${quality.score}%` }} />
           </div>
+          <div className="mt-1 text-[10px] text-muted-foreground">주요 {importance.toLocaleString()}</div>
           {quality.missing.length > 0 && (
             <div className="mt-1 text-[10px] text-amber-300">{quality.missing.length}개 부족</div>
           )}
@@ -924,6 +1211,212 @@ function characterQuality(character: Pick<CharacterDraft, "name" | "role" | "per
     score: Math.round((filled.length / checks.length) * 100),
     missing,
   };
+}
+
+function draftTagList(character: CharacterDraft) {
+  return [...(character.tags ?? []), ...character.tagsText.split(",")]
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function parseCharacterNameList(value: string) {
+  return [...new Set(
+    value
+      .split(/[,，、/|]/)
+      .map((item) => cleanCharacterDisplayName(item))
+      .filter(Boolean),
+  )].slice(0, 20);
+}
+
+function mergeCharacterNameList(...lists: Array<Iterable<string> | undefined>) {
+  return [...new Set(
+    lists
+      .flatMap((list) => (list ? [...list] : []))
+      .map((item) => cleanCharacterDisplayName(String(item ?? "")))
+      .filter(Boolean),
+  )].slice(0, 20);
+}
+
+function characterDraftNameSet(character: CharacterDraft) {
+  return [character.name, ...(character.duplicateAliases ?? [])].filter(Boolean);
+}
+
+function characterDraftNamesLikelySame(
+  a: CharacterDraft,
+  b: CharacterDraft,
+  blockedGivenKeys: ReadonlySet<string>,
+) {
+  return characterNameSetsLikelySame(characterDraftNameSet(a), characterDraftNameSet(b), {
+    blockedGivenKeys,
+    aExcludedNames: a.duplicateExclusions ?? [],
+    bExcludedNames: b.duplicateExclusions ?? [],
+  });
+}
+
+function characterManagementScore(character: CharacterDraft) {
+  const quality = characterQuality(character).score;
+  const importance = Math.max(0, Number(character.importanceScore ?? 0));
+  const insights = Math.min(character.chapterInsights?.length ?? 0, 20) * 4;
+  const imageBonus = character.avatarUrl ? 12 : 0;
+  const visibilityBonus = character.visibleInFrontend ? 10 : 0;
+  const chatBonus = character.chatEnabled ? 6 : 0;
+  const primaryBonus = character.isPrimary ? 1000 : 0;
+  return primaryBonus + importance + quality + insights + imageBonus + visibilityBonus + chatBonus;
+}
+
+function compareCharacterDrafts(a: CharacterDraft, b: CharacterDraft) {
+  const scoreDelta = characterManagementScore(b) - characterManagementScore(a);
+  if (scoreDelta !== 0) return scoreDelta;
+  return a.name.localeCompare(b.name, "ko");
+}
+
+function sortCharacterDraftsForManagement(characters: CharacterDraft[]) {
+  return [...characters].sort(compareCharacterDrafts);
+}
+
+function ensureSinglePrimaryDraft(characters: CharacterDraft[]) {
+  if (!characters.length) return characters;
+  const primaryId = characters.find((character) => character.isPrimary)?.id ?? characters[0].id;
+  return characters.map((character) => ({ ...character, isPrimary: character.id === primaryId }));
+}
+
+function buildCharacterDuplicateGroups(characters: CharacterDraft[]): CharacterDuplicateGroup[] {
+  const byKey = new Map<string, CharacterDraft[]>();
+  const blockedGivenKeys = ambiguousKoreanGivenNameKeys(characters.map(characterDraftNameSet));
+  for (const character of characters) {
+    const key = normalizeCharacterNameKey(character.name);
+    if (!key) continue;
+
+    let matchKey = byKey.has(key) ? key : "";
+    if (!matchKey) {
+      for (const [currentKey, currentRows] of byKey.entries()) {
+        if (currentRows.some((current) => characterDraftNamesLikelySame(current, character, blockedGivenKeys))) {
+          matchKey = currentKey;
+          break;
+        }
+      }
+    }
+
+    const nextRows = [...(matchKey ? byKey.get(matchKey) ?? [] : []), character];
+    const displayName = nextRows.reduce(
+      (currentName, row) => preferredCharacterDisplayName(currentName, row.name) || currentName || row.name,
+      "",
+    );
+    const nextKey = normalizeCharacterNameKey(displayName) || matchKey || key;
+    if (matchKey && nextKey !== matchKey) byKey.delete(matchKey);
+    byKey.set(nextKey, nextRows);
+  }
+
+  return [...byKey.entries()]
+    .filter(([, rows]) => rows.length > 1)
+    .map(([key, rows]) => {
+      const sorted = sortCharacterDraftsForManagement(rows);
+      const displayName = rows.reduce(
+        (currentName, row) => preferredCharacterDisplayName(currentName, row.name) || currentName || row.name,
+        "",
+      );
+      const aliases = [
+        displayName,
+        ...rows.flatMap((row) => [row.name, ...(row.duplicateAliases ?? [])]),
+      ]
+        .map((value) => cleanCharacterDisplayName(String(value ?? "")))
+        .filter(Boolean);
+      return {
+        key,
+        displayName: displayName || sorted[0].name || "이름 없음",
+        aliases: [...new Set(aliases)].slice(0, 8),
+        characters: sorted,
+        recommendedId: sorted[0].id,
+      };
+    })
+    .sort((a, b) => b.characters.length - a.characters.length || a.displayName.localeCompare(b.displayName, "ko"));
+}
+
+function pickRichText(characters: CharacterDraft[], key: keyof CharacterDraft) {
+  return characters
+    .map((character) => String(character[key] ?? "").trim())
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length)[0] ?? "";
+}
+
+function mergeDraftVisualAssets(characters: CharacterDraft[]) {
+  const byKey = new Map<string, NonNullable<CharacterDraft["showcaseAssets"]>[number]>();
+  for (const asset of characters.flatMap((character) => character.showcaseAssets ?? [])) {
+    const key = String(asset.mediaUrl ?? asset.id ?? "").trim();
+    if (!key || byKey.has(key)) continue;
+    byKey.set(key, asset);
+  }
+  return [...byKey.values()].slice(0, 20);
+}
+
+function mergeDraftChapterInsights(characters: CharacterDraft[]) {
+  const byKey = new Map<string, NonNullable<CharacterDraft["chapterInsights"]>[number]>();
+  for (const insight of characters.flatMap((character) => character.chapterInsights ?? [])) {
+    const key = String(insight.chapterId || `${insight.episodeNumber}:${insight.evidence ?? ""}`).trim();
+    if (!key || byKey.has(key)) continue;
+    byKey.set(key, insight);
+  }
+  return [...byKey.values()].sort((a, b) => Number(a.episodeNumber ?? 0) - Number(b.episodeNumber ?? 0)).slice(-30);
+}
+
+function mergeCharacterDraftGroup(characters: CharacterDraft[]) {
+  const sorted = sortCharacterDraftsForManagement(characters);
+  const base = sorted[0];
+  const displayName = characters.reduce(
+    (currentName, character) => preferredCharacterDisplayName(currentName, character.name) || currentName || character.name,
+    base.name,
+  );
+  const tags = [...new Set(characters.flatMap(draftTagList))].slice(0, 12);
+  const duplicateAliases = [
+    ...characters.flatMap((character) => [character.name, ...(character.duplicateAliases ?? [])]),
+  ]
+    .map((value) => cleanCharacterDisplayName(String(value ?? "")))
+    .filter((value) => value && normalizeCharacterNameKey(value) !== normalizeCharacterNameKey(displayName));
+  const mergedNameKeys = new Set([displayName, ...duplicateAliases].map(normalizeCharacterNameKey).filter(Boolean));
+  const duplicateExclusions = mergeCharacterNameList(...characters.map((character) => character.duplicateExclusions)).filter(
+    (value) => !mergedNameKeys.has(normalizeCharacterNameKey(value)),
+  );
+
+  return {
+    ...base,
+    name: displayName || base.name,
+    role: pickRichText(characters, "role") || base.role,
+    persona: pickRichText(characters, "persona") || base.persona,
+    personality: pickRichText(characters, "personality") || base.personality,
+    relationship: pickRichText(characters, "relationship") || base.relationship,
+    speakingStyle: pickRichText(characters, "speakingStyle") || base.speakingStyle,
+    replyPattern: pickRichText(characters, "replyPattern") || base.replyPattern,
+    llmPurpose: base.llmPurpose ?? "chat",
+    llmModel: pickRichText(characters, "llmModel") || base.llmModel,
+    visualPrompt: pickRichText(characters, "visualPrompt") || base.visualPrompt,
+    avatarUrl: sorted.find((character) => character.avatarUrl)?.avatarUrl ?? null,
+    tags,
+    tagsText: tags.join(", "),
+    isPrimary: characters.some((character) => character.isPrimary),
+    chatEnabled: characters.some((character) => character.chatEnabled),
+    visibleInFrontend: characters.some((character) => character.visibleInFrontend),
+    reusable: characters.some((character) => character.reusable),
+    showcaseAssets: mergeDraftVisualAssets(characters),
+    chapterInsights: mergeDraftChapterInsights(characters),
+    duplicateAliases: [...new Set(duplicateAliases)].slice(0, 8),
+    duplicateAliasesText: [...new Set(duplicateAliases)].slice(0, 8).join(", "),
+    duplicateExclusions,
+    duplicateExclusionsText: duplicateExclusions.join(", "),
+    importanceScore: characters.reduce((sum, character) => sum + Math.max(0, Number(character.importanceScore ?? 0)), 0),
+    dialogueCount: characters.reduce((sum, character) => sum + Math.max(0, Number(character.dialogueCount ?? 0)), 0),
+    mentionCount: characters.reduce((sum, character) => sum + Math.max(0, Number(character.mentionCount ?? 0)), 0),
+    rankInStory: Math.min(...characters.map((character) => Number(character.rankInStory ?? 9999))),
+  } satisfies CharacterDraft;
+}
+
+function mergeDuplicateCharacterDrafts(characters: CharacterDraft[]) {
+  const duplicateGroups = buildCharacterDuplicateGroups(characters);
+  if (!duplicateGroups.length) return characters;
+  const mergedIds = new Set(duplicateGroups.flatMap((group) => group.characters.map((character) => character.id)));
+  return [
+    ...characters.filter((character) => !mergedIds.has(character.id)),
+    ...duplicateGroups.map((group) => mergeCharacterDraftGroup(group.characters)),
+  ];
 }
 
 function buildChatPromptPreview(storyTitle: string, storyOverview: string, character: CharacterDraft) {
@@ -1182,6 +1675,8 @@ function toDraft(character: StoryCharacter): CharacterDraft {
     ...character,
     visibleInFrontend: character.visibleInFrontend === true,
     tagsText: character.tags.join(", "),
+    duplicateAliasesText: (character.duplicateAliases ?? []).join(", "),
+    duplicateExclusionsText: (character.duplicateExclusions ?? []).join(", "),
   };
 }
 
@@ -1209,5 +1704,8 @@ function fromDraft(character: CharacterDraft): StoryCharacter {
     visibleInFrontend: character.visibleInFrontend === true,
     reusable: character.reusable,
     showcaseAssets: character.showcaseAssets ?? [],
+    chapterInsights: character.chapterInsights ?? [],
+    duplicateAliases: parseCharacterNameList(character.duplicateAliasesText),
+    duplicateExclusions: parseCharacterNameList(character.duplicateExclusionsText),
   };
 }

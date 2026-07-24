@@ -49,6 +49,7 @@ import {
   CHAPTER_SEPARATOR,
   createStoryChapterText,
   deleteStoryChapterText,
+  getStoryChapterEditor,
   getStoryChapterText,
   getStoryCompose,
   saveStoryChapterEditor,
@@ -69,7 +70,13 @@ import { ensureStoryMediaBucket } from "@/lib/storage.functions";
 import { fetchWithSupabaseAuth } from "@/lib/supabase-auth-fetch";
 import { resolveStoryMediaSource } from "@/lib/story-media-url";
 import { normalizeProseLineBreaks } from "@/lib/text-normalization";
-import { characterNamesLikelySame } from "@/lib/character-name-match";
+import {
+  ambiguousKoreanGivenNameKeys,
+  characterNameSetsLikelySame,
+  cleanCharacterDisplayName,
+  normalizeCharacterNameKey,
+  preferredCharacterDisplayName,
+} from "@/lib/character-name-match";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
@@ -160,6 +167,20 @@ function upsertChapterSummary(list: StoryChapterSummary[], summary: StoryChapter
     ? list.map((chapter) => (chapter.id === summary.id ? { ...chapter, ...summary } : chapter))
     : [...list, summary];
   return next.sort((a, b) => a.episodeNumber - b.episodeNumber);
+}
+
+function makeChapterConfigFromSummary(chapter: StoryChapterSummary): ChapterConfig {
+  return {
+    id: chapter.id,
+    title: chapter.title,
+    episodeNumber: chapter.episodeNumber,
+    summary: chapter.summary,
+    isFree: chapter.isFree,
+    priceCredits: chapter.priceCredits,
+    body: "",
+    assetSlots: [],
+    characterAnalysis: [],
+  };
 }
 
 function normalizeChapterLocator(value: unknown) {
@@ -956,6 +977,8 @@ type CharacterEditDraft = {
   reusable?: boolean;
   chapterInsights?: Array<Record<string, unknown>>;
   showcaseAssets?: Array<Record<string, unknown>>;
+  duplicateAliases?: string[];
+  duplicateExclusions?: string[];
   evidence?: string;
   chatGuidance?: string;
   emotion?: string;
@@ -1195,6 +1218,8 @@ function normalizeCharacterDrafts(card: any): CharacterEditDraft[] {
       reusable: character?.reusable !== false,
       chapterInsights: Array.isArray(character?.chapterInsights) ? character.chapterInsights : [],
       showcaseAssets: Array.isArray(character?.showcaseAssets) ? character.showcaseAssets : [],
+      duplicateAliases: Array.isArray(character?.duplicateAliases) ? character.duplicateAliases.map(String).filter(Boolean) : [],
+      duplicateExclusions: Array.isArray(character?.duplicateExclusions) ? character.duplicateExclusions.map(String).filter(Boolean) : [],
     }))
     .filter((character: CharacterEditDraft) => character.name);
 
@@ -1218,6 +1243,8 @@ function normalizeCharacterDrafts(card: any): CharacterEditDraft[] {
       reusable: true,
       chapterInsights: [],
       showcaseAssets: [],
+      duplicateAliases: [],
+      duplicateExclusions: [],
     },
   ];
 }
@@ -1242,31 +1269,53 @@ function buildCharacterImagePrompt(storyTitle: string, character: CharacterEditD
 }
 
 function normalizeCharacterName(name: string) {
-  return String(name || "").replace(/\s+/g, "").trim().toLowerCase();
+  return normalizeCharacterNameKey(name);
 }
 
-function characterNameMatches(a: string, b: string) {
-  const left = normalizeCharacterName(a);
-  const right = normalizeCharacterName(b);
-  if (!left || !right) return false;
-  return left === right || characterNamesLikelySame(a, b);
+function characterDraftNameSet(character: Pick<CharacterEditDraft, "name" | "duplicateAliases">) {
+  return [character.name, ...(character.duplicateAliases ?? [])].filter(Boolean);
 }
 
-function findMatchingCharacterDraft(drafts: CharacterEditDraft[], name: string) {
-  return drafts.find((character) => characterNameMatches(character.name, name)) ?? null;
+function characterDraftExclusionSet(character: Pick<CharacterEditDraft, "duplicateExclusions">) {
+  return character.duplicateExclusions ?? [];
+}
+
+function characterNameMatches(a: string, b: string, blockedGivenKeys: ReadonlySet<string> = new Set()) {
+  return characterNameSetsLikelySame([a], [b], { blockedGivenKeys });
+}
+
+function findMatchingCharacterDraft(
+  drafts: CharacterEditDraft[],
+  name: string,
+  blockedGivenKeys = ambiguousKoreanGivenNameKeys([...drafts.map(characterDraftNameSet), [name]]),
+) {
+  return drafts.find((character) =>
+    characterNameSetsLikelySame(characterDraftNameSet(character), [name], {
+      blockedGivenKeys,
+      aExcludedNames: characterDraftExclusionSet(character),
+    }),
+  ) ?? null;
 }
 
 function duplicateCharacterGroups(drafts: CharacterEditDraft[]) {
-  const groups: Array<{ key: string; names: string[]; ids: string[] }> = [];
+  const groups: Array<{ key: string; names: string[]; ids: string[]; exclusions: string[] }> = [];
+  const blockedGivenKeys = ambiguousKoreanGivenNameKeys(drafts.map(characterDraftNameSet));
   for (const character of drafts) {
-    const name = character.name.trim();
+    const name = cleanCharacterDisplayName(character.name);
     if (!name) continue;
-    const existing = groups.find((group) => group.names.some((current) => characterNameMatches(current, name)));
+    const existing = groups.find((group) =>
+      characterNameSetsLikelySame(group.names, characterDraftNameSet(character), {
+        blockedGivenKeys,
+        aExcludedNames: group.exclusions,
+        bExcludedNames: characterDraftExclusionSet(character),
+      }),
+    );
     if (existing) {
       existing.names = [...new Set([...existing.names, name])];
       existing.ids.push(character.id);
+      existing.exclusions = [...new Set([...existing.exclusions, ...characterDraftExclusionSet(character)])];
     } else {
-      groups.push({ key: normalizeCharacterName(name), names: [name], ids: [character.id] });
+      groups.push({ key: normalizeCharacterName(name), names: [name], ids: [character.id], exclusions: characterDraftExclusionSet(character) });
     }
   }
   return groups.filter((group) => group.ids.length > 1);
@@ -1281,13 +1330,20 @@ function buildCharacterVerificationResult(input: {
   providerLabels: string[];
 }): CharacterVerificationResult {
   const byName = new Map<string, CharacterVerificationCandidate>();
+  const blockedGivenKeys = ambiguousKoreanGivenNameKeys([
+    ...input.draftsBefore.map(characterDraftNameSet),
+    ...input.draftsAfter.map(characterDraftNameSet),
+    ...input.rawCharacters.map((raw) => [String(raw.name ?? "")]),
+  ]);
   for (const raw of input.rawCharacters) {
-    const name = String(raw.name ?? "").trim();
+    const name = cleanCharacterDisplayName(String(raw.name ?? ""));
     if (!name) continue;
-    const existingKey = [...byName.keys()].find((key) => characterNameMatches(byName.get(key)?.name ?? key, name));
+    const existingKey = [...byName.keys()].find((key) =>
+      characterNameMatches(byName.get(key)?.name ?? key, name, blockedGivenKeys),
+    );
     const key = existingKey ?? normalizeCharacterName(name);
-    const draftBefore = findMatchingCharacterDraft(input.draftsBefore, name);
-    const draftAfter = findMatchingCharacterDraft(input.draftsAfter, name);
+    const draftBefore = findMatchingCharacterDraft(input.draftsBefore, name, blockedGivenKeys);
+    const draftAfter = findMatchingCharacterDraft(input.draftsAfter, name, blockedGivenKeys);
     const chapter = {
       id: String(raw._chapterId ?? ""),
       title: String(raw._chapterTitle ?? ""),
@@ -1356,16 +1412,53 @@ function mergeAnalyzedCharacters(
 ): CharacterEditDraft[] {
   if (!analyzed.length) return current;
   const byName = new Map(current.map((character) => [normalizeCharacterName(character.name), character]));
+  const blockedGivenKeys = ambiguousKoreanGivenNameKeys([
+    ...current.map(characterDraftNameSet),
+    ...analyzed.map((raw) => [
+      String(raw.name ?? ""),
+      ...(Array.isArray(raw.duplicateAliases) ? raw.duplicateAliases.map(String) : []),
+    ]),
+  ]);
 
   for (const raw of analyzed) {
-    const name = String(raw.name ?? "").trim();
+    const name = cleanCharacterDisplayName(String(raw.name ?? ""));
     if (!name) continue;
     const key = normalizeCharacterName(name);
-    const existing = byName.get(key);
+    const exact = byName.get(key);
+    const existing =
+      exact ??
+      [...byName.values()].find((character) =>
+        characterNameSetsLikelySame(
+          characterDraftNameSet(character),
+          [name, ...(Array.isArray(raw.duplicateAliases) ? raw.duplicateAliases.map(String) : [])],
+          {
+            blockedGivenKeys,
+            aExcludedNames: characterDraftExclusionSet(character),
+            bExcludedNames: Array.isArray(raw.duplicateExclusions) ? raw.duplicateExclusions.map(String) : [],
+          },
+        ),
+      );
+    const targetKey = existing ? normalizeCharacterName(existing.name) : key;
+    const displayName = preferredCharacterDisplayName(existing?.name ?? "", name) || name;
+    const duplicateAliases = [
+      ...(existing?.duplicateAliases ?? []),
+      existing?.name ?? "",
+      name,
+      ...(Array.isArray(raw.duplicateAliases) ? raw.duplicateAliases.map(String) : []),
+    ]
+      .map(cleanCharacterDisplayName)
+      .filter((alias) => alias && normalizeCharacterName(alias) !== normalizeCharacterName(displayName));
+    const mergedNameKeys = new Set([displayName, ...duplicateAliases].map(normalizeCharacterName).filter(Boolean));
+    const duplicateExclusions = [
+      ...(existing?.duplicateExclusions ?? []),
+      ...(Array.isArray(raw.duplicateExclusions) ? raw.duplicateExclusions.map(String) : []),
+    ]
+      .map(cleanCharacterDisplayName)
+      .filter((alias) => alias && !mergedNameKeys.has(normalizeCharacterName(alias)));
     const persona = String(raw.persona ?? raw.chatGuidance ?? raw.personality ?? "").trim();
     const next: CharacterEditDraft = {
       id: existing?.id || String(raw.id || makeCharacterId(name)),
-      name,
+      name: displayName,
       role: existing?.role || String(raw.role || "등장 인물").trim(),
       persona: existing?.persona || persona,
       relationship: existing?.relationship || String(raw.relationship || "").trim(),
@@ -1398,13 +1491,21 @@ function mergeAnalyzedCharacters(
         : Array.isArray(raw.traits)
           ? raw.traits.map(String).filter(Boolean).slice(0, 8)
           : [],
+      duplicateAliases: [...new Set(duplicateAliases)].slice(0, 8),
+      duplicateExclusions: [...new Set(duplicateExclusions)].slice(0, 20),
     };
-    byName.set(key, next);
+    byName.set(targetKey, next);
   }
 
   const merged = [...current];
   for (const value of byName.values()) {
-    const index = merged.findIndex((item) => normalizeCharacterName(item.name) === normalizeCharacterName(value.name));
+    const index = merged.findIndex((item) =>
+      characterNameSetsLikelySame(characterDraftNameSet(item), characterDraftNameSet(value), {
+        blockedGivenKeys,
+        aExcludedNames: characterDraftExclusionSet(item),
+        bExcludedNames: characterDraftExclusionSet(value),
+      }),
+    );
     if (index >= 0) merged[index] = value;
     else merged.push(value);
   }
@@ -1595,6 +1696,7 @@ function StoryWorkspaceDialog({
 }) {
   const qc = useQueryClient();
   const fetchCompose = useServerFn(getStoryCompose);
+  const fetchChapterEditor = useServerFn(getStoryChapterEditor);
   const fetchChapterText = useServerFn(getStoryChapterText);
   const createChapterText = useServerFn(createStoryChapterText);
   const deleteChapterText = useServerFn(deleteStoryChapterText);
@@ -1608,7 +1710,7 @@ function StoryWorkspaceDialog({
   const fetchStory = useServerFn(getAdminStory);
   const saveStory = useServerFn(updateAdminStory);
   const [tab, setTab] = useState(initialTab);
-  const [activeChapterId, setActiveChapterId] = useState(selectedChapterId ?? "");
+  const [activeChapterId, setActiveChapterId] = useState(selectedChapterId ?? chapters[0]?.id ?? "");
   const activeChapterIdRef = useRef(activeChapterId);
   const [saving, setSaving] = useState(false);
   const [chapterSaving, setChapterSaving] = useState(false);
@@ -1667,13 +1769,13 @@ function StoryWorkspaceDialog({
     ...ADMIN_WORKSPACE_QUERY_OPTIONS,
     queryKey: ['admin_story_detail', storyId],
     queryFn: () => fetchStory({ data: { id: storyId } }),
-    enabled: tab !== 'chapter',
+    enabled: tab === 'info' || tab === 'characters',
   });
   const composeQ = useQuery({
     ...ADMIN_WORKSPACE_QUERY_OPTIONS,
     queryKey: ['admin_story_workspace', storyId],
     queryFn: () => fetchCompose({ data: { id: storyId } }),
-    enabled: tab === 'info' || tab === 'preview' || tab === 'assets' || tab === 'characters',
+    enabled: tab === 'preview' || tab === 'characters',
   });
   const chapterQ = useQuery({
     ...ADMIN_WORKSPACE_QUERY_OPTIONS,
@@ -1681,9 +1783,47 @@ function StoryWorkspaceDialog({
     queryFn: () => fetchChapterText({ data: { id: storyId, chapterId: activeChapterId as string } }),
     enabled: tab === 'chapter' && !!activeChapterId,
   });
+  const assetEditorQ = useQuery({
+    ...ADMIN_WORKSPACE_QUERY_OPTIONS,
+    queryKey: ['admin_story_chapter_editor', storyId, activeChapterId],
+    queryFn: () => fetchChapterEditor({ data: { id: storyId, chapterId: activeChapterId as string } }),
+    enabled: tab === 'assets' && !!activeChapterId,
+  });
   const composeChapters = composeQ.data?.chapters ?? [];
-  const assetSourceChapter =
-    composeChapters.find((chapter) => chapter.id === activeChapterId) ?? composeChapters[0] ?? null;
+  const assetEditor = assetEditorQ.data ?? null;
+  const assetSourceChapter = assetEditor?.chapter ?? null;
+  const assetChapterList = useMemo(() => {
+    const summaries = assetEditor?.chapterSummaries?.length ? assetEditor.chapterSummaries : localChapters;
+    const list = summaries.map((chapter) => makeChapterConfigFromSummary({
+      id: chapter.id,
+      title: chapter.title,
+      episodeNumber: chapter.episodeNumber,
+      summary: chapter.summary,
+      isFree: "isFree" in chapter ? Boolean(chapter.isFree) : true,
+      priceCredits: "priceCredits" in chapter ? Number(chapter.priceCredits) : 0,
+      bodyChars: chapter.bodyChars,
+      assetSlotsCount: chapter.assetSlotsCount,
+    }));
+    if (!assetSourceChapter) return list;
+    return list
+      .map((chapter) => (chapter.id === assetSourceChapter.id ? assetSourceChapter : chapter))
+      .sort((a, b) => a.episodeNumber - b.episodeNumber);
+  }, [assetEditor?.chapterSummaries, assetSourceChapter, localChapters]);
+  const savedAssetLibrary = useMemo<AssetLibraryEntry[]>(
+    () =>
+      (assetEditor?.assetLibrary ?? []).map((item) => ({
+        id: item.key,
+        media_url: item.url,
+        media_asset_id: null,
+        media_type: item.type,
+        scene_description: item.scene,
+        caption: item.caption ?? "",
+        source: "saved",
+        chapterTitle: "저장된 에셋",
+        heat_tier: item.tier,
+      })),
+    [assetEditor?.assetLibrary],
+  );
   const chapterContextText = useMemo(() => {
     const loadedBody = chapterDraft.body.trim();
     if (loadedBody.length >= 80) return loadedBody;
@@ -1801,7 +1941,7 @@ function StoryWorkspaceDialog({
   }, [selectedChapterId, storyId, chapters]);
 
   useEffect(() => {
-    if (tab !== 'chapter') return;
+    if (tab !== 'chapter' && tab !== 'assets') return;
     const resolved = findChapterSummaryByLocator(localChapters, activeChapterId);
     if (resolved && resolved.id !== activeChapterId) {
       setActiveChapterId(resolved.id);
@@ -1905,6 +2045,8 @@ function StoryWorkspaceDialog({
         visibleInFrontend: false,
         chatEnabled: true,
         reusable: true,
+        duplicateAliases: [],
+        duplicateExclusions: [],
       },
     ]);
   }
@@ -1935,7 +2077,12 @@ function StoryWorkspaceDialog({
         data: {
           storyId,
           chapterId: target.id,
-          existingCharacters: characterDrafts.map((character) => ({ id: character.id, name: character.name })),
+          existingCharacters: characterDrafts.map((character) => ({
+            id: character.id,
+            name: character.name,
+            duplicateAliases: character.duplicateAliases ?? [],
+            duplicateExclusions: character.duplicateExclusions ?? [],
+          })),
         },
       });
       if (!generated.character) {
@@ -2212,6 +2359,8 @@ function StoryWorkspaceDialog({
           reusable: character.reusable !== false,
           chapterInsights: Array.isArray(character.chapterInsights) ? character.chapterInsights : [],
           showcaseAssets: Array.isArray(character.showcaseAssets) ? character.showcaseAssets : [],
+          duplicateAliases: Array.isArray(character.duplicateAliases) ? character.duplicateAliases : [],
+          duplicateExclusions: Array.isArray(character.duplicateExclusions) ? character.duplicateExclusions : [],
         }))
         .filter((character) => character.name);
       const main = characters[0];
@@ -2466,6 +2615,7 @@ function StoryWorkspaceDialog({
         data: {
           id: storyId,
           chapter: normalizedDraft,
+          assetOnly: normalizedDraft.body === String(assetSourceChapter?.body ?? ""),
         },
       });
       const previousSummary = localChapters.find((chapter) => chapter.id === normalizedDraft.id);
@@ -2490,6 +2640,7 @@ function StoryWorkspaceDialog({
       await Promise.all([
         qc.invalidateQueries({ queryKey: ['admin_stories'] }),
         qc.invalidateQueries({ queryKey: ['admin_story_workspace', storyId] }),
+        qc.invalidateQueries({ queryKey: ['admin_story_chapter_editor', storyId, normalizedDraft.id] }),
         qc.invalidateQueries({ queryKey: ['admin_story_chapter_text', storyId, normalizedDraft.id] }),
       ]);
     } catch (e: any) {
@@ -2583,7 +2734,7 @@ function StoryWorkspaceDialog({
               <span className="rounded-full border border-border bg-background px-2 py-0.5">본문 {workspaceStats.bodyChars.toLocaleString()}자</span>
               <span className="rounded-full border border-border bg-background px-2 py-0.5">에셋 {workspaceStats.assets}</span>
               <span className="rounded-full border border-border bg-background px-2 py-0.5">캐릭터 {workspaceStats.characters}</span>
-              {storyQ.isLoading || composeQ.isLoading || chapterQ.isLoading ? (
+              {storyQ.isLoading || composeQ.isLoading || chapterQ.isLoading || assetEditorQ.isLoading ? (
                 <span className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-primary">
                   <Loader2 className="size-3 animate-spin" /> 불러오는 중
                 </span>
@@ -3776,19 +3927,20 @@ function StoryWorkspaceDialog({
             )}
           </TabsContent>
           <TabsContent value="assets" className="m-0 min-h-0 flex-1 overflow-y-auto p-4">
-            {composeQ.isLoading ? (
+            {assetEditorQ.isLoading ? (
               <div className="grid min-h-[50vh] place-items-center">
                 <Loader2 className="size-5 animate-spin text-muted-foreground" />
               </div>
-            ) : composeQ.error || !composeQ.data ? (
+            ) : assetEditorQ.error || !assetEditorQ.data ? (
               <div className="rounded-md border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
                 에셋편집 정보를 불러오지 못했습니다.
               </div>
             ) : (
               <InlineAssetEditor
                 storyId={storyId}
-                chapters={composeChapters}
+                chapters={assetChapterList}
                 chapter={assetDraft}
+                assetLibrary={savedAssetLibrary}
                 activeChapterId={activeChapterId}
                 onSelectChapter={setActiveChapterId}
                 onChange={(next) => {
@@ -4243,6 +4395,7 @@ function InlineAssetEditor({
   storyId,
   chapters,
   chapter,
+  assetLibrary = [],
   activeChapterId,
   onSelectChapter,
   onChange,
@@ -4256,6 +4409,7 @@ function InlineAssetEditor({
   storyId: string;
   chapters: ChapterConfig[];
   chapter: ChapterConfig | null;
+  assetLibrary?: AssetLibraryEntry[];
   activeChapterId: string;
   onSelectChapter: (id: string) => void;
   onChange: (chapter: ChapterConfig | null) => void;
@@ -4614,7 +4768,7 @@ function InlineAssetEditor({
     })),
   );
   const mediaAssetLibrary = (mediaLibraryQ.data ?? []).map(mediaAssetToLibraryEntry);
-  const librarySlots = dedupeLibraryEntries([...mediaAssetLibrary, ...savedSlotLibrary]);
+  const librarySlots = dedupeLibraryEntries([...mediaAssetLibrary, ...assetLibrary, ...savedSlotLibrary]);
   const filteredLibrarySlots = useMemo(() => {
     const needle = assetLibraryQuery.trim().toLowerCase();
     if (!needle) return librarySlots;
