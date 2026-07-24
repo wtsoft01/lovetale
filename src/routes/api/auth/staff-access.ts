@@ -1,8 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { isSuperAdminEmail } from "@/lib/staff-auth";
 
-const SUPER_ADMIN_EMAIL = "admin@lovetale.org";
 const STAFF_ROLES = ["admin", "editor", "moderator"] as const;
 
 type StaffRole = (typeof STAFF_ROLES)[number];
@@ -53,7 +53,7 @@ export const Route = createFileRoute("/api/auth/staff-access")({
         }
 
         const email = data.user.email?.trim().toLowerCase() ?? "";
-        if (email === SUPER_ADMIN_EMAIL) {
+        if (isSuperAdminEmail(email)) {
           await ensureSuperAdminRoles(data.user.id);
           return Response.json({ ok: true, ...toAccess([...STAFF_ROLES]) });
         }

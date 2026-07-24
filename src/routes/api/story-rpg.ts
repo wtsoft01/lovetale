@@ -2,11 +2,11 @@ import { createFileRoute } from "@tanstack/react-router";
 
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import type { Database } from "@/integrations/supabase/types";
+import { isSuperAdminEmail } from "@/lib/staff-auth";
 
 type UserStoryRow = Database["public"]["Tables"]["user_stories"]["Row"];
 type StaffRole = "admin" | "editor" | "moderator";
 
-const SUPER_ADMIN_EMAIL = "admin@lovetale.org";
 const STAFF_ROLES: StaffRole[] = ["admin", "editor", "moderator"];
 
 function jsonError(reason: string, status = 400) {
@@ -76,7 +76,7 @@ async function hasPreviewAccess(request: Request) {
   if (error || !data.user) return false;
 
   const email = data.user.email?.trim().toLowerCase() ?? "";
-  if (email === SUPER_ADMIN_EMAIL) {
+  if (isSuperAdminEmail(email)) {
     await ensureSuperAdminRoles(data.user.id);
     return true;
   }

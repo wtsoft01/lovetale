@@ -2,8 +2,8 @@ import { createFileRoute } from "@tanstack/react-router";
 
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import type { Database, Json } from "@/integrations/supabase/types";
+import { isSuperAdminEmail } from "@/lib/staff-auth";
 
-const SUPER_ADMIN_EMAIL = "admin@lovetale.org";
 const STAFF_ROLES = ["admin", "editor", "moderator"] as const;
 const SUPER_ADMIN_ROLES = ["admin"] as const;
 const ensuredSuperAdminUserIds = new Set<string>();
@@ -49,7 +49,7 @@ async function requireStaff(request: Request) {
   if (error || !data.user) return { error: jsonError("invalid_token", 401) as Response, userId: "", isAdmin: false };
 
   const email = data.user.email?.trim().toLowerCase() ?? "";
-  if (email === SUPER_ADMIN_EMAIL) {
+  if (isSuperAdminEmail(email)) {
     if (!ensuredSuperAdminUserIds.has(data.user.id)) {
       await ensureSuperAdminRoles(data.user.id);
       ensuredSuperAdminUserIds.add(data.user.id);

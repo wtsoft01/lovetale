@@ -17,8 +17,8 @@ import {
 } from "@/lib/llm-router.server";
 import type { AssetSlot, AssetTier } from "@/lib/admin-stories-compose.functions";
 import { findChapterByLocator, stableChapterIdForStory } from "@/lib/story-chapter-locator";
+import { isSuperAdminEmail } from "@/lib/staff-auth";
 
-const SUPER_ADMIN_EMAIL = "admin@lovetale.org";
 const STAFF_ROLES = ["admin", "editor", "moderator"] as const;
 const ASSET_TIERS: AssetTier[] = ["soft", "warm", "spicy", "steamy", "premium"];
 
@@ -46,7 +46,7 @@ async function requireStaff(request: Request) {
   if (error || !data.user) return { error: jsonError("invalid_token", 401) as Response, userId: "", email: "" };
 
   const email = data.user.email?.trim().toLowerCase() ?? "";
-  if (email === SUPER_ADMIN_EMAIL) {
+  if (isSuperAdminEmail(email)) {
     await supabaseAdmin.from("user_roles").upsert({ user_id: data.user.id, role: "admin" }, { onConflict: "user_id,role" });
     return { userId: data.user.id, email };
   }

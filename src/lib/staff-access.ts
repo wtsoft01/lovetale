@@ -1,8 +1,8 @@
 import { supabase } from "@/integrations/supabase/client";
 import { fetchWithSupabaseAuth } from "@/lib/supabase-auth-fetch";
+import { isSuperAdminEmail } from "@/lib/staff-auth";
 
 const STAFF_ROLES = ["admin", "editor", "moderator"] as const;
-const SUPER_ADMIN_EMAIL = "admin@lovetale.org";
 
 type StaffRole = (typeof STAFF_ROLES)[number];
 
@@ -79,7 +79,7 @@ export async function getStaffAccess(
     resolvedEmail = data.user?.email ?? undefined;
   }
 
-  if (resolvedEmail?.trim().toLowerCase() === SUPER_ADMIN_EMAIL) {
+  if (isSuperAdminEmail(resolvedEmail)) {
     return toStaffAccess([...STAFF_ROLES]);
   }
 

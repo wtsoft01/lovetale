@@ -10,9 +10,8 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
 import { getStaffAccess } from "@/lib/staff-access";
+import { isSuperAdminEmail } from "@/lib/staff-auth";
 import { BrandLogo } from "@/components/brand-logo";
-
-const FIRST_ADMIN_EMAIL = "admin@lovetale.org";
 
 type PasswordLoginPayload = {
   ok?: boolean;
@@ -128,7 +127,7 @@ function AuthPage() {
       toast.error("로그인 세션을 확인할 수 없습니다.");
       return;
     }
-    if (user?.email?.trim().toLowerCase() === FIRST_ADMIN_EMAIL) {
+    if (isSuperAdminEmail(user.email)) {
       await bootstrapFirstAdmin(user.id, user.email);
     }
     toast.success("로그인 완료");
@@ -159,7 +158,7 @@ function AuthPage() {
       toast.error(error.message);
       return;
     }
-    if (data.user?.email?.trim().toLowerCase() === FIRST_ADMIN_EMAIL) {
+    if (isSuperAdminEmail(data.user?.email)) {
       await bootstrapFirstAdmin(data.user.id, data.user.email ?? normalizedEmail);
     }
     toast.success("계정이 만들어졌어. 바로 로그인할 수 있어.");
@@ -188,7 +187,7 @@ function AuthPage() {
               type="email"
               value={email}
               onChange={setEmail}
-              placeholder="admin@lovetale.org"
+              placeholder="admin@lovetale.org 또는 staff@lovetale.org"
               required
             />
             <Field

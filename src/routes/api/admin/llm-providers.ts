@@ -2,8 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import type { ProviderRow } from "@/lib/llm-router.server";
-
-const SUPER_ADMIN_EMAIL = "admin@lovetale.org";
+import { isSuperAdminEmail } from "@/lib/staff-auth";
 
 const LLM_USAGE_PURPOSE_KEYS = [
   "general_chat",
@@ -76,7 +75,7 @@ async function requireAdmin(request: Request) {
   if (error || !data.user) throw new ApiError("invalid_token", 401);
 
   const email = data.user.email?.trim().toLowerCase() ?? "";
-  if (email === SUPER_ADMIN_EMAIL) await ensureSuperAdminRole(data.user.id);
+  if (isSuperAdminEmail(email)) await ensureSuperAdminRole(data.user.id);
 
   const { data: role, error: roleError } = await supabaseAdmin
     .from("user_roles")

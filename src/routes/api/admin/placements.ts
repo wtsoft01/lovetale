@@ -2,8 +2,8 @@ import { createFileRoute } from "@tanstack/react-router";
 
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import type { Database } from "@/integrations/supabase/types";
+import { isSuperAdminEmail } from "@/lib/staff-auth";
 
-const SUPER_ADMIN_EMAIL = "admin@lovetale.org";
 const STAFF_ROLES = ["admin", "editor", "moderator"] as const;
 const SUPER_ADMIN_ROLES = ["admin"] as const;
 const HOME_SLOTS = new Set<HomeSlot>(["hero", "trending", "new", "all"]);
@@ -53,7 +53,7 @@ async function requireStaff(request: Request) {
   }
 
   const email = data.user.email?.trim().toLowerCase() ?? "";
-  if (email === SUPER_ADMIN_EMAIL) {
+  if (isSuperAdminEmail(email)) {
     if (!ensuredSuperAdminUserIds.has(data.user.id)) {
       await ensureSuperAdminRoles(data.user.id);
       ensuredSuperAdminUserIds.add(data.user.id);

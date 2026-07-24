@@ -2,8 +2,8 @@ import { createFileRoute } from "@tanstack/react-router";
 
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import type { Database } from "@/integrations/supabase/types";
+import { isSuperAdminEmail } from "@/lib/staff-auth";
 
-const SUPER_ADMIN_EMAIL = "admin@lovetale.org";
 const STAFF_ROLES = ["admin", "editor", "moderator"] as const;
 
 type StaffRole = (typeof STAFF_ROLES)[number];
@@ -34,7 +34,7 @@ async function getUser(request: Request) {
 }
 
 async function hasStaffAccess(userId: string, email?: string | null) {
-  if (email?.trim().toLowerCase() === SUPER_ADMIN_EMAIL) return true;
+  if (isSuperAdminEmail(email)) return true;
 
   const { data, error } = await supabaseAdmin
     .from("user_roles")

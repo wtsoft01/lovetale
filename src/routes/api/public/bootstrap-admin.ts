@@ -1,8 +1,8 @@
 ﻿import { createFileRoute } from "@tanstack/react-router";
 
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { SUPER_ADMIN_EMAILS, isSuperAdminEmail } from "@/lib/staff-auth";
 
-const SUPER_ADMIN_EMAIL = "admin@lovetale.org";
 const STAFF_ROLES = ["admin", "editor", "moderator"] as const;
 
 async function grantAllStaffRoles(userId: string) {
@@ -17,12 +17,12 @@ async function grantAllStaffRoles(userId: string) {
 async function grantIfFirstAdmin(userId: string, email: string | null) {
   const normalizedEmail = email?.trim().toLowerCase() ?? "";
   const allowEmail = (
-    (import.meta.env.VITE_BOOTSTRAP_ADMIN_EMAIL as string | undefined) ?? SUPER_ADMIN_EMAIL
+    (import.meta.env.VITE_BOOTSTRAP_ADMIN_EMAIL as string | undefined) ?? SUPER_ADMIN_EMAILS[0]
   )
     .trim()
     .toLowerCase();
 
-  if (normalizedEmail === SUPER_ADMIN_EMAIL) {
+  if (isSuperAdminEmail(normalizedEmail)) {
     return grantAllStaffRoles(userId);
   }
 
