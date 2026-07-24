@@ -16,6 +16,7 @@ import {
   type ProviderRow,
 } from "@/lib/llm-router.server";
 import type { AssetSlot, AssetTier } from "@/lib/admin-stories-compose.functions";
+import { findChapterByLocator, stableChapterIdForStory } from "@/lib/story-chapter-locator";
 
 const SUPER_ADMIN_EMAIL = "admin@lovetale.org";
 const STAFF_ROLES = ["admin", "editor", "moderator"] as const;
@@ -82,7 +83,7 @@ function buildChaptersFromRow(row: any) {
   if (!raw.length) {
     return [
       {
-        id: "ch_1",
+        id: stableChapterIdForStory(row?.id, 1),
         title: "Episode 1",
         episodeNumber: 1,
         isFree: true,
@@ -96,7 +97,7 @@ function buildChaptersFromRow(row: any) {
   }
   const anyHasBody = raw.some((chapter: any) => typeof chapter.body === "string" && chapter.body.length > 0);
   return raw.map((chapter: any, index: number) => ({
-    id: String(chapter.id || `ch_${index + 1}`),
+    id: String(chapter.id || stableChapterIdForStory(row?.id, chapter.episodeNumber ?? index + 1)),
     title: String(chapter.title || `Episode ${index + 1}`),
     episodeNumber: Number(chapter.episodeNumber || index + 1),
     isFree: Boolean(chapter.isFree ?? index === 0),
@@ -143,7 +144,7 @@ async function getStoryAndChapter(storyId: string, chapterId?: string) {
   if (error) throw new Error(error.message);
   if (!row) throw new Error("스토리를 찾을 수 없습니다.");
   const chapters = buildChaptersFromRow(row);
-  const chapter = chapters.find((item) => item.id === chapterId) ?? chapters[0];
+  const chapter = findChapterByLocator(chapters, chapterId) ?? chapters[0];
   if (!chapter) throw new Error("회차를 찾을 수 없습니다.");
   return { row, chapter, chapters };
 }

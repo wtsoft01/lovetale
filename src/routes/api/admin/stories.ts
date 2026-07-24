@@ -3,6 +3,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import type { Database } from "@/integrations/supabase/types";
 import { normalizeProseLineBreaks } from "@/lib/text-normalization";
+import { stableChapterIdForStory } from "@/lib/story-chapter-locator";
 
 const SUPER_ADMIN_EMAIL = "admin@lovetale.org";
 const STAFF_ROLES = ["admin", "editor", "moderator"] as const;
@@ -171,7 +172,7 @@ function toAdminStoryRow(row: UserStoryRow) {
     const body = typeof chapter?.body === "string" ? chapter.body : "";
     const assetSlots = Array.isArray(chapter?.assetSlots) ? chapter.assetSlots : [];
     return {
-      id: String(chapter?.id ?? `chapter-${index + 1}`),
+      id: String(chapter?.id ?? stableChapterIdForStory(row.id, chapter?.episodeNumber ?? index + 1)),
       title: String(chapter?.title ?? `Episode ${index + 1}`),
       episodeNumber: Number(chapter?.episodeNumber ?? index + 1),
       summary: String(chapter?.summary ?? ""),
